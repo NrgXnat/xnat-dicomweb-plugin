@@ -1,27 +1,12 @@
-apply plugin: 'io.spring.dependency-management'
-apply plugin: 'java'
-apply plugin: 'maven-publish'
-apply plugin: 'idea'
-apply plugin: 'eclipse'
+plugins {
+    id 'java'
+    id 'maven-publish'
+    id 'idea'
+    id 'eclipse'
+}
 
 def pluginVersion = '1.1.1'
-
-buildscript {
-    ext {
-        vXnat = "1.9.0"
-    }
-    repositories {
-        maven { url "https://plugins.gradle.org/m2/" }
-        mavenLocal()
-        maven { url "https://nrgxnat.jfrog.io/nrgxnat/libs-release" }
-        maven { url "https://nrgxnat.jfrog.io/artifactory/libs-release" }
-        maven { url "https://nrgxnat.jfrog.io/nrgxnat/libs-snapshot" }
-        mavenCentral()
-    }
-    dependencies {
-        classpath "io.spring.gradle:dependency-management-plugin:1.0.3.RELEASE"
-    }
-}
+def vXnat = "1.9.0"
 
 group 'org.nrg.xnat'
 version pluginVersion
@@ -37,8 +22,8 @@ repositories {
     maven { url "https://oss.sonatype.org/content/repositories/releases/" }
 }
 
-sourceCompatibility = 1.8
-targetCompatibility = 1.8
+sourceCompatibility = JavaVersion.VERSION_1_8
+targetCompatibility = JavaVersion.VERSION_1_8
 
 compileJava {
     options.fork = false
@@ -58,11 +43,9 @@ configurations.testRuntimeClasspath {
     exclude group: 'com.sun.media', module: 'jai_imageio'
 }
 
-dependencyManagement.imports {
-    mavenBom "org.nrg:parent:${vXnat}"
-}
-
 dependencies {
+    // Import the XNAT parent BOM using Gradle's native support
+    implementation platform("org.nrg:parent:${vXnat}")
     compileOnly "org.slf4j:slf4j-api"
     compileOnly "log4j:log4j"
     compileOnly 'javax.servlet:javax.servlet-api'
