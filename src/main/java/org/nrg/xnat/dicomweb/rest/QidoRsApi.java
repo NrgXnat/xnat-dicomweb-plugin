@@ -5,6 +5,7 @@ import io.swagger.annotations.ApiOperation;
 import io.swagger.annotations.ApiResponse;
 import io.swagger.annotations.ApiResponses;
 import org.dcm4che3.data.Attributes;
+import org.dcm4che3.data.Tag;
 import org.nrg.framework.annotations.XapiRestController;
 import org.nrg.xapi.rest.AbstractXapiRestController;
 import org.nrg.xapi.rest.XapiRequestMapping;
@@ -21,8 +22,10 @@ import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.RequestMethod;
+import org.springframework.web.bind.annotation.RequestParam;
 
 import java.util.List;
+import java.util.Map;
 import java.util.stream.Collectors;
 
 /**
@@ -52,7 +55,7 @@ public class QidoRsApi extends AbstractXapiRestController {
     @XapiRequestMapping(
             value = "/dicomweb/projects/{projectId}/studies",
             method = RequestMethod.GET,
-            produces = "application/dicom+json"
+            produces = MediaType.ALL_VALUE
     )
     @ApiOperation(value = "Search for studies in a project (QIDO-RS)", response = String.class)
     @ApiResponses({
@@ -61,10 +64,15 @@ public class QidoRsApi extends AbstractXapiRestController {
             @ApiResponse(code = 404, message = "Project not found"),
             @ApiResponse(code = 500, message = "Internal error")
     })
-    public ResponseEntity<String> searchStudies(@PathVariable String projectId) {
+    public ResponseEntity<String> searchStudies(@PathVariable String projectId,
+                                                @RequestParam(required = false) Map<String, String> queryParams) {
         try {
             UserI user = getSessionUser();
-            List<Attributes> studies = dicomService.searchStudies(user, projectId, null);
+
+            // Convert query parameters to DICOM Attributes for filtering
+            Attributes queryAttributes = parseQueryParameters(queryParams);
+
+            List<Attributes> studies = dicomService.searchStudies(user, projectId, queryAttributes);
 
             // Convert to JSON array
             String json = "[" + studies.stream()
@@ -95,7 +103,7 @@ public class QidoRsApi extends AbstractXapiRestController {
     @XapiRequestMapping(
             value = "/dicomweb/projects/{projectId}/studies/{studyUID}/series",
             method = RequestMethod.GET,
-            produces = "application/dicom+json"
+            produces = MediaType.ALL_VALUE
     )
     @ApiOperation(value = "Search for series in a study (QIDO-RS)", response = String.class)
     @ApiResponses({
@@ -105,10 +113,15 @@ public class QidoRsApi extends AbstractXapiRestController {
             @ApiResponse(code = 500, message = "Internal error")
     })
     public ResponseEntity<String> searchSeries(@PathVariable String projectId,
-                                               @PathVariable String studyUID) {
+                                               @PathVariable String studyUID,
+                                               @RequestParam(required = false) Map<String, String> queryParams) {
         try {
             UserI user = getSessionUser();
-            List<Attributes> series = dicomService.searchSeries(user, projectId, studyUID, null);
+
+            // Convert query parameters to DICOM Attributes for filtering
+            Attributes queryAttributes = parseQueryParameters(queryParams);
+
+            List<Attributes> series = dicomService.searchSeries(user, projectId, studyUID, queryAttributes);
 
             String json = "[" + series.stream()
                     .map(attrs -> {
@@ -138,7 +151,7 @@ public class QidoRsApi extends AbstractXapiRestController {
     @XapiRequestMapping(
             value = "/dicomweb/projects/{projectId}/studies/{studyUID}/series/{seriesUID}/instances",
             method = RequestMethod.GET,
-            produces = "application/dicom+json"
+            produces = MediaType.ALL_VALUE
     )
     @ApiOperation(value = "Search for instances in a series (QIDO-RS)", response = String.class)
     @ApiResponses({
@@ -149,10 +162,15 @@ public class QidoRsApi extends AbstractXapiRestController {
     })
     public ResponseEntity<String> searchInstances(@PathVariable String projectId,
                                                   @PathVariable String studyUID,
-                                                  @PathVariable String seriesUID) {
+                                                  @PathVariable String seriesUID,
+                                                  @RequestParam(required = false) Map<String, String> queryParams) {
         try {
             UserI user = getSessionUser();
-            List<Attributes> instances = dicomService.searchInstances(user, projectId, studyUID, seriesUID, null);
+
+            // Convert query parameters to DICOM Attributes for filtering
+            Attributes queryAttributes = parseQueryParameters(queryParams);
+
+            List<Attributes> instances = dicomService.searchInstances(user, projectId, studyUID, seriesUID, queryAttributes);
 
             String json = "[" + instances.stream()
                     .map(attrs -> {
@@ -173,5 +191,77 @@ public class QidoRsApi extends AbstractXapiRestController {
             logger.error("Error searching instances in series: " + seriesUID, e);
             return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).build();
         }
+    }
+
+    /**
+     * Parse HTTP query parameters into DICOM Attributes for filtering
+     * Supports common DICOMweb query parameters
+     */
+    private Attributes parseQueryParameters(Map<String, String> queryParams) {
+        Attributes attrs = new Attributes();
+
+        if (queryParams == null || queryParams.isEmpty()) {
+            return attrs;
+        }
+
+        // Map common query parameter names to DICOM tags
+        for (Map.Entry<String, String> entry : queryParams.entrySet()) {
+            String key = entry.getKey();
+            String value = entry.getValue();
+
+            if (value == null || value.isEmpty()) {
+                continue;
+            }
+
+            // Map query parameter names to DICOM tags
+            switch (key.toLowerCase()) {
+                case "patientname":
+                    attrs.setString(Tag.PatientName, org.dcm4che3.data.VR.PN, value);
+                    break;
+                case "patientid":
+                    attrs.setString(Tag.PatientID, org.dcm4che3.data.VR.LO, value);
+                    break;
+                case "studydate":
+                    attrs.setString(Tag.StudyDate, org.dcm4che3.data.VR.DA, value);
+                    break;
+                case "studytime":
+                    attrs.setString(Tag.StudyTime, org.dcm4che3.data.VR.TM, value);
+                    break;
+                case "studyinstanceuid":
+                    attrs.setString(Tag.StudyInstanceUID, org.dcm4che3.data.VR.UI, value);
+                    break;
+                case "accessionnumber":
+                    attrs.setString(Tag.AccessionNumber, org.dcm4che3.data.VR.SH, value);
+                    break;
+                case "modality":
+                case "modalitiesinst study":
+                    attrs.setString(Tag.Modality, org.dcm4che3.data.VR.CS, value);
+                    break;
+                case "seriesdescription":
+                    attrs.setString(Tag.SeriesDescription, org.dcm4che3.data.VR.LO, value);
+                    break;
+                case "seriesinstanceuid":
+                    attrs.setString(Tag.SeriesInstanceUID, org.dcm4che3.data.VR.UI, value);
+                    break;
+                case "seriesnumber":
+                    attrs.setString(Tag.SeriesNumber, org.dcm4che3.data.VR.IS, value);
+                    break;
+                case "sopinstanceuid":
+                    attrs.setString(Tag.SOPInstanceUID, org.dcm4che3.data.VR.UI, value);
+                    break;
+                case "sopclassuid":
+                    attrs.setString(Tag.SOPClassUID, org.dcm4che3.data.VR.UI, value);
+                    break;
+                case "instancenumber":
+                    attrs.setString(Tag.InstanceNumber, org.dcm4che3.data.VR.IS, value);
+                    break;
+                default:
+                    logger.debug("Unsupported query parameter: {}", key);
+                    break;
+            }
+        }
+
+        logger.debug("Parsed {} query parameters into DICOM attributes", attrs.size());
+        return attrs;
     }
 }

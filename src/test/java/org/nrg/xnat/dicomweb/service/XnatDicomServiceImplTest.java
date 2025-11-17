@@ -22,6 +22,8 @@ public class XnatDicomServiceImplTest {
     private Method buildFallbackArchivePath;
     private Method joinPaths;
     private Method parseFrameNumbers;
+    private Method matchesDicomValue;
+    private Method matchesDicomDate;
 
     @Before
     public void setUp() throws Exception {
@@ -41,6 +43,14 @@ public class XnatDicomServiceImplTest {
         parseFrameNumbers = XnatDicomServiceImpl.class.getDeclaredMethod(
                 "parseFrameNumbers", String.class);
         parseFrameNumbers.setAccessible(true);
+
+        matchesDicomValue = XnatDicomServiceImpl.class.getDeclaredMethod(
+                "matchesDicomValue", String.class, String.class);
+        matchesDicomValue.setAccessible(true);
+
+        matchesDicomDate = XnatDicomServiceImpl.class.getDeclaredMethod(
+                "matchesDicomDate", String.class, String.class);
+        matchesDicomDate.setAccessible(true);
     }
 
     @Test
@@ -406,5 +416,133 @@ public class XnatDicomServiceImplTest {
         // - Uncompressed: direct byte[] extraction (fast)
         // - Compressed: ImageIO decompression (correct, avoids fragment mapping issues)
         System.out.println("✅ Frame extraction logic validated (avoids direct fragment access for compressed data)");
+    }
+
+    // ========== Query Parameter Filtering Tests ==========
+
+    @Test
+    public void matchesDicomValue_ExactMatch() throws Exception {
+        boolean result = (boolean) matchesDicomValue.invoke(service, "John Doe", "John Doe");
+        assertTrue("Exact match should return true", result);
+    }
+
+    @Test
+    public void matchesDicomValue_CaseInsensitive() throws Exception {
+        boolean result = (boolean) matchesDicomValue.invoke(service, "John Doe", "john doe");
+        assertTrue("Case-insensitive match should return true", result);
+    }
+
+    @Test
+    public void matchesDicomValue_WildcardAsterisk() throws Exception {
+        boolean result = (boolean) matchesDicomValue.invoke(service, "John Doe", "John*");
+        assertTrue("Wildcard asterisk should match", result);
+    }
+
+    @Test
+    public void matchesDicomValue_WildcardQuestion() throws Exception {
+        boolean result = (boolean) matchesDicomValue.invoke(service, "John Doe", "John?Doe");
+        assertTrue("Wildcard question mark should match single character", result);
+    }
+
+    @Test
+    public void matchesDicomValue_WildcardNoMatch() throws Exception {
+        boolean result = (boolean) matchesDicomValue.invoke(service, "John Doe", "Jane*");
+        assertFalse("Non-matching wildcard should return false", result);
+    }
+
+    @Test
+    public void matchesDicomValue_EmptyQuery() throws Exception {
+        boolean result = (boolean) matchesDicomValue.invoke(service, "John Doe", "");
+        assertTrue("Empty query should match anything", result);
+    }
+
+    @Test
+    public void matchesDicomValue_NullAttribute() throws Exception {
+        boolean result = (boolean) matchesDicomValue.invoke(service, null, "John Doe");
+        assertFalse("Null attribute should not match query", result);
+    }
+
+    @Test
+    public void matchesDicomDate_ExactMatch() throws Exception {
+        boolean result = (boolean) matchesDicomDate.invoke(service, "20250101", "20250101");
+        assertTrue("Exact date match should return true", result);
+    }
+
+    @Test
+    public void matchesDicomDate_RangeMatch() throws Exception {
+        boolean result = (boolean) matchesDicomDate.invoke(service, "20250115", "20250101-20250131");
+        assertTrue("Date within range should match", result);
+    }
+
+    @Test
+    public void matchesDicomDate_RangeNoMatch() throws Exception {
+        boolean result = (boolean) matchesDicomDate.invoke(service, "20250201", "20250101-20250131");
+        assertFalse("Date outside range should not match", result);
+    }
+
+    @Test
+    public void matchesDicomDate_OpenEndedStart() throws Exception {
+        boolean result = (boolean) matchesDicomDate.invoke(service, "20250115", "20250101-");
+        assertTrue("Date after start date should match open-ended range", result);
+    }
+
+    @Test
+    public void matchesDicomDate_OpenEndedEnd() throws Exception {
+        boolean result = (boolean) matchesDicomDate.invoke(service, "20250115", "-20250131");
+        assertTrue("Date before end date should match open-ended range", result);
+    }
+
+    @Test
+    public void matchesDicomDate_EmptyQuery() throws Exception {
+        boolean result = (boolean) matchesDicomDate.invoke(service, "20250101", "");
+        assertTrue("Empty query should match any date", result);
+    }
+
+    @Test
+    public void matchesDicomDate_NullAttribute() throws Exception {
+        boolean result = (boolean) matchesDicomDate.invoke(service, null, "20250101");
+        assertFalse("Null attribute should not match query", result);
+    }
+
+    @Test
+    public void matchesDicomValue_WildcardWithMultipleAsterisks() throws Exception {
+        boolean result = (boolean) matchesDicomValue.invoke(service, "MR Axial T1 Brain", "*T1*Brain");
+        assertTrue("Multiple wildcards should match", result);
+    }
+
+    @Test
+    public void matchesDicomValue_WildcardMidString() throws Exception {
+        boolean result = (boolean) matchesDicomValue.invoke(service, "CT_HEAD_STUDY", "CT*STUDY");
+        assertTrue("Wildcard in middle should match", result);
+    }
+
+    @Test
+    public void matchesDicomDate_EdgeCaseStartOfRange() throws Exception {
+        boolean result = (boolean) matchesDicomDate.invoke(service, "20250101", "20250101-20250131");
+        assertTrue("Date at start of range should match", result);
+    }
+
+    @Test
+    public void matchesDicomDate_EdgeCaseEndOfRange() throws Exception {
+        boolean result = (boolean) matchesDicomDate.invoke(service, "20250131", "20250101-20250131");
+        assertTrue("Date at end of range should match", result);
+    }
+
+    @Test
+    public void matchesDicomDate_BeforeRange() throws Exception {
+        boolean result = (boolean) matchesDicomDate.invoke(service, "20241231", "20250101-20250131");
+        assertFalse("Date before range should not match", result);
+    }
+
+    @Test
+    public void matchesDicomValue_PartialMatch() throws Exception {
+        boolean result = (boolean) matchesDicomValue.invoke(service, "MR", "MRI");
+        assertFalse("Partial match without wildcard should not match", result);
+    }
+
+    @Test
+    public void matchesDicomValue_SpecialCharacters() throws Exception {
+        boolean result = (boolean) matchesDicomValue.invoke(service, "Patient^Name", "Patient^Name");
+        assertTrue("Special characters should match exactly", result);
     }
 }

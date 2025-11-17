@@ -18,6 +18,9 @@ import org.nrg.xft.XFTItem;
 import org.nrg.xft.search.CriteriaCollection;
 import org.nrg.xnat.utils.CatalogUtils;
 import org.nrg.xnat.dicomweb.utils.DicomWebUtils;
+import org.nrg.xdat.XDAT;
+import org.nrg.xnat.services.archive.DicomInboxImportRequestService;
+import org.nrg.xnat.services.messaging.archive.DicomInboxImportRequest;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
@@ -1441,10 +1444,14 @@ public class XnatDicomServiceImpl implements XnatDicomService {
             // Trigger XNAT import if any files succeeded
             if (successCount > 0 && tempDir != null) {
                 logger.info("Triggering XNAT import for {} instances in project {}", successCount, projectId);
-                // Note: The actual import would be triggered here using XNAT's import services
-                // For now, we'll leave the files in the temp directory for manual processing
-                // In production, integrate with DicomInboxImportRequestService or GradualDicomImporter
-                logger.warn("STOW-RS: Files written to {} - manual import or integration with XNAT import service required", tempDir.getAbsolutePath());
+                try {
+                    triggerXnatImport(user, projectId, tempDir);
+                    logger.info("Successfully queued DICOM import request for {} instances", successCount);
+                } catch (Exception e) {
+                    logger.error("Failed to trigger XNAT import, files remain in temp directory: {}",
+                        tempDir.getAbsolutePath(), e);
+                    // Don't delete temp dir - allow manual recovery
+                }
             } else if (tempDir != null) {
                 // Clean up if all failed
                 deleteDirectory(tempDir);
@@ -1466,6 +1473,49 @@ public class XnatDicomServiceImpl implements XnatDicomService {
         }
 
         return new StowRsResponse(successCount, failureCount, statuses);
+    }
+
+    /**
+     * Trigger XNAT import using DicomInboxImportRequestService
+     */
+    private void triggerXnatImport(UserI user, String projectId, File tempDir) {
+        try {
+            // Get the DicomInboxImportRequestService from XDAT context
+            DicomInboxImportRequestService importService =
+                XDAT.getContextService().getBean(DicomInboxImportRequestService.class);
+
+            if (importService == null) {
+                logger.error("DicomInboxImportRequestService not available in XDAT context");
+                throw new RuntimeException("XNAT import service not available");
+            }
+
+            // Build import request using the builder pattern
+            DicomInboxImportRequest request = DicomInboxImportRequest.builder()
+                .username(user.getUsername())
+                .sessionPath(tempDir.getAbsolutePath())
+                .cleanupAfterImport(true)  // Clean up temp files after successful import
+                .status(DicomInboxImportRequest.Status.Queued)
+                .build();
+
+            // Set the project ID parameter
+            java.util.Map<String, String> params = new java.util.HashMap<>();
+            params.put("PROJECT_ID", projectId);
+            params.put("path", tempDir.getAbsolutePath());
+            request.setParameters(params);
+
+            // Create the request in the database
+            DicomInboxImportRequest createdRequest = importService.create(request);
+
+            // Send JMS message to trigger async processing
+            XDAT.sendJmsRequest(createdRequest);
+
+            logger.info("Created and queued DICOM inbox import request {} for path: {}",
+                createdRequest.getId(), tempDir.getAbsolutePath());
+
+        } catch (Exception e) {
+            logger.error("Error triggering XNAT import", e);
+            throw new RuntimeException("Failed to trigger XNAT import: " + e.getMessage(), e);
+        }
     }
 
     /**

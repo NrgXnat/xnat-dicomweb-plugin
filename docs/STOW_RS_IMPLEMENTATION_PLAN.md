@@ -1,8 +1,16 @@
 # STOW-RS Implementation Plan
 
+## ✅ IMPLEMENTATION COMPLETE
+
+This document outlines the implementation of STOW-RS (STore Over the Web by RESTful Services) support for the XNAT DICOMweb Proxy Plugin, completing the DICOMweb triumvirate (QIDO-RS, WADO-RS, STOW-RS).
+
+**Status:** Fully implemented and tested
+**Version:** 1.1.3
+**Completion Date:** November 17, 2025
+
 ## Overview
 
-This document outlines the implementation plan for adding STOW-RS (STore Over the Web by RESTful Services) support to the XNAT DICOMweb Proxy Plugin, completing the DICOMweb triumvirate (QIDO-RS, WADO-RS, STOW-RS).
+This document describes the complete implementation of STOW-RS support, including integration with XNAT's native import pipeline using `DicomInboxImportRequestService`.
 
 ## DICOMweb STOW-RS Specification
 

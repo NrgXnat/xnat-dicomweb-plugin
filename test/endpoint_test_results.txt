@@ -1,0 +1,25 @@
+WADO-RS Endpoint Test Results - demo02
+Date: 2025-11-10 10:50
+
+Study: 1.3.6.1.4.1.14519.5.2.1.192342080646731188113889763362087290669
+Series: 1.3.6.1.4.1.14519.5.2.1.236063181032654095384481129454095462816
+Instance: 1.3.6.1.4.1.14519.5.2.1.34567033741973791174524873915362961086
+
+Results:
+1. Retrieve instance:         200 ✓
+2. Retrieve instance metadata: 200 ✓
+3. Retrieve series metadata:   200 ✓
+4. Retrieve series (multipart):200 ✓
+5. Retrieve study metadata:    404 ✗ (BUG - should return array of instance metadata)
+6. Retrieve study (multipart): 200 ✓
+7. Retrieve rendered instance: 404 (expected - no rendered data)
+
+Issue: Study metadata endpoint returns 404
+Expected: Array of 44 instance metadata objects
+Actual: 404 Not Found
+
+Root cause: Spring MVC path matching issue
+- /studies/{studyUID}/metadata (produces: application/dicom+json)
+- /studies/{studyUID} (produces: multipart/related)
+
+Spring appears to be matching the less specific path even though the more specific path with /metadata suffix exists.

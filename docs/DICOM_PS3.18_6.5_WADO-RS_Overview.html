@@ -1,0 +1,566 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.1//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd">
+<html xmlns="http://www.w3.org/1999/xhtml">
+   <head>
+      <meta http-equiv="Content-Type" content="text/html; charset=UTF-8" />
+      <title>6.5 WADO-RS Request/Response</title>
+      <link rel="stylesheet" type="text/css" href="dicom.css" />
+      <meta name="generator" content="DocBook XSL Stylesheets V1.78.1" />
+      <link rel="home" href="PS3.18.html" title="PS3.18" />
+      <link rel="up" href="chapter_6.html" title="6 DICOM Communication Model for Web Services" />
+      <link rel="prev" href="sect_6.4.html" title="6.4 Retired" />
+      <link rel="next" href="sect_6.5.2.html" title="6.5.2 WADO-RS - RetrieveSeries" />
+      <style type="text/css"><![CDATA[
+	p { font-size: 15px; }
+      ]]></style>
+   </head>
+   <body>
+      <table xmlns="" xmlns:d="http://docbook.org/ns/docbook" width="100%">
+         <tr>
+            <th colspan="1" align="center" rowspan="1">
+               <span class="documentreleaseinformation">DICOM PS3.18 2019a - Web Services</span>
+            </th>
+         </tr>
+      </table>
+      <div xmlns="" class="navheader">
+         <table width="100%" summary="Navigation header">
+            <tr>
+               <th colspan="3" align="center" rowspan="1">6.5 WADO-RS Request/Response <a accesskey="current" href="http://dicom.nema.org/medical/dicom/current/output/chtml/part18/sect_6.5.html" shape="rect">(Current)</a>
+               </th>
+            </tr>
+            <tr>
+               <td width="20%" align="left" rowspan="1" colspan="1">
+                  <a accesskey="p" href="sect_6.4.html" shape="rect">Prev</a> </td>
+               <th width="60%" align="center" rowspan="1" colspan="1">6 DICOM Communication Model for Web Services</th>
+               <td width="20%" align="right" rowspan="1" colspan="1"> <a accesskey="n" href="sect_6.5.2.html" shape="rect">Next</a>
+               </td>
+            </tr>
+         </table>
+         <hr />
+      </div>
+      <div xmlns="" xmlns:d="http://docbook.org/ns/docbook" class="breadcrumbs">
+         <span class="breadcrumb-link">
+            <a href="PS3.18.html" shape="rect">PS3.18</a>
+         </span> &gt; <span class="breadcrumb-link">
+            <a href="chapter_6.html" shape="rect">DICOM Communication Model for Web Services</a>
+         </span> &gt; <span class="breadcrumb-node">WADO-RS Request/Response</span>
+      </div>
+      <div class="section">
+         <div class="titlepage">
+            <div>
+               <div>
+                  <h2 class="title" style="clear: both">
+                     <a id="sect_6.5" shape="rect"></a>6.5 WADO-RS Request/Response</h2>
+               </div>
+            </div>
+         </div>
+         <p>
+            <a id="para_c799e159-7f68-4e60-9c6e-e39b03d1352e" shape="rect"></a>The DICOM RESTful Service defines several action types. An implementation shall support all the following six action types:</p>
+         <div class="orderedlist">
+            <ol class="orderedlist" type="1">
+               <li class="listitem">
+                  <p>
+                     <a id="para_fda162dc-4737-4e9a-bcad-a6e273e25215" shape="rect"></a>RetrieveStudy</p>
+                  <p>
+                     <a id="para_68bffde5-59d9-471c-895e-0072aa9d765b" shape="rect"></a>This action retrieves the set of DICOM instances associated with a given study unique identifier (UID). The response can be DICOM or bulk data depending on the "Accept" type, and is encapsulated in a multipart MIME response.</p>
+               </li>
+               <li class="listitem">
+                  <p>
+                     <a id="para_79d33a8c-8769-4e93-ae5d-c274a655e463" shape="rect"></a>RetrieveSeries</p>
+                  <p>
+                     <a id="para_c741e076-752f-4f54-b4ee-5003619dc3e4" shape="rect"></a>This action retrieves the set of DICOM instances associated with a given study and series UID. The response can be DICOM or bulk data depending on the "Accept" type, and is encapsulated in a multipart MIME response.</p>
+               </li>
+               <li class="listitem">
+                  <p>
+                     <a id="para_5465c1cc-d535-4025-b80c-8ff143ca50bc" shape="rect"></a>RetrieveInstance</p>
+                  <p>
+                     <a id="para_b2b32898-faab-4403-b885-749d266f973d" shape="rect"></a>This action retrieves the DICOM instance associated with the given study, series, and SOP Instance UID. The response can be DICOM or bulk data depending on the "Accept" type, and is encapsulated in a multipart MIME response.</p>
+               </li>
+               <li class="listitem">
+                  <p>
+                     <a id="para_7bd8aaf1-3c21-4306-affd-497a309795c6" shape="rect"></a>RetrieveFrames</p>
+                  <p>
+                     <a id="para_6cb1726f-a5ae-448f-b676-2210be6f0094" shape="rect"></a>This action retrieves the DICOM frames for a given study, series, SOP Instance UID, and frame numbers. The response is pixel data, and encapsulated in a multipart MIME response.</p>
+               </li>
+               <li class="listitem">
+                  <p>
+                     <a id="para_026e2557-2245-44e2-a23b-49910b5d3d79" shape="rect"></a>RetrieveBulkdata</p>
+                  <p>
+                     <a id="para_1e25b112-9bbc-4ab5-b3e1-f17a8d547f16" shape="rect"></a>This action retrieves the bulk data for a given BulkDataURI.</p>
+               </li>
+               <li class="listitem">
+                  <p>
+                     <a id="para_fa0393da-e72b-4590-8d84-cd8045b9496a" shape="rect"></a>RetrieveMetadata</p>
+                  <p>
+                     <a id="para_e9c27094-7ef7-4f2c-ae33-1905a55562e9" shape="rect"></a>This action retrieves the DICOM instances presented as the study, series, or instance metadata with the bulk data removed.</p>
+               </li>
+            </ol>
+         </div>
+         <p>
+            <a id="para_9f22c44e-d26e-477c-ba89-ea5a3ed9d7b9" shape="rect"></a>WADO-RS requests may contain the following query parameters:</p>
+         <div class="itemizedlist">
+            <ul class="itemizedlist" style="list-style-type: disc; ">
+               <li class="listitem">
+                  <p>
+                     <a id="para_0fd8f86c-39c0-4f2c-be34-4f237e38f82b" shape="rect"></a>"accept" The &lt;accept&gt; query parameter is specified in <a class="xref" href="chapter_6.html#sect_6.1.1.5" title="6.1.1.5 Accept Query Parameter" shape="rect">Section 6.1.1.5</a>. The syntax is:</p>
+                  <pre class="programlisting" xml:space="preserve">
+    accept = "accept=" 1#media-type
+</pre>
+               </li>
+               <li class="listitem">
+                  <p>
+                     <a id="para_1f2a53e6-61a5-492b-8f80-81da2bb4c62e" shape="rect"></a> "charset" The &lt;character-set&gt; query parameter is specified in <a class="xref" href="chapter_6.html#sect_6.1.2.2" title="6.1.2.2 Character Set Query Parameter" shape="rect">Section 6.1.2.2</a>. The syntax is:</p>
+                  <pre class="programlisting" xml:space="preserve">
+    character-set = "charset" = 1#charset
+</pre>
+               </li>
+            </ul>
+         </div>
+         <p>
+            <a id="para_b02b4966-779f-47fa-92bf-9b9c86c00ba6" shape="rect"></a>WADO-RS requests shall include an "Accept" header field (see <a class="xref" href="chapter_6.html#sect_6.1.1.6" title="6.1.1.6 Accept Header field" shape="rect">Section 6.1.1.6</a>) specifying the Acceptable Media Types.</p>
+         <p>
+            <a id="para_3c021890-5c23-46db-98df-aea74700b380" shape="rect"></a>WADO-RS requests may optionally support the "Accept-Charset" header field. See <a class="xref" href="chapter_6.html#sect_6.1.2.3" title="6.1.2.3 Accept-Charset Header Field" shape="rect">Section 6.1.2.3</a>.</p>
+         <p>
+            <a id="para_6b0ab710-6ccc-4416-a8d6-442334c52a59" shape="rect"></a>See <a class="xref" href="chapter_6.html#sect_6.1.4" title="6.1.4 Content-type Header Field" shape="rect">Section 6.1.4</a>.</p>
+         <p>
+            <a id="para_3c36de3f-5ea3-4aa8-8d0d-c884db3b6ac7" shape="rect"></a>
+        </p>
+         <div class="figure">
+            <a id="figure_6.5-1" shape="rect"></a>
+            <div class="figure-contents">
+               <div class="mediaobject">
+                  <img src="figures/PS3.18_6.5-1.svg" alt="Mapping between IOD and HTTP message parts" />
+               </div>
+            </div>
+            <p class="title">
+               <strong>Figure 6.5-1. Mapping between IOD and HTTP message parts</strong>
+            </p>
+         </div>
+         <p>
+            <br class="figure-break" clear="none" />
+         </p>
+         <p>
+            <a id="para_1ae103fb-c328-4245-8305-33d973a63e11" shape="rect"></a>Responses shall be encoded in the following manner: (see <a class="xref" href="sect_6.5.html#figure_6.5-1" title="Figure 6.5-1. Mapping between IOD and HTTP message parts" shape="rect">Figure 6.5-1</a>).</p>
+         <div class="itemizedlist">
+            <ul class="itemizedlist" style="list-style-type: disc; ">
+               <li class="listitem">
+                  <p>
+                     <a id="para_60c3b57f-cc2b-4057-ab07-f5a03cec6ec6" shape="rect"></a>DICOM Files as defined in <a href="../part10/PS3.10.html" class="olink" shape="rect">PS3.10</a>, encoded in a requested Transfer Syntax (Explicit VR Little Endian by default) with one message part per DICOM Instance.</p>
+               </li>
+               <li class="listitem">
+                  <p>
+                     <a id="para_4492b719-db9b-4fc4-b452-3db9a089e7dd" shape="rect"></a>XML as described in the Native DICOM Model defined in <a href="../part19/PS3.19.html" class="olink" shape="rect">PS3.19</a> with one message part per XML object.</p>
+               </li>
+               <li class="listitem">
+                  <p>
+                     <a id="para_45565e24-8aa6-4d9f-be94-3e6f202ee156" shape="rect"></a>JSON as a DICOM JSON Model Object as defined in <a class="xref" href="chapter_F.html" title="F DICOM JSON Model" shape="rect">Annex F</a>.</p>
+               </li>
+               <li class="listitem">
+                  <p>
+                     <a id="para_66fe8683-0d7c-4c31-bbf8-3be8310ec4f3" shape="rect"></a>Uncompressed bulk and pixel data in a Little Endian format using the application/octet-stream media type with one message part per bulk data item.</p>
+               </li>
+               <li class="listitem">
+                  <p>
+                     <a id="para_0cc3af4a-81c4-45d6-8918-53ec90698180" shape="rect"></a>Compressed pixel data encoded as:</p>
+                  <div class="itemizedlist">
+                     <ul class="itemizedlist" style="list-style-type: circle; ">
+                        <li class="listitem">
+                           <p>
+                              <a id="para_3c138d7a-d394-45ac-a9b0-bf2f8ab086f3" shape="rect"></a>Single-frame pixel data using a single-frame media type (one message part)</p>
+                        </li>
+                        <li class="listitem">
+                           <p>
+                              <a id="para_0de22790-c8aa-4098-ae75-3553ec8bf8a7" shape="rect"></a>Multi-frame pixel data using a single-frame media type (one frame per message part)</p>
+                        </li>
+                        <li class="listitem">
+                           <p>
+                              <a id="para_a8214108-cb78-4115-b387-473e4735216d" shape="rect"></a>Multi-frame or video pixel data using a multi-frame media type (multiple frames in one message part)</p>
+                        </li>
+                     </ul>
+                  </div>
+               </li>
+            </ul>
+         </div>
+         <p>
+            <a id="para_264c09b4-0a4f-4354-989a-21c6297dbe9a" shape="rect"></a>The compressed pixel data consists of the compressed bit stream only, and shall not include any Sequence Items and Delimiters from the <a href="../part05/PS3.5.html" class="olink" shape="rect">PS3.5</a> Encapsulated Pixel Data format.</p>
+         <p>
+            <a id="para_36ccb1c6-44f7-443e-a2e5-68a269aeef9d" shape="rect"></a>Compressed pixel data shall be encoded using the application/dicom media type and transfer syntaxes specified in <a class="xref" href="chapter_6.html#table_6.1.1.8-2" title="Table 6.1.1.8-2. Transfer Syntax UIDs for 'application/dicom' Media Type Instances in the Image or Video Resource Categories" shape="rect">Table 6.1.1.8-2</a>.</p>
+         <p>
+            <a id="para_9f542d5e-641d-4bc7-bcbf-1beab1762d68" shape="rect"></a>The request header field Content-Type is used to indicate the media type of the payload.</p>
+         <p>
+            <a id="para_35d2dd2d-e4a0-4d75-98e2-a3c992a9e7c0" shape="rect"></a>If the origin server returns XML or JSON responses that contain bulk data references, the origin server is required to support uncompressed bulk data (application/octet-stream) and must be able to deliver all bulk data in that form (i.e., decompress it from its original form if necessary) unless it is available only in a lossy-compressed format.</p>
+         <p>
+            <a id="para_370d1674-4c4c-4022-8906-c324a6f417e4" shape="rect"></a>The DICOM Media Types supported are defined in <a class="xref" href="chapter_6.html#sect_6.1.1.8.5" title="6.1.1.8.5 Support For DICOM Media Types by Service" shape="rect">Section 6.1.1.8.5</a>.</p>
+         <p>
+            <a id="para_57164998-c79b-4513-8d8b-62346bdd47f1" shape="rect"></a>The Bulk Data Media Types supported are defined in <a class="xref" href="chapter_6.html#table_6.1.1.8-1c" title="Table 6.1.1.8-1c. Media Types for DICOM Uncompressed Bulk Data" shape="rect">Table 6.1.1.8-1c</a> and <a class="xref" href="chapter_6.html#table_6.1.1.8-1d" title="Table 6.1.1.8-1d. Media Types for DICOM Compressed Bulk Data" shape="rect">Table 6.1.1.8-1d</a>.</p>
+         <p>
+            <a id="para_89df8b7e-eea2-4b1d-8a18-bc066897b783" shape="rect"></a>The origin server shall support the transfer-syntax and charset media type parameters.</p>
+         <div class="section">
+            <div class="titlepage">
+               <div>
+                  <div>
+                     <h3 class="title">
+                        <a id="sect_6.5.1" shape="rect"></a>6.5.1 WADO-RS - RetrieveStudy</h3>
+                  </div>
+               </div>
+            </div>
+            <p>
+               <a id="para_856692f0-cc34-447d-94de-0101f09749f7" shape="rect"></a>This action retrieves the set of DICOM instances associated with a given study unique identifier (UID). The response can be DICOM or bulk data depending on the "Accept" type, and is encapsulated in a multipart MIME response.</p>
+            <div class="section">
+               <div class="titlepage">
+                  <div>
+                     <div>
+                        <h4 class="title">
+                           <a id="sect_6.5.1.1" shape="rect"></a>6.5.1.1 Request</h4>
+                     </div>
+                  </div>
+               </div>
+               <p>
+                  <a id="para_bea90490-2686-4753-a4cc-e5ad37e6ea6c" shape="rect"></a>The specific Services resource to be used for the RetrieveStudy action shall be as follows:</p>
+               <div class="itemizedlist">
+                  <ul class="itemizedlist" style="list-style-type: disc; ">
+                     <li class="listitem">
+                        <p>
+                           <a id="para_e48f2166-3632-4d22-af45-8c059c7933ae" shape="rect"></a>Resource</p>
+                        <div class="itemizedlist">
+                           <ul class="itemizedlist" style="list-style-type: circle; ">
+                              <li class="listitem">
+                                 <p>
+                                    <a id="para_1a85fe47-9999-4596-b006-837ea855198d" shape="rect"></a>{SERVICE}/studies/{StudyInstanceUID}, where</p>
+                                 <div class="itemizedlist">
+                                    <ul class="itemizedlist" style="list-style-type: square; ">
+                                       <li class="listitem">
+                                          <p>
+                                             <a id="para_970a32d2-9cb5-4239-95f5-ccb1d882437c" shape="rect"></a>{SERVICE} is the base URL for the service. This may be a combination of protocol (either http or https), host, port, and application.</p>
+                                       </li>
+                                       <li class="listitem">
+                                          <p>
+                                             <a id="para_8088eb29-28b0-47a6-a438-5d946f83e646" shape="rect"></a>{StudyInstanceUID} is the study instance UID for a single study.</p>
+                                       </li>
+                                    </ul>
+                                 </div>
+                              </li>
+                           </ul>
+                        </div>
+                     </li>
+                     <li class="listitem">
+                        <p>
+                           <a id="para_8f40aedb-4934-4a64-9e4c-658e612b325a" shape="rect"></a>Method</p>
+                        <div class="itemizedlist">
+                           <ul class="itemizedlist" style="list-style-type: circle; ">
+                              <li class="listitem">
+                                 <p>
+                                    <a id="para_15a5033d-e63d-427b-bfc4-a9162d45b5c9" shape="rect"></a>GET</p>
+                              </li>
+                           </ul>
+                        </div>
+                     </li>
+                     <li class="listitem">
+                        <p>
+                           <a id="para_b27b5987-1c80-4873-805d-e59704ce9667" shape="rect"></a>Headers</p>
+                        <div class="itemizedlist">
+                           <ul class="itemizedlist" style="list-style-type: circle; ">
+                              <li class="listitem">
+                                 <p>
+                                    <a id="para_92491e89-862d-4cad-afd0-faeaa9348ac6" shape="rect"></a>Accept - A comma-separated list of representation schemes, in preference order, which will be accepted by the service in the response to this request. The types allowed for this request header are as follows:</p>
+                                 <div class="itemizedlist">
+                                    <ul class="itemizedlist" style="list-style-type: square; ">
+                                       <li class="listitem">
+                                          <p>
+                                             <a id="para_865b7caa-e699-4c91-9b65-05409606bf0e" shape="rect"></a>multipart/related; type="application/dicom" [dcm-parameters]</p>
+                                          <p>
+                                             <a id="para_39831c16-92e1-4349-82a6-14734ef99374" shape="rect"></a>Specifies that the response can be DICOM Instances encoded in <a href="../part10/PS3.10.html" class="olink" shape="rect">PS3.10</a> format. If transfer-syntax is not specified in the dcm-parameters the origin server shall use the Explicit VR Little Endian Transfer Syntax "1.2.840.10008.1.2.1" for each Instance (see <a class="xref" href="chapter_6.html#sect_6.1.1.8" title="6.1.1.8 DICOM Media Types and Media Types For Bulk Data" shape="rect">Section 6.1.1.8</a>).</p>
+                                       </li>
+                                       <li class="listitem">
+                                          <p>
+                                             <a id="para_e887a534-d583-4466-a5ad-d53d8e53cddc" shape="rect"></a>multipart/related; type="application/octet-stream" [dcm-parameters]</p>
+                                          <p>
+                                             <a id="para_64e4c1b3-9a68-415a-bcb0-36d85d01bfa1" shape="rect"></a>Specifies that the response can be Little Endian uncompressed bulk data. See <a class="xref" href="chapter_6.html#sect_6.1.3" title="6.1.3 Content-type Header Field" shape="rect">Section 6.1.3</a>.</p>
+                                       </li>
+                                       <li class="listitem">
+                                          <p>
+                                             <a id="para_1bbb562c-4cfe-427b-b9f4-5dcda64bb00e" shape="rect"></a>multipart/related; type="{media-type}" [dcm-parameters]</p>
+                                          <p>
+                                             <a id="para_3bbba0da-8c24-46b2-b3df-5433f955a261" shape="rect"></a>Specifies that the response can be compressed pixel data encoded using the media types and transfer syntaxes specified in <a class="xref" href="chapter_6.html#table_6.1.1.8-3b" title="Table 6.1.1.8-3b. Media Types and Transfer Syntax UIDs for Compressed Pixel Data in Bulk Data Values" shape="rect">Table 6.1.1.8-3b</a>. See <a class="xref" href="chapter_6.html#sect_6.1.3" title="6.1.3 Content-type Header Field" shape="rect">Section 6.1.3</a>.</p>
+                                       </li>
+                                    </ul>
+                                 </div>
+                              </li>
+                           </ul>
+                        </div>
+                     </li>
+                  </ul>
+               </div>
+               <div class="note" style="margin-left: 0.5in; margin-right: 0.5in;">
+                  <h3 class="title">Note</h3>
+                  <p>
+                     <a id="para_9321531b-4d2b-408c-a904-be8393e2f158" shape="rect"></a>An example of a more complicated accept header with multiple transfer syntaxes:</p>
+                  <div class="itemizedlist">
+                     <ul class="itemizedlist" style="list-style-type: none; ">
+                        <li class="listitem" style="list-style-type: none">
+                           <p>
+                              <a id="para_2f0b2e3d-c544-49e1-985b-f9b9a4d0c6ec" shape="rect"></a>User is interested in receiving JPEG2000 pixel data in lossless or compressed format but is willing to accept JPEG as well.</p>
+                           <div class="itemizedlist">
+                              <ul class="itemizedlist" style="list-style-type: none; ">
+                                 <li class="listitem" style="list-style-type: none">
+                                    <p>
+                                       <a id="para_1ce9bd91-680f-46c6-ab24-b5eccefc3953" shape="rect"></a>The Accept request would contain the following comma-separated parameters:</p>
+                                    <div class="itemizedlist">
+                                       <ul class="itemizedlist" style="list-style-type: none; ">
+                                          <li class="listitem" style="list-style-type: none">
+                                             <p>
+                                                <a id="para_150b9984-c227-4978-9eb3-c583979183ed" shape="rect"></a>Accept: multipart/related; type="image/jpx"; transfer-syntax=1.2.840.10008.1.2.4.92, multipart/related; type="image/jpx"; transfer-syntax=1.2.840.10008.1.2.4.93, multipart/related; type="image/jpeg"</p>
+                                          </li>
+                                       </ul>
+                                    </div>
+                                 </li>
+                                 <li class="listitem" style="list-style-type: none">
+                                    <p>
+                                       <a id="para_377cdd2c-37fe-43d2-8f9e-7f9967b9a3c7" shape="rect"></a>or alternatively, multiple Accept headers:</p>
+                                    <div class="itemizedlist">
+                                       <ul class="itemizedlist" style="list-style-type: none; ">
+                                          <li class="listitem" style="list-style-type: none">
+                                             <p>
+                                                <a id="para_9fa19caf-1383-47db-8c74-a6511e3fa399" shape="rect"></a>Accept: multipart/related; type="image/jpx"; transfer-syntax=1.2.840.10008.1.2.4.92,</p>
+                                          </li>
+                                          <li class="listitem" style="list-style-type: none">
+                                             <p>
+                                                <a id="para_4ad5fba5-de3e-40a9-a758-7ad0399a785f" shape="rect"></a>Accept: multipart/related; type="image/jpx"; transfer-syntax=1.2.840.10008.1.2.4.93</p>
+                                          </li>
+                                          <li class="listitem" style="list-style-type: none">
+                                             <p>
+                                                <a id="para_518254af-075c-4e6a-9808-5d9063d59c00" shape="rect"></a>Accept: multipart/related; type="image/jpeg"</p>
+                                          </li>
+                                       </ul>
+                                    </div>
+                                 </li>
+                              </ul>
+                           </div>
+                        </li>
+                     </ul>
+                  </div>
+               </div>
+            </div>
+            <div class="section">
+               <div class="titlepage">
+                  <div>
+                     <div>
+                        <h4 class="title">
+                           <a id="sect_6.5.1.2" shape="rect"></a>6.5.1.2 Response</h4>
+                     </div>
+                  </div>
+               </div>
+               <p>
+                  <a id="para_799420b5-043d-4f6f-8533-77ef6d640717" shape="rect"></a>The Server shall provide the document(s) indicated in the request. In order to parse the bulk data items it is necessary to also retrieve the metadata for the Study.</p>
+               <p>
+                  <a id="para_91d95a83-b2a4-43c4-920d-8d8e1f06a479" shape="rect"></a>The Server shall return the document(s), or an error code when the document(s) cannot be returned. If the server cannot convert all of the data to any of the requested media types/Transfer Syntaxes, then an error code shall be returned, either a "Not Acceptable" response if no data is returned or a "Partial Content" response if only some data is returned.</p>
+               <p>
+                  <a id="para_2fbf396e-95a2-47f5-9e2b-03b2f81c61b3" shape="rect"></a>The client can compare the SOP Instance UIDs or BulkDataURIs in the metadata and the message response to determine which bulk data elements have been returned.</p>
+               <p>
+                  <a id="para_05efc00c-752a-4053-9af9-503d161552dd" shape="rect"></a>All response formats have a media type of multipart/related with a message boundary separator. The response format depends on the Accept header specified in the request.</p>
+               <div class="section">
+                  <div class="titlepage">
+                     <div>
+                        <div>
+                           <h5 class="title">
+                              <a id="sect_6.5.1.2.1" shape="rect"></a>6.5.1.2.1 DICOM Response</h5>
+                        </div>
+                     </div>
+                  </div>
+                  <div class="itemizedlist">
+                     <ul class="itemizedlist" style="list-style-type: disc; ">
+                        <li class="listitem">
+                           <p>
+                              <a id="para_47fc0a51-913c-4e8f-8054-f5a47e6e993c" shape="rect"></a>Content-Type:</p>
+                           <div class="itemizedlist">
+                              <ul class="itemizedlist" style="list-style-type: circle; ">
+                                 <li class="listitem">
+                                    <p>
+                                       <a id="para_1c4c0d0a-5abd-4b27-b0e6-d39bb656315c" shape="rect"></a>multipart/related; type=application/dicom; boundary={MessageBoundary}</p>
+                                 </li>
+                              </ul>
+                           </div>
+                        </li>
+                        <li class="listitem">
+                           <p>
+                              <a id="para_da655bde-d9e4-40b8-803c-acc8605545b0" shape="rect"></a>The entire multipart response contains every instance for the specified Study that can be converted to one of the requested Transfer Syntaxes.</p>
+                        </li>
+                        <li class="listitem">
+                           <p>
+                              <a id="para_99a1a2f9-8f41-48de-be66-86efdc0170a5" shape="rect"></a>Each part in the multipart response represents a DICOM SOP Instance with the following http headers:</p>
+                           <div class="itemizedlist">
+                              <ul class="itemizedlist" style="list-style-type: circle; ">
+                                 <li class="listitem">
+                                    <p>
+                                       <a id="para_239f4ee8-25b7-40e3-b43c-22de8773e252" shape="rect"></a>Content-Type: application/dicom [dcm-parameters]</p>
+                                 </li>
+                              </ul>
+                           </div>
+                        </li>
+                     </ul>
+                  </div>
+                  <p>
+                     <a id="para_dec76485-9e2c-497b-ac99-51c229605542" shape="rect"></a>See <a class="xref" href="chapter_6.html#sect_6.1.3" title="6.1.3 Content-type Header Field" shape="rect">Section 6.1.3</a>.</p>
+               </div>
+               <div class="section">
+                  <div class="titlepage">
+                     <div>
+                        <div>
+                           <h5 class="title">
+                              <a id="sect_6.5.1.2.2" shape="rect"></a>6.5.1.2.2 Bulk Data Response</h5>
+                        </div>
+                     </div>
+                  </div>
+                  <div class="itemizedlist">
+                     <ul class="itemizedlist" style="list-style-type: disc; ">
+                        <li class="listitem">
+                           <p>
+                              <a id="para_f3467314-d6c6-4b26-a6a5-37fa9e775923" shape="rect"></a>Content-Type:</p>
+                           <div class="itemizedlist">
+                              <ul class="itemizedlist" style="list-style-type: circle; ">
+                                 <li class="listitem">
+                                    <p>
+                                       <a id="para_da8570f1-5580-4aa4-bd00-c8bfe9f54d3b" shape="rect"></a>multipart/related; type="application/octet-stream"; boundary={MessageBoundary} [dcm-parameters]</p>
+                                 </li>
+                                 <li class="listitem">
+                                    <p>
+                                       <a id="para_5838ac1d-867c-4427-9202-998daa6ef2bd" shape="rect"></a>multipart/related; type="{media-type}"; boundary={MessageBoundary} [dcm-parameters]</p>
+                                 </li>
+                              </ul>
+                           </div>
+                           <p>
+                              <a id="para_8e8f349d-9f5f-4cbb-a6f4-54ed57e23c2f" shape="rect"></a>See <a class="xref" href="chapter_6.html#sect_6.1.3" title="6.1.3 Content-type Header Field" shape="rect">Section 6.1.3</a>.</p>
+                        </li>
+                        <li class="listitem">
+                           <p>
+                              <a id="para_7585576b-6153-463c-9906-44191bae476b" shape="rect"></a>The entire multipart response contains all bulk data for the specified Study that can be converted to one of the requested media types.</p>
+                        </li>
+                        <li class="listitem">
+                           <p>
+                              <a id="para_266be24a-2599-4a58-8b4c-8af0bc0b4b89" shape="rect"></a>Each item in the response is one of:</p>
+                           <div class="itemizedlist">
+                              <ul class="itemizedlist" style="list-style-type: circle; ">
+                                 <li class="listitem">
+                                    <p>
+                                       <a id="para_becfc464-3867-4a36-bd49-cc8e7b2a76a2" shape="rect"></a>an uncompressed bulk data element encoded in Little Endian binary format with the following headers:</p>
+                                    <div class="itemizedlist">
+                                       <ul class="itemizedlist" style="list-style-type: square; ">
+                                          <li class="listitem">
+                                             <p>
+                                                <a id="para_6cdcafe9-d41b-4169-af93-632913dff9df" shape="rect"></a>Content-Type: application/octet-stream</p>
+                                          </li>
+                                          <li class="listitem">
+                                             <p>
+                                                <a id="para_8cf96a13-896e-4edf-8403-50296144ed65" shape="rect"></a>Content-Location: {BulkDataURI}</p>
+                                          </li>
+                                       </ul>
+                                    </div>
+                                 </li>
+                                 <li class="listitem">
+                                    <p>
+                                       <a id="para_c7d99b64-bc7c-413e-999b-8709679b0ba3" shape="rect"></a>an Encapsulated Document (0042,0011) bulk data element from a SOP Instance in the Study encoded in the media type specified in MIME Type of Encapsulated Document (0042,0012) in the Instance with the following header fields:</p>
+                                    <div class="itemizedlist">
+                                       <ul class="itemizedlist" style="list-style-type: square; ">
+                                          <li class="listitem">
+                                             <p>
+                                                <a id="para_73e48f23-9104-4d5f-91f6-dab86bb6f526" shape="rect"></a>Content-Type: {media-type}</p>
+                                          </li>
+                                          <li class="listitem">
+                                             <p>
+                                                <a id="para_694125e1-2e07-42f4-b6d2-3cf9be75a7b9" shape="rect"></a>Content-Location: {BulkDataURI}</p>
+                                          </li>
+                                       </ul>
+                                    </div>
+                                 </li>
+                                 <li class="listitem">
+                                    <p>
+                                       <a id="para_595dcddb-d600-4778-9eba-c428486e2353" shape="rect"></a>a compressed bulk data element from a SOP Instance in the Study encoded in a single-frame compression {MediaType} with the following headers:</p>
+                                    <div class="itemizedlist">
+                                       <ul class="itemizedlist" style="list-style-type: square; ">
+                                          <li class="listitem">
+                                             <p>
+                                                <a id="para_7c019759-4d6e-4599-bfdb-bee889868187" shape="rect"></a>Content-Type: {media-type} [dcm-parameters]</p>
+                                          </li>
+                                          <li class="listitem">
+                                             <p>
+                                                <a id="para_a1a9c1ad-27c9-442a-8f39-aad1c14acc2f" shape="rect"></a>Content-Location: {BulkDataURI}</p>
+                                          </li>
+                                       </ul>
+                                    </div>
+                                 </li>
+                                 <li class="listitem">
+                                    <p>
+                                       <a id="para_b0bdfddc-539c-4f40-844a-79accbcf3cc3" shape="rect"></a>a compressed frame from a multi-frame SOP Instance in the Study encoded in a single-frame media type with the following headers:</p>
+                                    <div class="itemizedlist">
+                                       <ul class="itemizedlist" style="list-style-type: square; ">
+                                          <li class="listitem">
+                                             <p>
+                                                <a id="para_87568e93-5178-4576-840b-3f536c8f6c9b" shape="rect"></a>Content-Type: {media-type} [dcm-parameters]</p>
+                                          </li>
+                                          <li class="listitem">
+                                             <p>
+                                                <a id="para_a7a1f207-a0f3-4966-9582-1f37786d5818" shape="rect"></a>Content-Location: {BulkDataURI}/frames/{FrameNumber}</p>
+                                             <div class="note" style="margin-left: 0.5in; margin-right: 0.5in;">
+                                                <h3 class="title">Note</h3>
+                                                <p>
+                                                   <a id="para_2992af6e-6380-4a80-8c3c-f5cd2e9f08ea" shape="rect"></a>Each frame will come in a separate part.</p>
+                                             </div>
+                                          </li>
+                                       </ul>
+                                    </div>
+                                 </li>
+                                 <li class="listitem">
+                                    <p>
+                                       <a id="para_838a705b-4088-4b90-858e-862be656fdcf" shape="rect"></a>all of the compressed frames from a SOP Instance in the Study encoded in a video media type with the following headers:</p>
+                                    <div class="itemizedlist">
+                                       <ul class="itemizedlist" style="list-style-type: square; ">
+                                          <li class="listitem">
+                                             <p>
+                                                <a id="para_c7220057-c756-499e-a3c8-db82e9a456f9" shape="rect"></a>Content-Type: {media-type} [dcm-parameters]</p>
+                                          </li>
+                                          <li class="listitem">
+                                             <p>
+                                                <a id="para_89e587a8-2d81-48de-b8af-bad95637c685" shape="rect"></a>Content-Location: {BulkDataURI}</p>
+                                          </li>
+                                       </ul>
+                                    </div>
+                                 </li>
+                              </ul>
+                           </div>
+                        </li>
+                     </ul>
+                  </div>
+               </div>
+            </div>
+         </div>
+      </div>
+      <div class="navfooter">
+         <hr />
+         <table width="100%" summary="Navigation footer">
+            <tr>
+               <td width="40%" align="left" rowspan="1" colspan="1">
+                  <a accesskey="p" href="sect_6.4.html" shape="rect">Prev</a> </td>
+               <td width="20%" align="center" rowspan="1" colspan="1">
+                  <a accesskey="u" href="chapter_6.html" shape="rect">Up</a>
+               </td>
+               <td width="40%" align="right" rowspan="1" colspan="1"> <a accesskey="n" href="sect_6.5.2.html" shape="rect">Next</a>
+               </td>
+            </tr>
+            <tr>
+               <td width="40%" align="left" valign="top" rowspan="1" colspan="1">6.4 Retired </td>
+               <td width="20%" align="center" rowspan="1" colspan="1">
+                  <a accesskey="h" href="PS3.18.html" shape="rect">Home</a>
+               </td>
+               <td width="40%" align="right" valign="top" rowspan="1" colspan="1"> 6.5.2 WADO-RS - RetrieveSeries</td>
+            </tr>
+         </table>
+      </div>
+      <table xmlns="" xmlns:d="http://docbook.org/ns/docbook" width="100%">
+         <tr>
+            <th colspan="1" align="center" rowspan="1">
+               <span class="documentreleaseinformation">DICOM PS3.18 2019a - Web Services</span>
+            </th>
+         </tr>
+      </table>
+   </body>
+</html>
