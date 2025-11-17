@@ -1,66 +1,185 @@
-plugins {
-    id 'java'
-    id 'maven-publish'
-    id 'idea'
-    id 'eclipse'
+/*
+ * xnat-dicomweb-proxy: build.gradle
+ * XNAT http://www.xnat.org
+ * Copyright (c) 2005-2024, Washington University School of Medicine
+ * All Rights Reserved
+ *
+ * Released under the Simplified BSD.
+ */
+
+buildscript {
+    ext {
+        vXnat = "1.9.2"
+        pluginAppName = "XNAT DICOMweb Proxy Plugin"
+    }
 }
 
-def pluginVersion = '1.1.1'
-def vXnat = "1.9.0"
+plugins {
+    id "eclipse"
+    id "idea"
+    id "java"
+    id "maven-publish"
+    id "jacoco"
+    id "com.palantir.git-version" version "0.12.1"
+    id "io.spring.dependency-management" version "1.1.7"
+    id "io.franzbecker.gradle-lombok" version "4.0.0"
+}
 
-group 'org.nrg.xnat'
-version pluginVersion
+group "org.nrg.xnatx.plugins"
+version "1.0.0-SNAPSHOT"
+description "XNAT DICOMweb Proxy Plugin"
+
+java {
+    sourceCompatibility = JavaVersion.VERSION_1_8
+    targetCompatibility = JavaVersion.VERSION_1_8
+}
 
 repositories {
-    maven { url "https://plugins.gradle.org/m2/" }
     mavenLocal()
     maven { url "https://nrgxnat.jfrog.io/nrgxnat/libs-release" }
-    maven { url "https://nrgxnat.jfrog.io/artifactory/libs-release" }
     maven { url "https://nrgxnat.jfrog.io/nrgxnat/libs-snapshot" }
     mavenCentral()
     maven { url "https://www.dcm4che.org/maven2/" }
     maven { url "https://oss.sonatype.org/content/repositories/releases/" }
 }
 
-sourceCompatibility = JavaVersion.VERSION_1_8
-targetCompatibility = JavaVersion.VERSION_1_8
-
-compileJava {
-    options.fork = false
+dependencyManagement {
+    imports {
+        mavenBom("org.nrg:parent:${vXnat}")
+    }
+    generatedPomCustomization {
+        enabled = false
+    }
 }
+
+// Extract versions from parent BOM
+def vLombok = dependencyManagement.importedProperties["lombok.version"] as String
+def vLombokChecksum = dependencyManagement.importedProperties["lombok.checksum"] as String
 
 configurations {
-    all*.exclude group: 'edu.ucar', module: 'netcdf'
-    all*.exclude group: 'jakarta-regexp'
-    all*.exclude group: 'net.sf.saxon', module: 'Saxon-B'
-    all*.exclude group: 'org.apache.geronimo.specs'
-    all*.exclude group: 'javax.sql', module: 'jdbc-stdext'
-    all*.exclude group: 'javax.transaction', module: 'jta'
-    all*.exclude group: 'javax.servlet', module: 'servlet-api'
+    all {
+        exclude group: "edu.ucar", module: "netcdf"
+        exclude group: "jakarta-regexp"
+        exclude group: "net.sf.saxon", module: "Saxon-B"
+        exclude group: "org.apache.geronimo.specs"
+        exclude group: "javax.sql", module: "jdbc-stdext"
+        exclude group: "javax.transaction", module: "jta"
+        exclude group: "javax.servlet", module: "servlet-api"
+        exclude group: "com.sun.media", module: "jai_imageio"
+    }
+    implementation.extendsFrom(implementAndInclude)
 }
 
-configurations.testRuntimeClasspath {
-    exclude group: 'com.sun.media', module: 'jai_imageio'
+// Pulls in the Jenkins BUILD_NUMBER environment variable if available.
+def buildDate = new Date()
+def buildNumber = System.getenv().BUILD_NUMBER?.toInteger() ?: "Manual"
+def isDirty, branchName, gitHash, gitHashFull, commitDistance, lastTag, isCleanTag
+
+try {
+    def gitDetails = versionDetails()
+    isDirty = gitVersion().endsWith ".dirty"
+    branchName = gitDetails.branchName ?: "Unknown"
+    gitHash = gitDetails.gitHash
+    gitHashFull = gitDetails.gitHashFull
+    commitDistance = gitDetails.commitDistance
+    lastTag = gitDetails.lastTag
+    isCleanTag = gitDetails.isCleanTag
+} catch (IllegalArgumentException e) {
+    logger.info "Got an error trying to read VCS metadata from git. It's possible this project is not under VCS control. Using placeholder values for manifest entries."
+    isDirty = true
+    branchName = "Unknown"
+    gitHash = "None"
+    gitHashFull = "None"
+    commitDistance = 0
+    lastTag = "None"
+    isCleanTag = false
+}
+
+ext.gitManifest = manifest {
+    attributes "Application-Name": project.description,
+            "Build-Date": buildDate,
+            "Build-Number": buildNumber,
+            "Implementation-Version": project.version,
+            "Implementation-Sha": gitHash,
+            "Implementation-Sha-Full": gitHashFull,
+            "Implementation-Commit": commitDistance,
+            "Implementation-LastTag": lastTag,
+            "Implementation-Branch": branchName,
+            "Implementation-CleanTag": isCleanTag,
+            "Implementation-Dirty": isDirty
+}
+
+logger.debug """
+Building artifacts with manifest attributes:
+
+ * Build-Date:              ${buildDate}
+ * Build-Number:            ${buildNumber}
+ * Implementation-Version:  ${version}
+ * Implementation-Sha-Full: ${gitHashFull}
+ * Implementation-Sha:      ${gitHash}
+ * Implementation-Commit:   ${commitDistance}
+ * Implementation-LastTag:  ${lastTag}
+ * Implementation-Branch:   ${branchName}
+ * Implementation-CleanTag: ${isCleanTag}
+ * Implementation-Dirty:    ${isDirty}
+"""
+
+// Lombok configuration
+lombok {
+    version = vLombok
+    sha256 = vLombokChecksum
+}
+
+jacocoTestReport {
+    dependsOn test
+    reports {
+        xml {
+            required = false
+        }
+        csv {
+            required = true
+        }
+        html {
+            required = true
+        }
+    }
+}
+
+test {
+    useJUnit()
+    testLogging {
+        events "passed", "skipped", "failed"
+        exceptionFormat "full"
+    }
 }
 
 dependencies {
-    // Import the XNAT parent BOM using Gradle's native support
-    implementation platform("org.nrg:parent:${vXnat}")
+    // Use enforced platform to ensure consistent versions
+    implementation enforcedPlatform("org.nrg:parent:${vXnat}") {
+        exclude group: "org.mockito"
+    }
+
+    // Annotation Processing
+    annotationProcessor "org.nrg:framework"
+    annotationProcessor "org.projectlombok:lombok:${vLombok}"
+    compileOnly "org.projectlombok:lombok:${vLombok}"
+
+    // Compile-only dependencies (provided by XNAT container)
     compileOnly "org.slf4j:slf4j-api"
     compileOnly "log4j:log4j"
     compileOnly 'javax.servlet:javax.servlet-api'
-    compileOnly 'com.google.guava:guava:20.0'
-    compileOnly 'commons-lang:commons-lang:2.6'
-    compileOnly 'com.fasterxml.jackson.core:jackson-core:2.13.4'
-    compileOnly 'com.fasterxml.jackson.core:jackson-annotations:2.13.4'
-    compileOnly 'com.fasterxml.jackson.core:jackson-databind:2.13.4'
-    compileOnly 'org.hibernate.javax.persistence:hibernate-jpa-2.1-api:1.0.0.Final'
-    compileOnly 'javax.inject:javax.inject:1'
-    compileOnly "org.nrg.xnat:web:${vXnat}"
-    compileOnly "org.nrg.xnat:xnat-data-models:${vXnat}"
-    compileOnly "org.nrg.xdat:core:${vXnat}"
-    compileOnly("org.nrg:framework:${vXnat}")
-    compileOnly "org.nrg:config:${vXnat}"
+    compileOnly 'com.google.guava:guava'
+    compileOnly 'commons-lang:commons-lang'
+    compileOnly 'com.fasterxml.jackson.core:jackson-core'
+    compileOnly 'com.fasterxml.jackson.core:jackson-annotations'
+    compileOnly 'com.fasterxml.jackson.core:jackson-databind'
+    compileOnly 'org.hibernate.javax.persistence:hibernate-jpa-2.1-api'
+    compileOnly 'javax.inject:javax.inject'
+    compileOnly "org.nrg.xnat:web"
+    compileOnly "org.nrg.xnat:xnat-data-models"
+    compileOnly "org.nrg.xdat:core"
+    compileOnly "org.nrg:framework"
+    compileOnly "org.nrg:config"
     compileOnly "org.springframework:spring-beans"
     compileOnly "org.springframework:spring-context"
     compileOnly "org.springframework:spring-web"
@@ -68,59 +187,130 @@ dependencies {
     compileOnly "io.springfox:springfox-swagger2"
     compileOnly "io.springfox:springfox-swagger-ui"
 
-    // DCM4CHE for DICOMweb support
-    compileOnly "org.dcm4che:dcm4che-core:5.29.2"
-    compileOnly "org.dcm4che:dcm4che-json:5.29.2"
-    compileOnly "org.dcm4che:dcm4che-imageio:5.29.2"
-    compileOnly "org.dcm4che:dcm4che-image:5.29.2"
-    compileOnly "org.dcm4che:dcm4che-net:5.29.2"
+    // DCM4CHE dependencies for DICOMweb support (included in plugin)
+    implementAndInclude 'org.dcm4che:dcm4che-core'
+    implementAndInclude 'org.dcm4che:dcm4che-json'
+    implementAndInclude 'org.dcm4che:dcm4che-imageio'
+    implementAndInclude 'org.dcm4che:dcm4che-image'
+    implementAndInclude 'org.dcm4che:dcm4che-net'
 
-    // Additional dependencies
-    compileOnly 'commons-io:commons-io:2.11.0'
-    compileOnly 'org.apache.commons:commons-compress:1.21'
+    // Additional dependencies (included in plugin)
+    implementAndInclude 'commons-io:commons-io'
+    implementAndInclude 'org.apache.commons:commons-compress'
 
-    testImplementation group: 'junit', name: 'junit'
+    // Test dependencies
+    testImplementation 'junit:junit'
     testImplementation "org.springframework:spring-test"
-    testImplementation "org.mockito:mockito-core:4.8.0"
-    testImplementation "javax.servlet:javax.servlet-api"
-    testImplementation ("org.nrg.xnat:xnat-data-models:${vXnat}") {
-        exclude group: 'com.sun.media', module: 'jai_imageio'
-    }
-    testImplementation ("org.nrg.xdat:core:${vXnat}") {
-        exclude group: 'com.sun.media', module: 'jai_imageio'
-    }
-    testImplementation ("org.nrg.xnat:web:${vXnat}") {
-        exclude group: 'com.sun.media', module: 'jai_imageio'
-    }
-    testImplementation ("org.nrg:framework:${vXnat}") {
-        exclude group: 'com.sun.media', module: 'jai_imageio'
-    }
-    // Test dependencies that need actual implementations
-    testImplementation "org.dcm4che:dcm4che-core:5.29.2"
-    testImplementation "org.dcm4che:dcm4che-json:5.29.2"
-    testImplementation("org.dcm4che:dcm4che-imageio:5.29.2") {
-        exclude group: 'com.sun.media', module: 'jai_imageio'
-    }
-    testImplementation("org.dcm4che:dcm4che-image:5.29.2") {
-        exclude group: 'com.sun.media', module: 'jai_imageio'
-    }
+    testImplementation 'org.mockito:mockito-core'
+    testImplementation 'javax.servlet:javax.servlet-api'
+    testImplementation "org.nrg.xnat:xnat-data-models"
+    testImplementation "org.nrg.xdat:core"
+    testImplementation "org.nrg.xnat:web"
+    testImplementation "org.nrg:framework"
+    testImplementation 'org.dcm4che:dcm4che-core'
+    testImplementation 'org.dcm4che:dcm4che-json'
+    testImplementation 'org.dcm4che:dcm4che-imageio'
+    testImplementation 'org.dcm4che:dcm4che-image'
     testImplementation "org.slf4j:slf4j-api"
-    testImplementation "org.slf4j:slf4j-simple:1.7.30"
+    testImplementation "org.slf4j:slf4j-simple"
+}
+
+tasks.withType(JavaCompile) {
+    options.encoding = 'UTF-8'
+    options.incremental = true
+}
+
+task sourceJar(type: Jar, dependsOn: classes) {
+    archiveClassifier.set "sources"
+    manifest {
+        from gitManifest
+    }
+    from sourceSets.main.allSource
+}
+
+task javadocJar(type: Jar, dependsOn: javadoc) {
+    archiveClassifier.set "javadoc"
+    manifest {
+        from gitManifest
+    }
+    from javadoc.destinationDir
 }
 
 jar {
+    dependsOn test, sourceJar, javadocJar
+    duplicatesStrategy = DuplicatesStrategy.EXCLUDE
     manifest {
-        attributes(
-                'Implementation-Title': 'XNAT DICOMweb Proxy Plugin',
-                'Implementation-Version': version
-        )
+        from gitManifest
     }
+}
+
+task xnatPluginJar(type: Jar) {
+    dependsOn test, sourceJar, javadocJar
+    zip64 true
+    archiveClassifier.set "xpl"
+    duplicatesStrategy = DuplicatesStrategy.EXCLUDE
+    manifest {
+        from gitManifest
+    }
+    // files and folders with "-dev" or "--xx" in their name
+    // will not be in the compiled jar
+    exclude "**/resources/**/*-dev**"
+    exclude "**/resources/**/*--xx**"
+    from {
+        configurations.implementAndInclude.collect { it.isDirectory() ? it : zipTree(it) }
+    } {
+        exclude "META-INF/*.SF"
+        exclude "META-INF/*.DSA"
+        exclude "META-INF/*.RSA"
+    }
+    with jar
+}
+
+javadoc {
+    options.encoding = 'UTF-8'
+    options.addStringOption('Xdoclint:none', '-quiet')
 }
 
 publishing {
     publications {
         mavenJava(MavenPublication) {
-            artifact jar
+            artifacts {
+                artifact sourceJar
+                artifact javadocJar
+                artifact xnatPluginJar
+            }
+
+            pom.withXml {
+                def root = asNode()
+                root.appendNode("name", project.description)
+                root.appendNode("description", "DICOM Web API proxy implementation for XNAT")
+                root.appendNode("url", "https://github.com/xnat/xnat-dicomweb-proxy")
+                root.appendNode("inceptionYear", "2024")
+
+                root.appendNode("scm").with {
+                    appendNode("url", "https://github.com/xnat/xnat-dicomweb-proxy")
+                    appendNode("connection", "scm:git:https://github.com/xnat/xnat-dicomweb-proxy.git")
+                    appendNode("developerConnection", "scm:git@github.com:xnat/xnat-dicomweb-proxy.git")
+                }
+
+                root.appendNode("licenses").appendNode("license").with {
+                    appendNode("name", "Simplified BSD 2-Clause License")
+                    appendNode("url", "https://xnat.org/about/license.php")
+                    appendNode("distribution", "repo")
+                }
+
+                root.appendNode("developers").appendNode("developer").with {
+                    appendNode("name", "XNAT Development Team")
+                    appendNode("email", "support@xnat.org")
+                }
+            }
+        }
+    }
+    repositories {
+        maven {
+            url "https://nrgxnat.jfrog.io/nrgxnat/libs-${project.version.endsWith("-SNAPSHOT") ? "snapshot" : "release"}"
+            // The value for name must match <id> in ~/.m2/settings.xml
+            name = "XNAT_Artifactory"
         }
     }
 }
