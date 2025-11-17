@@ -146,7 +146,7 @@ public class StowRsApi extends AbstractXapiRestController {
             throw new IllegalArgumentException("No boundary found in Content-Type header");
         }
 
-        logger.debug("Parsing multipart request with boundary: {}", boundary);
+        logger.info("Parsing multipart request with boundary: {}", boundary);
 
         // Read and parse multipart body
         ServletInputStream input = request.getInputStream();
@@ -169,7 +169,9 @@ public class StowRsApi extends AbstractXapiRestController {
 
         // Parse the complete buffer
         byte[] fullData = buffer.toByteArray();
+        logger.info("Read {} bytes of multipart data", fullData.length);
         List<byte[]> parts = splitMultipart(fullData, boundaryBytes);
+        logger.info("Split into {} parts", parts.size());
 
         for (byte[] part : parts) {
             // Skip empty parts
@@ -180,11 +182,13 @@ public class StowRsApi extends AbstractXapiRestController {
             // Find end of headers (double CRLF)
             int headerEnd = findHeaderEnd(part);
             if (headerEnd == -1) {
+                logger.debug("Part {} has no header end, skipping (length: {})", parts.indexOf(part), part.length);
                 continue;
             }
 
             // Extract headers and body
             String headers = new String(part, 0, headerEnd, "US-ASCII");
+            logger.debug("Part headers: {}", headers.replace("\r\n", " | "));
 
             // Check if this part contains DICOM data
             if (headers.toLowerCase().contains("application/dicom")) {
