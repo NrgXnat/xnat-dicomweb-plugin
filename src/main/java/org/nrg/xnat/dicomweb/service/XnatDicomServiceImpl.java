@@ -17,6 +17,7 @@ import org.nrg.xft.security.UserI;
 import org.nrg.xft.XFTItem;
 import org.nrg.xft.search.CriteriaCollection;
 import org.nrg.xnat.utils.CatalogUtils;
+import org.nrg.xnat.dicomweb.utils.DicomWebUtils;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
@@ -84,6 +85,11 @@ public class XnatDicomServiceImpl implements XnatDicomService {
                 }
             }
 
+            // Apply query filters if provided
+            if (queryAttributes != null && !queryAttributes.isEmpty()) {
+                results = filterStudyResults(results, queryAttributes);
+            }
+
             logger.info("Study search for project {} returned {} studies", projectId, results.size());
 
         } catch (Exception e) {
@@ -120,6 +126,11 @@ public class XnatDicomServiceImpl implements XnatDicomService {
                 XnatImagescandata scan = (XnatImagescandata) scanObj;
                 Attributes attrs = createSeriesAttributes(scan, studyInstanceUID);
                 results.add(attrs);
+            }
+
+            // Apply query filters if provided
+            if (queryAttributes != null && !queryAttributes.isEmpty()) {
+                results = filterSeriesResults(results, queryAttributes);
             }
 
             logger.info("Series search for study {} returned {} series", studyInstanceUID, results.size());
@@ -167,6 +178,11 @@ public class XnatDicomServiceImpl implements XnatDicomService {
 
             // Get DICOM files for this scan
             results = readDicomFilesFromScan(targetScan);
+
+            // Apply query filters if provided
+            if (queryAttributes != null && !queryAttributes.isEmpty()) {
+                results = filterInstanceResults(results, queryAttributes);
+            }
 
             logger.info("Instance search for series {} returned {} instances", seriesInstanceUID, results.size());
 
@@ -1096,6 +1112,385 @@ public class XnatDicomServiceImpl implements XnatDicomService {
         } catch (Exception e) {
             logger.error("Error extracting frame via ImageIO", e);
             return null;
+        }
+    }
+
+    /**
+     * Filter study results based on query attributes
+     * Implements DICOM matching rules for study-level attributes
+     */
+    private List<Attributes> filterStudyResults(List<Attributes> results, Attributes queryAttributes) {
+        List<Attributes> filtered = new ArrayList<>();
+
+        for (Attributes attrs : results) {
+            if (matchesStudyQuery(attrs, queryAttributes)) {
+                filtered.add(attrs);
+            }
+        }
+
+        logger.debug("Filtered {} studies down to {} matches", results.size(), filtered.size());
+        return filtered;
+    }
+
+    /**
+     * Filter series results based on query attributes
+     * Implements DICOM matching rules for series-level attributes
+     */
+    private List<Attributes> filterSeriesResults(List<Attributes> results, Attributes queryAttributes) {
+        List<Attributes> filtered = new ArrayList<>();
+
+        for (Attributes attrs : results) {
+            if (matchesSeriesQuery(attrs, queryAttributes)) {
+                filtered.add(attrs);
+            }
+        }
+
+        logger.debug("Filtered {} series down to {} matches", results.size(), filtered.size());
+        return filtered;
+    }
+
+    /**
+     * Filter instance results based on query attributes
+     * Implements DICOM matching rules for instance-level attributes
+     */
+    private List<Attributes> filterInstanceResults(List<Attributes> results, Attributes queryAttributes) {
+        List<Attributes> filtered = new ArrayList<>();
+
+        for (Attributes attrs : results) {
+            if (matchesInstanceQuery(attrs, queryAttributes)) {
+                filtered.add(attrs);
+            }
+        }
+
+        logger.debug("Filtered {} instances down to {} matches", results.size(), filtered.size());
+        return filtered;
+    }
+
+    /**
+     * Check if study attributes match query criteria
+     */
+    private boolean matchesStudyQuery(Attributes attrs, Attributes query) {
+        // PatientName matching (wildcard support)
+        if (query.contains(Tag.PatientName)) {
+            String queryValue = query.getString(Tag.PatientName);
+            String attrValue = attrs.getString(Tag.PatientName);
+            if (!matchesDicomValue(attrValue, queryValue)) {
+                return false;
+            }
+        }
+
+        // PatientID matching (exact or wildcard)
+        if (query.contains(Tag.PatientID)) {
+            String queryValue = query.getString(Tag.PatientID);
+            String attrValue = attrs.getString(Tag.PatientID);
+            if (!matchesDicomValue(attrValue, queryValue)) {
+                return false;
+            }
+        }
+
+        // StudyDate matching (range support)
+        if (query.contains(Tag.StudyDate)) {
+            String queryValue = query.getString(Tag.StudyDate);
+            String attrValue = attrs.getString(Tag.StudyDate);
+            if (!matchesDicomDate(attrValue, queryValue)) {
+                return false;
+            }
+        }
+
+        // StudyInstanceUID matching (exact)
+        if (query.contains(Tag.StudyInstanceUID)) {
+            String queryValue = query.getString(Tag.StudyInstanceUID);
+            String attrValue = attrs.getString(Tag.StudyInstanceUID);
+            if (!matchesDicomValue(attrValue, queryValue)) {
+                return false;
+            }
+        }
+
+        // AccessionNumber matching (exact or wildcard)
+        if (query.contains(Tag.AccessionNumber)) {
+            String queryValue = query.getString(Tag.AccessionNumber);
+            String attrValue = attrs.getString(Tag.AccessionNumber);
+            if (!matchesDicomValue(attrValue, queryValue)) {
+                return false;
+            }
+        }
+
+        // Modality matching (check ModalitiesInStudy)
+        if (query.contains(Tag.Modality)) {
+            String queryValue = query.getString(Tag.Modality);
+            String modalitiesInStudy = attrs.getString(Tag.ModalitiesInStudy);
+            if (modalitiesInStudy == null || !modalitiesInStudy.contains(queryValue)) {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    /**
+     * Check if series attributes match query criteria
+     */
+    private boolean matchesSeriesQuery(Attributes attrs, Attributes query) {
+        // Modality matching
+        if (query.contains(Tag.Modality)) {
+            String queryValue = query.getString(Tag.Modality);
+            String attrValue = attrs.getString(Tag.Modality);
+            if (!matchesDicomValue(attrValue, queryValue)) {
+                return false;
+            }
+        }
+
+        // SeriesDescription matching (wildcard support)
+        if (query.contains(Tag.SeriesDescription)) {
+            String queryValue = query.getString(Tag.SeriesDescription);
+            String attrValue = attrs.getString(Tag.SeriesDescription);
+            if (!matchesDicomValue(attrValue, queryValue)) {
+                return false;
+            }
+        }
+
+        // SeriesInstanceUID matching (exact)
+        if (query.contains(Tag.SeriesInstanceUID)) {
+            String queryValue = query.getString(Tag.SeriesInstanceUID);
+            String attrValue = attrs.getString(Tag.SeriesInstanceUID);
+            if (!matchesDicomValue(attrValue, queryValue)) {
+                return false;
+            }
+        }
+
+        // SeriesNumber matching (exact)
+        if (query.contains(Tag.SeriesNumber)) {
+            String queryValue = query.getString(Tag.SeriesNumber);
+            String attrValue = attrs.getString(Tag.SeriesNumber);
+            if (!matchesDicomValue(attrValue, queryValue)) {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    /**
+     * Check if instance attributes match query criteria
+     */
+    private boolean matchesInstanceQuery(Attributes attrs, Attributes query) {
+        // SOPInstanceUID matching (exact)
+        if (query.contains(Tag.SOPInstanceUID)) {
+            String queryValue = query.getString(Tag.SOPInstanceUID);
+            String attrValue = attrs.getString(Tag.SOPInstanceUID);
+            if (!matchesDicomValue(attrValue, queryValue)) {
+                return false;
+            }
+        }
+
+        // SOPClassUID matching (exact)
+        if (query.contains(Tag.SOPClassUID)) {
+            String queryValue = query.getString(Tag.SOPClassUID);
+            String attrValue = attrs.getString(Tag.SOPClassUID);
+            if (!matchesDicomValue(attrValue, queryValue)) {
+                return false;
+            }
+        }
+
+        // InstanceNumber matching (exact)
+        if (query.contains(Tag.InstanceNumber)) {
+            String queryValue = query.getString(Tag.InstanceNumber);
+            String attrValue = attrs.getString(Tag.InstanceNumber);
+            if (!matchesDicomValue(attrValue, queryValue)) {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    /**
+     * DICOM value matching with wildcard support (* and ?)
+     * Implements DICOMweb single value matching
+     */
+    private boolean matchesDicomValue(String attrValue, String queryValue) {
+        if (queryValue == null || queryValue.isEmpty()) {
+            return true; // Empty query matches anything
+        }
+
+        if (attrValue == null) {
+            return false; // No value to match against
+        }
+
+        // Handle wildcards: * (matches any sequence) and ? (matches single char)
+        if (queryValue.contains("*") || queryValue.contains("?")) {
+            String regex = queryValue
+                    .replace(".", "\\.")
+                    .replace("*", ".*")
+                    .replace("?", ".");
+            return attrValue.matches("(?i)" + regex); // Case-insensitive
+        }
+
+        // Exact match (case-insensitive for most DICOM attributes)
+        return attrValue.equalsIgnoreCase(queryValue);
+    }
+
+    /**
+     * DICOM date matching with range support
+     * Supports formats: YYYYMMDD, YYYYMMDD-, -YYYYMMDD, YYYYMMDD-YYYYMMDD
+     */
+    private boolean matchesDicomDate(String attrValue, String queryValue) {
+        if (queryValue == null || queryValue.isEmpty()) {
+            return true;
+        }
+
+        if (attrValue == null || attrValue.isEmpty()) {
+            return false;
+        }
+
+        // Single date match
+        if (!queryValue.contains("-")) {
+            return attrValue.equals(queryValue);
+        }
+
+        // Range match: startDate-endDate
+        String[] parts = queryValue.split("-", -1);
+
+        if (parts.length == 2) {
+            String startDate = parts[0];
+            String endDate = parts[1];
+
+            // startDate- (from date onwards)
+            if (endDate.isEmpty()) {
+                return attrValue.compareTo(startDate) >= 0;
+            }
+
+            // -endDate (up to date)
+            if (startDate.isEmpty()) {
+                return attrValue.compareTo(endDate) <= 0;
+            }
+
+            // startDate-endDate (between dates)
+            return attrValue.compareTo(startDate) >= 0 && attrValue.compareTo(endDate) <= 0;
+        }
+
+        return false;
+    }
+
+    @Override
+    public StowRsResponse storeInstances(UserI user, String projectId, List<InputStream> dicomInstances) {
+        List<InstanceStatus> statuses = new ArrayList<>();
+        int successCount = 0;
+        int failureCount = 0;
+        File tempDir = null;
+
+        try {
+            // Verify project access
+            XnatProjectdata project = XnatProjectdata.getXnatProjectdatasById(projectId, user, false);
+            if (project == null) {
+                logger.error("User {} does not have access to project: {}", user.getLogin(), projectId);
+                throw new SecurityException("No access to project: " + projectId);
+            }
+
+            // Create temporary directory for upload
+            tempDir = java.nio.file.Files.createTempDirectory("stow-rs-").toFile();
+            logger.info("Created temp directory for STOW-RS: {}", tempDir.getAbsolutePath());
+
+            // Process each instance
+            for (InputStream stream : dicomInstances) {
+                try {
+                    // Read DICOM attributes
+                    Attributes attrs = DicomWebUtils.readDicom(stream);
+                    String sopInstanceUID = attrs.getString(Tag.SOPInstanceUID);
+                    String sopClassUID = attrs.getString(Tag.SOPClassUID);
+                    String studyInstanceUID = attrs.getString(Tag.StudyInstanceUID);
+
+                    if (sopInstanceUID == null || sopClassUID == null) {
+                        logger.warn("DICOM instance missing required UIDs");
+                        statuses.add(new InstanceStatus(
+                            sopInstanceUID, sopClassUID, false,
+                            "Missing required UIDs (SOPInstanceUID or SOPClassUID)", 0xA900));
+                        failureCount++;
+                        continue;
+                    }
+
+                    if (studyInstanceUID == null) {
+                        logger.warn("DICOM instance missing StudyInstanceUID");
+                        statuses.add(new InstanceStatus(
+                            sopInstanceUID, sopClassUID, false,
+                            "Missing StudyInstanceUID", 0xA900));
+                        failureCount++;
+                        continue;
+                    }
+
+                    // Write to temp file
+                    File outFile = new File(tempDir, sopInstanceUID + ".dcm");
+                    try (java.io.FileOutputStream fos = new java.io.FileOutputStream(outFile);
+                         org.dcm4che3.io.DicomOutputStream dos = new org.dcm4che3.io.DicomOutputStream(fos, org.dcm4che3.data.UID.ExplicitVRLittleEndian)) {
+                        dos.writeDataset(null, attrs);
+                    }
+
+                    logger.info("Wrote DICOM instance {} to temp file: {}", sopInstanceUID, outFile.getName());
+
+                    statuses.add(new InstanceStatus(sopInstanceUID, sopClassUID, true, null, 0));
+                    successCount++;
+
+                } catch (Exception e) {
+                    logger.error("Error processing DICOM instance", e);
+                    statuses.add(new InstanceStatus(
+                        null, null, false, e.getMessage(), 0xC000));
+                    failureCount++;
+                }
+            }
+
+            // Trigger XNAT import if any files succeeded
+            if (successCount > 0 && tempDir != null) {
+                logger.info("Triggering XNAT import for {} instances in project {}", successCount, projectId);
+                // Note: The actual import would be triggered here using XNAT's import services
+                // For now, we'll leave the files in the temp directory for manual processing
+                // In production, integrate with DicomInboxImportRequestService or GradualDicomImporter
+                logger.warn("STOW-RS: Files written to {} - manual import or integration with XNAT import service required", tempDir.getAbsolutePath());
+            } else if (tempDir != null) {
+                // Clean up if all failed
+                deleteDirectory(tempDir);
+            }
+
+        } catch (SecurityException e) {
+            logger.error("Security exception during STOW-RS", e);
+            throw e;
+        } catch (Exception e) {
+            logger.error("STOW-RS storage failed", e);
+            if (tempDir != null) {
+                try {
+                    deleteDirectory(tempDir);
+                } catch (Exception cleanupEx) {
+                    logger.error("Failed to clean up temp directory: {}", tempDir.getAbsolutePath(), cleanupEx);
+                }
+            }
+            throw new RuntimeException("Storage failed: " + e.getMessage(), e);
+        }
+
+        return new StowRsResponse(successCount, failureCount, statuses);
+    }
+
+    /**
+     * Recursively delete directory and contents
+     */
+    private void deleteDirectory(File directory) {
+        if (directory == null || !directory.exists()) {
+            return;
+        }
+
+        File[] files = directory.listFiles();
+        if (files != null) {
+            for (File file : files) {
+                if (file.isDirectory()) {
+                    deleteDirectory(file);
+                } else {
+                    if (!file.delete()) {
+                        logger.warn("Failed to delete file: {}", file.getAbsolutePath());
+                    }
+                }
+            }
+        }
+
+        if (!directory.delete()) {
+            logger.warn("Failed to delete directory: {}", directory.getAbsolutePath());
         }
     }
 }

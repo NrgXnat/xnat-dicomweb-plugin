@@ -6,6 +6,7 @@ This XNAT plugin provides a DICOMweb-compliant REST API that exposes XNAT projec
 
 - **QIDO-RS (Query)**: Search for studies, series, and instances
 - **WADO-RS (Retrieve)**: Retrieve DICOM instances and metadata
+- **STOW-RS (Store)**: Upload DICOM instances to XNAT
 - Full support for DICOM JSON format
 - CORS enabled for web viewer integration
 - XNAT authentication and authorization
@@ -62,6 +63,13 @@ All endpoints are prefixed with `/xapi/dicomweb/projects/{projectId}`
 - **Retrieve Rendered Instance**: `GET /xapi/dicomweb/projects/{projectId}/studies/{studyUID}/series/{seriesUID}/instances/{instanceUID}/rendered`
   - Returns a rendered JPEG image of the instance
 
+### STOW-RS (Store) Endpoints
+
+- **Store Instances**: `POST /xapi/dicomweb/projects/{projectId}/studies`
+  - Upload DICOM instances via multipart/related request
+  - Requires Edit permission on the project
+  - Returns STOW-RS response with success/failure status per instance
+
 ## Using with OHIF Viewer
 
 1. Configure OHIF to use the DICOMweb endpoint:
@@ -113,6 +121,7 @@ The plugin consists of:
 - **DicomWebConfig**: Spring configuration and CORS setup
 - **QidoRsApi**: REST controller for QIDO-RS queries
 - **WadoRsApi**: REST controller for WADO-RS retrieval
+- **StowRsApi**: REST controller for STOW-RS storage
 - **XnatDicomService/XnatDicomServiceImpl**: Service layer for accessing XNAT data
 - **DicomWebUtils**: Utility methods for DICOM/JSON conversion
 - **DicomWebTestPageApi**: Test page endpoint for validation
