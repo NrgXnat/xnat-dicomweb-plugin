@@ -131,6 +131,7 @@ public class StowRsApi extends AbstractXapiRestController {
 
     /**
      * Parse multipart/related request containing DICOM instances
+     * Uses a simpler, more robust parsing approach
      */
     private List<InputStream> parseMultipartRequest(HttpServletRequest request) throws Exception {
         List<InputStream> streams = new ArrayList<>();
@@ -146,69 +147,90 @@ public class StowRsApi extends AbstractXapiRestController {
             throw new IllegalArgumentException("No boundary found in Content-Type header");
         }
 
-        logger.info("Parsing multipart request with boundary: {}", boundary);
+        logger.info("STOW-RS: Parsing multipart request with boundary: '{}'", boundary);
 
-        // Read and parse multipart body
+        // Read entire request body
         ServletInputStream input = request.getInputStream();
-        byte[] boundaryBytes = ("--" + boundary).getBytes("US-ASCII");
-        byte[] endBoundaryBytes = ("--" + boundary + "--").getBytes("US-ASCII");
-
         ByteArrayOutputStream buffer = new ByteArrayOutputStream();
-        boolean inPart = false;
-        boolean inHeaders = false;
-        boolean inBody = false;
-        int lineStart = 0;
-
-        // Simple multipart parser
-        byte[] data = new byte[MAX_BUFFER_SIZE];
+        byte[] chunk = new byte[MAX_BUFFER_SIZE];
         int bytesRead;
-
-        while ((bytesRead = input.read(data)) != -1) {
-            buffer.write(data, 0, bytesRead);
+        while ((bytesRead = input.read(chunk)) != -1) {
+            buffer.write(chunk, 0, bytesRead);
         }
 
-        // Parse the complete buffer
         byte[] fullData = buffer.toByteArray();
-        logger.info("Read {} bytes of multipart data", fullData.length);
-        List<byte[]> parts = splitMultipart(fullData, boundaryBytes);
-        logger.info("Split into {} parts", parts.size());
+        logger.info("STOW-RS: Read {} bytes of multipart data", fullData.length);
 
-        for (byte[] part : parts) {
-            // Skip empty parts
-            if (part.length == 0) {
+        // Convert to string for easier parsing
+        String multipartBody = new String(fullData, "ISO-8859-1"); // Preserve binary data
+
+        // Split by boundary
+        String boundaryMarker = "--" + boundary;
+        String[] parts = multipartBody.split(java.util.regex.Pattern.quote(boundaryMarker));
+
+        logger.info("STOW-RS: Split into {} parts using boundary marker", parts.length);
+
+        for (int i = 0; i < parts.length; i++) {
+            String part = parts[i];
+
+            // Skip empty parts and end marker
+            if (part.trim().isEmpty() || part.trim().equals("--")) {
+                logger.debug("STOW-RS: Skipping empty/end part {}", i);
                 continue;
             }
 
-            // Find end of headers (double CRLF)
-            int headerEnd = findHeaderEnd(part);
-            if (headerEnd == -1) {
-                logger.debug("Part {} has no header end, skipping (length: {})", parts.indexOf(part), part.length);
-                continue;
+            // Find the double CRLF that separates headers from body
+            int headerEndPos = part.indexOf("\r\n\r\n");
+            if (headerEndPos == -1) {
+                // Try with just \n\n (some clients might not send \r)
+                headerEndPos = part.indexOf("\n\n");
+                if (headerEndPos == -1) {
+                    logger.debug("STOW-RS: Part {} has no header separator", i);
+                    continue;
+                }
+                headerEndPos += 2; // Skip \n\n
+            } else {
+                headerEndPos += 4; // Skip \r\n\r\n
             }
 
-            // Extract headers and body
-            String headers = new String(part, 0, headerEnd, "US-ASCII");
-            logger.debug("Part headers: {}", headers.replace("\r\n", " | "));
+            // Extract headers
+            String headers = part.substring(0, headerEndPos);
+            logger.debug("STOW-RS: Part {} headers: {}", i, headers.replace("\r\n", " | ").replace("\n", " | "));
 
             // Check if this part contains DICOM data
             if (headers.toLowerCase().contains("application/dicom")) {
-                // Extract body (skip CRLF after headers)
-                int bodyStart = headerEnd + 4; // Skip \r\n\r\n
-                if (bodyStart < part.length) {
-                    // Remove trailing CRLF if present
-                    int bodyEnd = part.length;
-                    if (bodyEnd >= 2 && part[bodyEnd-2] == '\r' && part[bodyEnd-1] == '\n') {
-                        bodyEnd -= 2;
-                    }
+                // Extract body
+                String bodyStr = part.substring(headerEndPos);
 
-                    byte[] body = new byte[bodyEnd - bodyStart];
-                    System.arraycopy(part, bodyStart, body, 0, body.length);
-                    streams.add(new ByteArrayInputStream(body));
-                    logger.debug("Extracted DICOM part with {} bytes", body.length);
+                // Remove trailing CRLF if present
+                if (bodyStr.endsWith("\r\n")) {
+                    bodyStr = bodyStr.substring(0, bodyStr.length() - 2);
+                } else if (bodyStr.endsWith("\n")) {
+                    bodyStr = bodyStr.substring(0, bodyStr.length() - 1);
                 }
+
+                // Convert back to bytes (preserving binary data)
+                byte[] bodyBytes = bodyStr.getBytes("ISO-8859-1");
+
+                logger.info("STOW-RS: Extracted DICOM part {} with {} bytes", i, bodyBytes.length);
+
+                // Verify it's actually DICOM data (starts with 128-byte preamble + "DICM")
+                if (bodyBytes.length > 132) {
+                    boolean hasDICM = bodyBytes[128] == 'D' &&
+                                     bodyBytes[129] == 'I' &&
+                                     bodyBytes[130] == 'C' &&
+                                     bodyBytes[131] == 'M';
+                    logger.info("STOW-RS: Part {} DICM marker check: {}", i, hasDICM);
+                }
+
+                streams.add(new ByteArrayInputStream(bodyBytes));
+            } else {
+                logger.debug("STOW-RS: Part {} is not DICOM (headers: {})", i,
+                    headers.substring(0, Math.min(100, headers.length())));
             }
         }
 
+        logger.info("STOW-RS: Found {} DICOM instances", streams.size());
         return streams;
     }
 
@@ -219,10 +241,21 @@ public class StowRsApi extends AbstractXapiRestController {
         List<byte[]> parts = new ArrayList<>();
         int pos = 0;
 
+        logger.info("splitMultipart: data length={}, boundary length={}, boundary='{}'",
+            data.length, boundary.length, new String(boundary, java.nio.charset.StandardCharsets.US_ASCII));
+
+        // Show first 200 bytes for debugging
+        int previewLen = Math.min(200, data.length);
+        String preview = new String(data, 0, previewLen, java.nio.charset.StandardCharsets.US_ASCII)
+            .replace("\r", "\\r").replace("\n", "\\n");
+        logger.info("Data preview (first {} bytes): {}", previewLen, preview);
+
         while (pos < data.length) {
             // Find next boundary
             int boundaryPos = indexOf(data, boundary, pos);
+            logger.debug("Searching for boundary from pos {}, found at: {}", pos, boundaryPos);
             if (boundaryPos == -1) {
+                logger.info("No more boundaries found");
                 break;
             }
 
@@ -247,14 +280,23 @@ public class StowRsApi extends AbstractXapiRestController {
 
             // Extract part
             if (nextBoundary > partStart) {
-                byte[] part = new byte[nextBoundary - partStart];
+                int partLen = nextBoundary - partStart;
+                byte[] part = new byte[partLen];
                 System.arraycopy(data, partStart, part, 0, part.length);
                 parts.add(part);
+                logger.info("Extracted part {} with {} bytes", parts.size(), partLen);
+
+                // Show part preview
+                int partPreviewLen = Math.min(100, partLen);
+                String partPreview = new String(part, 0, partPreviewLen, java.nio.charset.StandardCharsets.US_ASCII)
+                    .replace("\r", "\\r").replace("\n", "\\n");
+                logger.debug("Part preview: {}", partPreview);
             }
 
             pos = nextBoundary;
         }
 
+        logger.info("splitMultipart completed: found {} parts", parts.size());
         return parts;
     }
 

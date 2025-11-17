@@ -18,9 +18,6 @@ import org.nrg.xft.XFTItem;
 import org.nrg.xft.search.CriteriaCollection;
 import org.nrg.xnat.utils.CatalogUtils;
 import org.nrg.xnat.dicomweb.utils.DicomWebUtils;
-import org.nrg.xdat.XDAT;
-import org.nrg.xnat.services.archive.DicomInboxImportRequestService;
-import org.nrg.xnat.services.messaging.archive.DicomInboxImportRequest;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
@@ -1476,41 +1473,91 @@ public class XnatDicomServiceImpl implements XnatDicomService {
     }
 
     /**
-     * Trigger XNAT import using DicomInboxImportRequestService
+     * Trigger XNAT import using GradualDicomImporter
+     * Processes DICOM files directly into XNAT prearchive/archive
      */
     private void triggerXnatImport(UserI user, String projectId, File tempDir) {
         try {
-            // Get the DicomInboxImportRequestService from XDAT context
-            DicomInboxImportRequestService importService =
-                XDAT.getContextService().getBean(DicomInboxImportRequestService.class);
-
-            if (importService == null) {
-                logger.error("DicomInboxImportRequestService not available in XDAT context");
-                throw new RuntimeException("XNAT import service not available");
+            // Get DICOM files from temp directory
+            File[] dicomFiles = tempDir.listFiles((dir, name) -> name.endsWith(".dcm"));
+            if (dicomFiles == null || dicomFiles.length == 0) {
+                logger.warn("No DICOM files found in temp directory: {}", tempDir.getAbsolutePath());
+                return;
             }
 
-            // Build import request using the builder pattern
-            DicomInboxImportRequest request = DicomInboxImportRequest.builder()
-                .username(user.getUsername())
-                .sessionPath(tempDir.getAbsolutePath())
-                .cleanupAfterImport(true)  // Clean up temp files after successful import
-                .status(DicomInboxImportRequest.Status.Queued)
-                .build();
+            logger.info("Importing {} DICOM files using GradualDicomImporter", dicomFiles.length);
 
-            // Set the project ID parameter
-            java.util.Map<String, String> params = new java.util.HashMap<>();
-            params.put("PROJECT_ID", projectId);
-            params.put("path", tempDir.getAbsolutePath());
-            request.setParameters(params);
+            // Import each DICOM file using GradualDicomImporter
+            int successCount = 0;
+            int failCount = 0;
 
-            // Create the request in the database
-            DicomInboxImportRequest createdRequest = importService.create(request);
+            for (File dicomFile : dicomFiles) {
+                try {
+                    // Create parameters for import
+                    java.util.Map<String, Object> params = new java.util.HashMap<>();
+                    params.put("PROJECT_ID", projectId);
+                    params.put("SOURCE", "DICOMWEB_STOW");
+                    params.put("auto-archive", "true"); // Auto-archive to skip prearchive
 
-            // Send JMS message to trigger async processing
-            XDAT.sendJmsRequest(createdRequest);
+                    // Create file wrapper
+                    org.nrg.xnat.restlet.util.FileWriterWrapperI fileWriter =
+                        new org.nrg.xnat.restlet.util.FileWriterWrapperI() {
+                            @Override
+                            public void write(File f) throws Exception {
+                                // File already written, just copy if needed
+                                if (!f.equals(dicomFile)) {
+                                    java.nio.file.Files.copy(dicomFile.toPath(), f.toPath(),
+                                        java.nio.file.StandardCopyOption.REPLACE_EXISTING);
+                                }
+                            }
 
-            logger.info("Created and queued DICOM inbox import request {} for path: {}",
-                createdRequest.getId(), tempDir.getAbsolutePath());
+                            @Override
+                            public String getName() {
+                                return dicomFile.getName();
+                            }
+
+                            @Override
+                            public String getNestedPath() {
+                                return null;
+                            }
+
+                            @Override
+                            public java.io.InputStream getInputStream() throws java.io.IOException {
+                                return new java.io.FileInputStream(dicomFile);
+                            }
+
+                            @Override
+                            public void delete() {
+                                dicomFile.delete();
+                            }
+
+                            @Override
+                            public org.nrg.xnat.restlet.util.FileWriterWrapperI.UPLOAD_TYPE getType() {
+                                return org.nrg.xnat.restlet.util.FileWriterWrapperI.UPLOAD_TYPE.OTHER;
+                            }
+                        };
+
+                    // Create and execute importer
+                    org.nrg.xnat.archive.GradualDicomImporter importer =
+                        new org.nrg.xnat.archive.GradualDicomImporter(null, user, fileWriter, params);
+
+                    // Call the importer (this processes the file)
+                    java.util.List<String> result = importer.call();
+
+                    logger.info("Successfully imported: {} (result: {})", dicomFile.getName(), result);
+                    successCount++;
+
+                } catch (Exception e) {
+                    logger.error("Failed to import: {}", dicomFile.getName(), e);
+                    failCount++;
+                }
+            }
+
+            logger.info("XNAT import completed: {} succeeded, {} failed", successCount, failCount);
+
+            // Clean up temp directory after import
+            logger.info("Cleaning up temp directory: {}", tempDir.getAbsolutePath());
+            deleteDirectory(tempDir);
 
         } catch (Exception e) {
             logger.error("Error triggering XNAT import", e);
