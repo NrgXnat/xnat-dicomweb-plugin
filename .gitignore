@@ -10,3 +10,8 @@ out/
 .project
 .settings/
 .DS_Store
+
+# Test data - users should provide their own DICOM files
+test/data/**/*.dcm
+test/data/**/DICOM/
+!test/data/README.md
