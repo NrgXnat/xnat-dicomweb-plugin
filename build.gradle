@@ -95,6 +95,7 @@ dependencies {
     // Additional dependencies
     compileOnly 'commons-io:commons-io:2.11.0'
     compileOnly 'org.apache.commons:commons-compress:1.21'
+    compileOnly 'commons-fileupload:commons-fileupload:1.4'
 
     testImplementation group: 'junit', name: 'junit'
     testImplementation "org.springframework:spring-test"

@@ -337,6 +337,18 @@
                 </div>
             </div>
 
+            <div class="section">
+                <h2>STOW-RS Tests (Store)</h2>
+                <div class="form-group">
+                    <label for="dicomFile">Select DICOM File:</label>
+                    <input type="file" id="dicomFile" accept=".dcm,.dicom" style="padding: 10px; border: 2px dashed #667eea; border-radius: 6px; width: 100%; cursor: pointer;">
+                </div>
+                <div class="button-group">
+                    <button onclick="testStowRsUpload()">Upload DICOM Instance</button>
+                    <button onclick="testStowRsMultiple()">Upload Multiple Instances</button>
+                </div>
+            </div>
+
             <div id="status" class="status"></div>
             <div id="loader" class="loader"></div>
 
@@ -568,6 +580,109 @@
             }).catch(err => {
                 showStatus('❌ Failed to copy: ' + err.message, 'error');
             });
+        }
+
+        async function testStowRsUpload() {
+            const projectId = getProjectId();
+            if (!projectId) return;
+
+            const fileInput = document.getElementById('dicomFile');
+            const file = fileInput.files[0];
+
+            if (!file) {
+                showStatus('Please select a DICOM file', 'error');
+                return;
+            }
+
+            showStatus(`Uploading ${file.name} to project ${projectId}...`, 'info');
+            showLoader(true);
+            hideResponse();
+            startTime = Date.now();
+
+            try {
+                // Create multipart/related request
+                const boundary = 'DicomWebBoundary' + Date.now();
+                const body = await createMultipartBody([file], boundary);
+
+                const url = `/xapi/dicomweb/projects/${projectId}/studies`;
+                const response = await fetch(url, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': `multipart/related; type=application/dicom; boundary=${boundary}`
+                    },
+                    body: body,
+                    credentials: 'same-origin'
+                });
+
+                const elapsed = Date.now() - startTime;
+                const contentType = response.headers.get('Content-Type');
+
+                let responseBody;
+                if (contentType && contentType.includes('json')) {
+                    responseBody = await response.json();
+                } else {
+                    responseBody = await response.text();
+                }
+
+                showLoader(false);
+
+                if (response.ok) {
+                    showStatus(`✅ Upload successful: ${file.name}`, 'success');
+                    showResponse(response.status, contentType, responseBody, elapsed);
+                } else {
+                    showStatus(`❌ Upload failed: ${response.status} - ${response.statusText}`, 'error');
+                    showResponse(response.status, contentType, responseBody, elapsed);
+                }
+            } catch (error) {
+                showLoader(false);
+                showStatus('❌ Upload error: ' + error.message, 'error');
+                console.error('Error:', error);
+            }
+        }
+
+        async function testStowRsMultiple() {
+            const projectId = getProjectId();
+            if (!projectId) return;
+
+            const fileInput = document.getElementById('dicomFile');
+            fileInput.setAttribute('multiple', 'multiple');
+            fileInput.click();
+
+            showStatus('Multiple file upload not yet implemented. Use single file upload for now.', 'info');
+        }
+
+        async function createMultipartBody(files, boundary) {
+            const parts = [];
+
+            for (const file of files) {
+                const fileData = await file.arrayBuffer();
+
+                // Build multipart part
+                let part = `--${boundary}\r\n`;
+                part += `Content-Type: application/dicom\r\n`;
+                part += `\r\n`;
+
+                const partHeader = new TextEncoder().encode(part);
+                const partFooter = new TextEncoder().encode('\r\n');
+
+                parts.push(partHeader);
+                parts.push(new Uint8Array(fileData));
+                parts.push(partFooter);
+            }
+
+            // Add closing boundary
+            parts.push(new TextEncoder().encode(`--${boundary}--\r\n`));
+
+            // Concatenate all parts
+            const totalLength = parts.reduce((sum, part) => sum + part.byteLength, 0);
+            const result = new Uint8Array(totalLength);
+            let offset = 0;
+            for (const part of parts) {
+                result.set(part, offset);
+                offset += part.byteLength;
+            }
+
+            return result;
         }
 
         // Initialize

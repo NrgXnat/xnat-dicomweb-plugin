@@ -32,10 +32,11 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
+import org.springframework.http.HttpEntity;
 import org.springframework.web.bind.annotation.PathVariable;
+import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMethod;
 
-import javax.servlet.ServletInputStream;
 import javax.servlet.http.HttpServletRequest;
 import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
@@ -71,8 +72,8 @@ public class StowRsApi extends AbstractXapiRestController {
     @XapiRequestMapping(
         value = "/dicomweb/projects/{projectId}/studies",
         method = RequestMethod.POST,
-        consumes = "multipart/related",
-        produces = "application/dicom+json"
+        produces = "application/dicom+json",
+        consumes = "*/*"
     )
     @ApiOperation(value = "Store DICOM instances (STOW-RS)", response = String.class)
     @ApiResponses({
@@ -84,14 +85,24 @@ public class StowRsApi extends AbstractXapiRestController {
     })
     public ResponseEntity<String> storeInstances(
             @PathVariable String projectId,
-            HttpServletRequest request) {
+            HttpEntity<byte[]> requestEntity,
+            HttpServletRequest request) throws Exception {
 
         try {
             UserI user = getSessionUser();
             logger.info("STOW-RS request from user {} to project {}", user.getLogin(), projectId);
 
-            // Parse multipart request
-            List<InputStream> instances = parseMultipartRequest(request);
+            // Get request body from HttpEntity - Spring handles the reading
+            byte[] requestBody = requestEntity.getBody();
+
+            if (requestBody == null) {
+                requestBody = new byte[0];
+            }
+
+            System.out.println("=== STOW-RS: Read " + requestBody.length + " bytes from HttpEntity");
+
+            // Parse multipart request from raw bytes
+            List<InputStream> instances = parseMultipartRequest(requestBody, request.getContentType());
 
             if (instances.isEmpty()) {
                 logger.warn("No DICOM instances found in STOW-RS request");
@@ -130,16 +141,19 @@ public class StowRsApi extends AbstractXapiRestController {
     }
 
     /**
-     * Parse multipart/related request containing DICOM instances
-     * Uses a simpler, more robust parsing approach
+     * Parse multipart/related request containing DICOM instances from raw bytes
+     * This receives the raw request body before Spring's multipart resolver consumes it
      */
-    private List<InputStream> parseMultipartRequest(HttpServletRequest request) throws Exception {
+    private List<InputStream> parseMultipartRequest(byte[] requestBody, String contentType) throws Exception {
         List<InputStream> streams = new ArrayList<>();
-        String contentType = request.getContentType();
 
-        if (contentType == null || !contentType.toLowerCase().startsWith("multipart/related")) {
-            throw new IllegalArgumentException("Content-Type must be multipart/related");
+        if (contentType == null || !contentType.toLowerCase().startsWith("multipart/")) {
+            throw new IllegalArgumentException("Content-Type must be multipart/related or multipart/*");
         }
+
+        System.out.println("=== STOW-RS DEBUG: Content-Type = " + contentType);
+        System.out.println("=== STOW-RS DEBUG: Request body size = " + requestBody.length + " bytes");
+        logger.info("STOW-RS: Parsing multipart request ({} bytes)", requestBody.length);
 
         // Extract boundary from Content-Type header
         String boundary = extractBoundary(contentType);
@@ -147,90 +161,68 @@ public class StowRsApi extends AbstractXapiRestController {
             throw new IllegalArgumentException("No boundary found in Content-Type header");
         }
 
-        logger.info("STOW-RS: Parsing multipart request with boundary: '{}'", boundary);
+        System.out.println("=== STOW-RS DEBUG: Boundary = " + boundary);
+        logger.info("STOW-RS: Using boundary: {}", boundary);
 
-        // Read entire request body
-        ServletInputStream input = request.getInputStream();
-        ByteArrayOutputStream buffer = new ByteArrayOutputStream();
-        byte[] chunk = new byte[MAX_BUFFER_SIZE];
-        int bytesRead;
-        while ((bytesRead = input.read(chunk)) != -1) {
-            buffer.write(chunk, 0, bytesRead);
-        }
+        // Split multipart data by boundary
+        List<byte[]> parts = splitMultipart(requestBody, ("--" + boundary).getBytes(java.nio.charset.StandardCharsets.US_ASCII));
 
-        byte[] fullData = buffer.toByteArray();
-        logger.info("STOW-RS: Read {} bytes of multipart data", fullData.length);
+        System.out.println("=== STOW-RS DEBUG: Found " + parts.size() + " parts");
+        logger.info("STOW-RS: Split into {} parts", parts.size());
 
-        // Convert to string for easier parsing
-        String multipartBody = new String(fullData, "ISO-8859-1"); // Preserve binary data
+        // Process each part
+        int dicomCount = 0;
+        for (int i = 0; i < parts.size(); i++) {
+            byte[] part = parts.get(i);
 
-        // Split by boundary
-        String boundaryMarker = "--" + boundary;
-        String[] parts = multipartBody.split(java.util.regex.Pattern.quote(boundaryMarker));
-
-        logger.info("STOW-RS: Split into {} parts using boundary marker", parts.length);
-
-        for (int i = 0; i < parts.length; i++) {
-            String part = parts[i];
-
-            // Skip empty parts and end marker
-            if (part.trim().isEmpty() || part.trim().equals("--")) {
-                logger.debug("STOW-RS: Skipping empty/end part {}", i);
+            // Find end of headers (double CRLF)
+            int headerEnd = findHeaderEnd(part);
+            if (headerEnd == -1) {
+                System.out.println("=== STOW-RS DEBUG: Part " + (i + 1) + " - No header end found, skipping");
                 continue;
             }
 
-            // Find the double CRLF that separates headers from body
-            int headerEndPos = part.indexOf("\r\n\r\n");
-            if (headerEndPos == -1) {
-                // Try with just \n\n (some clients might not send \r)
-                headerEndPos = part.indexOf("\n\n");
-                if (headerEndPos == -1) {
-                    logger.debug("STOW-RS: Part {} has no header separator", i);
-                    continue;
-                }
-                headerEndPos += 2; // Skip \n\n
-            } else {
-                headerEndPos += 4; // Skip \r\n\r\n
-            }
-
             // Extract headers
-            String headers = part.substring(0, headerEndPos);
-            logger.debug("STOW-RS: Part {} headers: {}", i, headers.replace("\r\n", " | ").replace("\n", " | "));
+            String headers = new String(part, 0, headerEnd, java.nio.charset.StandardCharsets.US_ASCII);
+            System.out.println("=== STOW-RS DEBUG: Part " + (i + 1) + " - Headers: " + headers.replace("\r\n", " | "));
 
             // Check if this part contains DICOM data
             if (headers.toLowerCase().contains("application/dicom")) {
-                // Extract body
-                String bodyStr = part.substring(headerEndPos);
+                // Extract body (skip headers + double CRLF)
+                int bodyStart = headerEnd + 4; // Skip \r\n\r\n
+                int bodyLength = part.length - bodyStart;
 
                 // Remove trailing CRLF if present
-                if (bodyStr.endsWith("\r\n")) {
-                    bodyStr = bodyStr.substring(0, bodyStr.length() - 2);
-                } else if (bodyStr.endsWith("\n")) {
-                    bodyStr = bodyStr.substring(0, bodyStr.length() - 1);
+                while (bodyLength > 0 && (part[bodyStart + bodyLength - 1] == '\n' || part[bodyStart + bodyLength - 1] == '\r')) {
+                    bodyLength--;
                 }
 
-                // Convert back to bytes (preserving binary data)
-                byte[] bodyBytes = bodyStr.getBytes("ISO-8859-1");
+                if (bodyLength > 0) {
+                    byte[] dicomData = new byte[bodyLength];
+                    System.arraycopy(part, bodyStart, dicomData, 0, bodyLength);
 
-                logger.info("STOW-RS: Extracted DICOM part {} with {} bytes", i, bodyBytes.length);
+                    System.out.println("=== STOW-RS DEBUG: Part " + (i + 1) + " - Extracted " + dicomData.length + " bytes of DICOM data");
 
-                // Verify it's actually DICOM data (starts with 128-byte preamble + "DICM")
-                if (bodyBytes.length > 132) {
-                    boolean hasDICM = bodyBytes[128] == 'D' &&
-                                     bodyBytes[129] == 'I' &&
-                                     bodyBytes[130] == 'C' &&
-                                     bodyBytes[131] == 'M';
-                    logger.info("STOW-RS: Part {} DICM marker check: {}", i, hasDICM);
+                    // Verify it's actually DICOM data (starts with 128-byte preamble + "DICM")
+                    if (dicomData.length > 132) {
+                        boolean hasDICM = dicomData[128] == 'D' &&
+                                         dicomData[129] == 'I' &&
+                                         dicomData[130] == 'C' &&
+                                         dicomData[131] == 'M';
+                        System.out.println("=== STOW-RS DEBUG: Part " + (i + 1) + " - DICM marker check: " + hasDICM);
+                    }
+
+                    streams.add(new ByteArrayInputStream(dicomData));
+                    dicomCount++;
+                    logger.info("STOW-RS: Extracted DICOM part {} with {} bytes", dicomCount, dicomData.length);
                 }
-
-                streams.add(new ByteArrayInputStream(bodyBytes));
             } else {
-                logger.debug("STOW-RS: Part {} is not DICOM (headers: {})", i,
-                    headers.substring(0, Math.min(100, headers.length())));
+                System.out.println("=== STOW-RS DEBUG: Part " + (i + 1) + " - Skipping non-DICOM part");
             }
         }
 
-        logger.info("STOW-RS: Found {} DICOM instances", streams.size());
+        System.out.println("=== STOW-RS DEBUG: Total DICOM instances found: " + dicomCount);
+        logger.info("STOW-RS: Found {} DICOM instances", dicomCount);
         return streams;
     }
 

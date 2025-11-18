@@ -1374,84 +1374,117 @@ public class XnatDicomServiceImpl implements XnatDicomService {
 
     @Override
     public StowRsResponse storeInstances(UserI user, String projectId, List<InputStream> dicomInstances) {
+        System.out.println("=== STOW-RS SERVICE CALLED ===");
+        System.out.println("=== User: " + user.getLogin() + ", Project: " + projectId + ", Instances: " + dicomInstances.size());
+        logger.info("STOW-RS: Storing {} DICOM instances for user {} in project {}",
+            dicomInstances.size(), user.getLogin(), projectId);
+
         List<InstanceStatus> statuses = new ArrayList<>();
         int successCount = 0;
         int failureCount = 0;
-        File tempDir = null;
 
         try {
+            System.out.println("=== Verifying project access...");
             // Verify project access
             XnatProjectdata project = XnatProjectdata.getXnatProjectdatasById(projectId, user, false);
+            System.out.println("=== Project: " + project);
             if (project == null) {
+                System.out.println("=== ERROR: No project access!");
                 logger.error("User {} does not have access to project: {}", user.getLogin(), projectId);
                 throw new SecurityException("No access to project: " + projectId);
             }
 
-            // Create temporary directory for upload
-            tempDir = java.nio.file.Files.createTempDirectory("stow-rs-").toFile();
-            logger.info("Created temp directory for STOW-RS: {}", tempDir.getAbsolutePath());
+            // Group instances by StudyInstanceUID to create proper sessions
+            java.util.Map<String, java.util.List<DicomInstance>> instancesByStudy = new java.util.HashMap<>();
 
-            // Process each instance
-            for (InputStream stream : dicomInstances) {
+            System.out.println("=== First pass: Reading " + dicomInstances.size() + " DICOM instances...");
+            // First pass: Read DICOM metadata and group by StudyInstanceUID
+            for (int i = 0; i < dicomInstances.size(); i++) {
+                System.out.println("=== Processing instance " + (i+1) + " of " + dicomInstances.size());
+                InputStream stream = dicomInstances.get(i);
+
                 try {
-                    // Read DICOM attributes
+                    // Read DICOM to get metadata
                     Attributes attrs = DicomWebUtils.readDicom(stream);
+                    String studyInstanceUID = attrs.getString(Tag.StudyInstanceUID);
                     String sopInstanceUID = attrs.getString(Tag.SOPInstanceUID);
                     String sopClassUID = attrs.getString(Tag.SOPClassUID);
-                    String studyInstanceUID = attrs.getString(Tag.StudyInstanceUID);
+                    String seriesNumber = attrs.getString(Tag.SeriesNumber, "1");
 
-                    if (sopInstanceUID == null || sopClassUID == null) {
+                    if (sopInstanceUID == null || sopClassUID == null || studyInstanceUID == null) {
                         logger.warn("DICOM instance missing required UIDs");
-                        statuses.add(new InstanceStatus(
-                            sopInstanceUID, sopClassUID, false,
-                            "Missing required UIDs (SOPInstanceUID or SOPClassUID)", 0xA900));
+                        statuses.add(new InstanceStatus(sopInstanceUID, sopClassUID, false,
+                            "Missing required UIDs", 0xA900));
                         failureCount++;
                         continue;
                     }
 
-                    if (studyInstanceUID == null) {
-                        logger.warn("DICOM instance missing StudyInstanceUID");
-                        statuses.add(new InstanceStatus(
-                            sopInstanceUID, sopClassUID, false,
-                            "Missing StudyInstanceUID", 0xA900));
-                        failureCount++;
-                        continue;
-                    }
-
-                    // Write to temp file
-                    File outFile = new File(tempDir, sopInstanceUID + ".dcm");
-                    try (java.io.FileOutputStream fos = new java.io.FileOutputStream(outFile);
-                         org.dcm4che3.io.DicomOutputStream dos = new org.dcm4che3.io.DicomOutputStream(fos, org.dcm4che3.data.UID.ExplicitVRLittleEndian)) {
-                        dos.writeDataset(null, attrs);
-                    }
-
-                    logger.info("Wrote DICOM instance {} to temp file: {}", sopInstanceUID, outFile.getName());
-
-                    statuses.add(new InstanceStatus(sopInstanceUID, sopClassUID, true, null, 0));
-                    successCount++;
+                    // Group by StudyInstanceUID
+                    instancesByStudy.computeIfAbsent(studyInstanceUID, k -> new java.util.ArrayList<>())
+                        .add(new DicomInstance(attrs, sopInstanceUID, sopClassUID, seriesNumber));
 
                 } catch (Exception e) {
-                    logger.error("Error processing DICOM instance", e);
-                    statuses.add(new InstanceStatus(
-                        null, null, false, e.getMessage(), 0xC000));
+                    System.out.println("=== ERROR reading instance " + (i+1) + ": " + e.getClass().getName() + ": " + e.getMessage());
+                    e.printStackTrace(System.out);
+                    logger.error("STOW-RS: Error reading DICOM instance " + (i + 1), e);
+                    statuses.add(new InstanceStatus(null, null, false,
+                        "Error reading DICOM: " + e.getMessage(), 0xC000));
                     failureCount++;
                 }
             }
 
-            // Trigger XNAT import if any files succeeded
-            if (successCount > 0 && tempDir != null) {
-                logger.info("Triggering XNAT import for {} instances in project {}", successCount, projectId);
+            System.out.println("=== First pass complete. Grouped into " + instancesByStudy.size() + " studies");
+            // Second pass: Process each study group using PrearcDatabase
+            for (java.util.Map.Entry<String, java.util.List<DicomInstance>> entry : instancesByStudy.entrySet()) {
+                System.out.println("=== Processing study: " + entry.getKey() + " with " + entry.getValue().size() + " instances");
+                String studyInstanceUID = entry.getKey();
+                java.util.List<DicomInstance> instances = entry.getValue();
+
+                logger.info("STOW-RS: Processing study {} with {} instances", studyInstanceUID, instances.size());
+
                 try {
-                    triggerXnatImport(user, projectId, tempDir);
-                    logger.info("Successfully queued DICOM import request for {} instances", successCount);
+                    // Get or create prearchive session for this StudyInstanceUID
+                    org.nrg.xnat.helpers.prearchive.SessionData session =
+                        getOrCreatePrearchiveSession(project, user, studyInstanceUID, instances.get(0).getAttributes());
+
+                    File sessionDir = new File(session.getUrl());
+                    logger.info("STOW-RS: Using session directory: {}", sessionDir.getAbsolutePath());
+
+                    // Write each instance to the session
+                    for (DicomInstance instance : instances) {
+                        try {
+                            File seriesDir = new File(sessionDir, "SCANS/" + instance.getSeriesNumber());
+                            seriesDir.mkdirs();
+
+                            File dicomFile = new File(seriesDir, instance.getSopInstanceUID() + ".dcm");
+                            try (java.io.FileOutputStream fos = new java.io.FileOutputStream(dicomFile);
+                                 org.dcm4che3.io.DicomOutputStream dos = new org.dcm4che3.io.DicomOutputStream(fos, org.dcm4che3.data.UID.ExplicitVRLittleEndian)) {
+                                dos.writeDataset(null, instance.getAttributes());
+                            }
+
+                            logger.info("STOW-RS: Wrote DICOM file: {}", dicomFile.getAbsolutePath());
+                            statuses.add(new InstanceStatus(instance.getSopInstanceUID(), instance.getSopClassUID(), true, null, 0));
+                            successCount++;
+
+                        } catch (Exception e) {
+                            logger.error("STOW-RS: Error writing instance", e);
+                            statuses.add(new InstanceStatus(instance.getSopInstanceUID(), instance.getSopClassUID(), false,
+                                e.getMessage(), 0xC000));
+                            failureCount++;
+                        }
+                    }
+
                 } catch (Exception e) {
-                    logger.error("Failed to trigger XNAT import, files remain in temp directory: {}",
-                        tempDir.getAbsolutePath(), e);
-                    // Don't delete temp dir - allow manual recovery
+                    System.err.println("=== ERROR processing study " + studyInstanceUID + ": " + e.getClass().getName() + ": " + e.getMessage());
+                    e.printStackTrace(System.err);
+                    logger.error("STOW-RS: Error processing study " + studyInstanceUID, e);
+                    // Mark all instances in this study as failed
+                    for (DicomInstance instance : instances) {
+                        statuses.add(new InstanceStatus(instance.getSopInstanceUID(), instance.getSopClassUID(), false,
+                            "Session error: " + e.getMessage(), 0xC000));
+                        failureCount++;
+                    }
                 }
-            } else if (tempDir != null) {
-                // Clean up if all failed
-                deleteDirectory(tempDir);
             }
 
         } catch (SecurityException e) {
@@ -1459,135 +1492,89 @@ public class XnatDicomServiceImpl implements XnatDicomService {
             throw e;
         } catch (Exception e) {
             logger.error("STOW-RS storage failed", e);
-            if (tempDir != null) {
-                try {
-                    deleteDirectory(tempDir);
-                } catch (Exception cleanupEx) {
-                    logger.error("Failed to clean up temp directory: {}", tempDir.getAbsolutePath(), cleanupEx);
-                }
-            }
             throw new RuntimeException("Storage failed: " + e.getMessage(), e);
         }
 
+        logger.info("STOW-RS: Completed - {} succeeded, {} failed", successCount, failureCount);
         return new StowRsResponse(successCount, failureCount, statuses);
     }
 
     /**
-     * Trigger XNAT import using GradualDicomImporter
-     * Processes DICOM files directly into XNAT prearchive/archive
+     * Get existing prearchive session for StudyInstanceUID or create new one
      */
-    private void triggerXnatImport(UserI user, String projectId, File tempDir) {
-        try {
-            // Get DICOM files from temp directory
-            File[] dicomFiles = tempDir.listFiles((dir, name) -> name.endsWith(".dcm"));
-            if (dicomFiles == null || dicomFiles.length == 0) {
-                logger.warn("No DICOM files found in temp directory: {}", tempDir.getAbsolutePath());
-                return;
-            }
+    private org.nrg.xnat.helpers.prearchive.SessionData getOrCreatePrearchiveSession(
+            XnatProjectdata project, UserI user, String studyInstanceUID, Attributes dicomAttrs) throws Exception {
 
-            logger.info("Importing {} DICOM files using GradualDicomImporter", dicomFiles.length);
+        // Get prearchive root path
+        String timestamp = org.nrg.xnat.helpers.prearchive.PrearcUtils.makeTimestamp();
+        String prearchiveBasePath = org.nrg.xnat.turbine.utils.ArcSpecManager.GetInstance().getGlobalPrearchivePath();
+        File prearchiveRootDir = java.nio.file.Paths.get(prearchiveBasePath, project.getId(), timestamp).toFile();
 
-            // Import each DICOM file using GradualDicomImporter
-            int successCount = 0;
-            int failCount = 0;
+        // Create SessionData to initialize or find existing session
+        org.nrg.xnat.helpers.prearchive.SessionData initialize = new org.nrg.xnat.helpers.prearchive.SessionData();
+        initialize.setProject(project.getId());
+        initialize.setTag(studyInstanceUID);  // KEY: This is how sessions are matched!
 
-            for (File dicomFile : dicomFiles) {
-                try {
-                    // Create parameters for import
-                    java.util.Map<String, Object> params = new java.util.HashMap<>();
-                    params.put("PROJECT_ID", projectId);
-                    params.put("SOURCE", "DICOMWEB_STOW");
-                    params.put("auto-archive", "true"); // Auto-archive to skip prearchive
-
-                    // Create file wrapper
-                    org.nrg.xnat.restlet.util.FileWriterWrapperI fileWriter =
-                        new org.nrg.xnat.restlet.util.FileWriterWrapperI() {
-                            @Override
-                            public void write(File f) throws Exception {
-                                // File already written, just copy if needed
-                                if (!f.equals(dicomFile)) {
-                                    java.nio.file.Files.copy(dicomFile.toPath(), f.toPath(),
-                                        java.nio.file.StandardCopyOption.REPLACE_EXISTING);
-                                }
-                            }
-
-                            @Override
-                            public String getName() {
-                                return dicomFile.getName();
-                            }
-
-                            @Override
-                            public String getNestedPath() {
-                                return null;
-                            }
-
-                            @Override
-                            public java.io.InputStream getInputStream() throws java.io.IOException {
-                                return new java.io.FileInputStream(dicomFile);
-                            }
-
-                            @Override
-                            public void delete() {
-                                dicomFile.delete();
-                            }
-
-                            @Override
-                            public org.nrg.xnat.restlet.util.FileWriterWrapperI.UPLOAD_TYPE getType() {
-                                return org.nrg.xnat.restlet.util.FileWriterWrapperI.UPLOAD_TYPE.OTHER;
-                            }
-                        };
-
-                    // Create and execute importer
-                    org.nrg.xnat.archive.GradualDicomImporter importer =
-                        new org.nrg.xnat.archive.GradualDicomImporter(null, user, fileWriter, params);
-
-                    // Call the importer (this processes the file)
-                    java.util.List<String> result = importer.call();
-
-                    logger.info("Successfully imported: {} (result: {})", dicomFile.getName(), result);
-                    successCount++;
-
-                } catch (Exception e) {
-                    logger.error("Failed to import: {}", dicomFile.getName(), e);
-                    failCount++;
-                }
-            }
-
-            logger.info("XNAT import completed: {} succeeded, {} failed", successCount, failCount);
-
-            // Clean up temp directory after import
-            logger.info("Cleaning up temp directory: {}", tempDir.getAbsolutePath());
-            deleteDirectory(tempDir);
-
-        } catch (Exception e) {
-            logger.error("Error triggering XNAT import", e);
-            throw new RuntimeException("Failed to trigger XNAT import: " + e.getMessage(), e);
+        // Derive session name from DICOM metadata (XNAT uses PatientID by default)
+        String patientID = dicomAttrs.getString(Tag.PatientID, "");
+        String sessionLabel = patientID.replaceAll("[^a-zA-Z0-9_]", "_");
+        if (sessionLabel.isEmpty()) {
+            // Fallback if no PatientID
+            sessionLabel = "DICOMWEB_" + studyInstanceUID.substring(0, Math.min(20, studyInstanceUID.length()));
         }
+
+        initialize.setFolderName(sessionLabel);
+        initialize.setName(sessionLabel);
+        initialize.setUrl(new File(prearchiveRootDir, sessionLabel).getAbsolutePath());
+        initialize.setTimestamp(timestamp);
+        initialize.setStatus(org.nrg.xnat.helpers.prearchive.PrearcUtils.PrearcStatus.RECEIVING);
+        initialize.setLastBuiltDate(java.util.Calendar.getInstance().getTime());
+        initialize.setSource("DICOMWEB_STOW");
+
+        // Set study date if available
+        java.util.Date studyDate = dicomAttrs.getDate(Tag.StudyDate);
+        if (studyDate != null) {
+            initialize.setScan_date(studyDate);
+        }
+
+        // Get or create session - this will find existing session with same StudyInstanceUID!
+        org.nrg.xnat.helpers.prearchive.PrearcDatabase.Either<org.nrg.xnat.helpers.prearchive.SessionData, org.nrg.xnat.helpers.prearchive.SessionData> getOrCreate =
+            org.nrg.xnat.helpers.prearchive.PrearcDatabase.eitherGetOrCreateSession(
+                initialize,
+                prearchiveRootDir,
+                org.nrg.framework.constants.PrearchiveCode.Manual);
+
+        org.nrg.xnat.helpers.prearchive.SessionData session = getOrCreate.isLeft() ? getOrCreate.getLeft() : getOrCreate.getRight();
+
+        String action = getOrCreate.isLeft() ? "Created new" : "Using existing";
+        System.out.println("=== " + action + " session for StudyInstanceUID: " + studyInstanceUID);
+        System.out.println("=== Session URL: " + session.getUrl());
+        logger.info("STOW-RS: {} session for StudyInstanceUID {}: {}",
+            action, studyInstanceUID, session.getUrl());
+
+        return session;
     }
 
     /**
-     * Recursively delete directory and contents
+     * Helper class to hold DICOM instance data
      */
-    private void deleteDirectory(File directory) {
-        if (directory == null || !directory.exists()) {
-            return;
+    private static class DicomInstance {
+        private final Attributes attributes;
+        private final String sopInstanceUID;
+        private final String sopClassUID;
+        private final String seriesNumber;
+
+        public DicomInstance(Attributes attrs, String sopUID, String sopClass, String seriesNum) {
+            this.attributes = attrs;
+            this.sopInstanceUID = sopUID;
+            this.sopClassUID = sopClass;
+            this.seriesNumber = seriesNum;
         }
 
-        File[] files = directory.listFiles();
-        if (files != null) {
-            for (File file : files) {
-                if (file.isDirectory()) {
-                    deleteDirectory(file);
-                } else {
-                    if (!file.delete()) {
-                        logger.warn("Failed to delete file: {}", file.getAbsolutePath());
-                    }
-                }
-            }
-        }
-
-        if (!directory.delete()) {
-            logger.warn("Failed to delete directory: {}", directory.getAbsolutePath());
-        }
+        public Attributes getAttributes() { return attributes; }
+        public String getSopInstanceUID() { return sopInstanceUID; }
+        public String getSopClassUID() { return sopClassUID; }
+        public String getSeriesNumber() { return seriesNumber; }
     }
+
 }
