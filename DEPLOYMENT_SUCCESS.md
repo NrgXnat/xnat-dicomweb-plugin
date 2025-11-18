@@ -26,7 +26,7 @@
 ## Test Result
 
 ```bash
-./test_stow_rs.sh http://localhost DICOMWEB_TEST admin admin
+./test_stow_rs.sh http://your-xnat-server YOUR_PROJECT your_username your_password
 ```
 
 **Response**:

@@ -4,11 +4,26 @@
 
 set -e
 
-# Configuration
-XNAT_URL="${1:-http://localhost}"
-PROJECT_ID="${2:-TEST}"
-USERNAME="${3:-admin}"
-PASSWORD="${4:-admin}"
+# Configuration - all parameters required
+XNAT_URL="${1}"
+PROJECT_ID="${2}"
+USERNAME="${3}"
+PASSWORD="${4}"
+
+# Validate required parameters
+if [ -z "$XNAT_URL" ] || [ -z "$PROJECT_ID" ] || [ -z "$USERNAME" ] || [ -z "$PASSWORD" ]; then
+    echo "Usage: $0 XNAT_URL PROJECT_ID USERNAME PASSWORD"
+    echo ""
+    echo "Example:"
+    echo "  $0 http://your-xnat-server YOUR_PROJECT your_username your_password"
+    echo ""
+    echo "Arguments:"
+    echo "  XNAT_URL      Base URL of XNAT server (e.g., http://your-xnat-server)"
+    echo "  PROJECT_ID    Project ID in XNAT"
+    echo "  USERNAME      XNAT username"
+    echo "  PASSWORD      XNAT password"
+    exit 1
+fi
 
 # STOW-RS endpoint
 STOW_ENDPOINT="${XNAT_URL}/xapi/dicomweb/projects/${PROJECT_ID}/studies"
