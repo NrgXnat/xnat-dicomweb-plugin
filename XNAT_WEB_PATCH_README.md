@@ -109,8 +109,8 @@ public MultipartResolver multipartResolver() {
 
 ```bash
 # Test file upload (should still work)
-curl -u admin:admin -F "file=@test.zip" \
-  http://localhost/xapi/upload
+curl -u your_username:your_password -F "file=@test.zip" \
+  http://your-xnat-server/xapi/upload
 ```
 
 ### 2. Test STOW-RS (Multipart Related)
@@ -125,11 +125,11 @@ DICOM_FILE="test.dcm"
     echo -en "Content-Type: application/dicom\r\n\r\n"
     cat "$DICOM_FILE"
     echo -en "\r\n--$BOUNDARY--\r\n"
-} | curl -u admin:admin \
+} | curl -u your_username:your_password \
     -H "Content-Type: multipart/related; boundary=$BOUNDARY" \
     -H "Accept: application/dicom+json" \
     --data-binary @- \
-    http://localhost/xapi/dicomweb/projects/test/studies
+    http://your-xnat-server/xapi/dicomweb/projects/YOUR_PROJECT/studies
 
 # Expected response:
 # {
@@ -142,8 +142,8 @@ DICOM_FILE="test.dcm"
 
 ```bash
 # Query via QIDO-RS (should show uploaded study)
-curl -u admin:admin \
-  http://localhost/xapi/dicomweb/projects/test/studies
+curl -u your_username:your_password \
+  http://your-xnat-server/xapi/dicomweb/projects/YOUR_PROJECT/studies
 ```
 
 ---

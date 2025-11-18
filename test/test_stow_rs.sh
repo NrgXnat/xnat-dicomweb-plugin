@@ -4,10 +4,18 @@
 
 set -e
 
-XNAT_URL="http://localhost"
-PROJECT="test"
-USERNAME="admin"
-PASSWORD="admin"
+# Configuration - update these for your environment
+XNAT_URL="${1:-http://your-xnat-server}"
+PROJECT="${2:-YOUR_PROJECT}"
+USERNAME="${3:-your_username}"
+PASSWORD="${4:-your_password}"
+
+# Check if using defaults and warn
+if [ "$XNAT_URL" == "http://your-xnat-server" ]; then
+  echo "⚠ Warning: Using default values. Run with:"
+  echo "  $0 XNAT_URL PROJECT USERNAME PASSWORD"
+  echo ""
+fi
 
 echo "========================================="
 echo "XNAT DICOMweb STOW-RS Test Suite"
