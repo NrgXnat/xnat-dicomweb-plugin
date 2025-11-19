@@ -11,6 +11,9 @@ out/
 .settings/
 .DS_Store
 
+# Deployment scripts - environment-specific
+deploy_*.sh
+
 # Test data - users should provide their own DICOM files
 test/data/**/*.dcm
 test/data/**/DICOM/
