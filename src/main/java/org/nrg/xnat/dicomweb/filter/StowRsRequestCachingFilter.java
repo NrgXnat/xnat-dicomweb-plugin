@@ -8,6 +8,8 @@
 
 package org.nrg.xnat.dicomweb.filter;
 
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.core.Ordered;
 import org.springframework.core.annotation.Order;
 import org.springframework.stereotype.Component;
@@ -32,6 +34,7 @@ import java.io.IOException;
 @Order(Ordered.HIGHEST_PRECEDENCE)
 public class StowRsRequestCachingFilter extends OncePerRequestFilter {
 
+    private static final Logger logger = LoggerFactory.getLogger(StowRsRequestCachingFilter.class);
     public static final String CACHED_BODY_ATTRIBUTE = "org.nrg.xnat.dicomweb.CACHED_REQUEST_BODY";
 
     @Override
@@ -41,6 +44,8 @@ public class StowRsRequestCachingFilter extends OncePerRequestFilter {
         String uri = request.getRequestURI();
         String method = request.getMethod();
         String contentType = request.getContentType();
+
+        logger.debug("StowRsRequestCachingFilter: URI={}, Method={}, ContentType={}", uri, method, contentType);
 
         // Only cache STOW-RS requests (POST to /dicomweb/.../studies with multipart content)
         if ("POST".equalsIgnoreCase(method) &&
@@ -57,10 +62,11 @@ public class StowRsRequestCachingFilter extends OncePerRequestFilter {
             }
             byte[] body = buffer.toByteArray();
 
-            System.out.println("=== STOW-RS Filter: Cached " + body.length + " bytes from input stream");
+            logger.info("STOW-RS Filter: Cached {} bytes from input stream", body.length);
 
             // Store in request attribute
             request.setAttribute(CACHED_BODY_ATTRIBUTE, body);
+            logger.debug("STOW-RS Filter: Stored body in request attribute: {}", CACHED_BODY_ATTRIBUTE);
 
             filterChain.doFilter(request, response);
         } else {
