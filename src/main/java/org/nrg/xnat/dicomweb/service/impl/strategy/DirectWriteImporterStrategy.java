@@ -16,6 +16,7 @@ import org.nrg.xnat.dicomweb.parser.Mime4jHybridParser.MultipartPart;
 import org.nrg.xnat.dicomweb.service.FailedInstance;
 import org.nrg.xnat.dicomweb.utils.DicomValidationUtils;
 import org.nrg.xnat.dicomweb.utils.DicomWebUtils;
+import org.nrg.xnat.helpers.uri.URIManager;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
@@ -57,10 +58,7 @@ public class DirectWriteImporterStrategy implements DicomImportStrategy {
                                  List<FailedInstance> failedInstances) {
         logger.info("Importing {} parts to prearchive via DirectWrite", parts.size());
 
-        String projectId = (String) params.get("projectId");
-        if (projectId == null) {
-            projectId = (String) params.get("project");
-        }
+        String projectId = (String) params.get(URIManager.PROJECT_ID);
         if (projectId == null) {
             logger.error("No projectId specified in params");
             failedInstances.add(FailedInstance.processingFailure(-1, "No projectId specified"));
