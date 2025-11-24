@@ -72,14 +72,14 @@ public class Mime4jHybridParser {
     }
 
     /**
-     * Parse multipart/related request
+     * Parse multipart/related request from InputStream (more efficient)
      *
      * @param contentType Content-Type header
-     * @param bodyBytes HTTP request body byte array
+     * @param inputStream HTTP request body input stream
      * @return List of parts
      * @throws IOException Parse error
      */
-    public List<MultipartPart> parse(String contentType, byte[] bodyBytes) throws IOException {
+    public List<MultipartPart> parse(String contentType, InputStream inputStream) throws IOException {
 
         // Validate Content-Type
         if (!isMultipartRelated(contentType)) {
@@ -87,8 +87,7 @@ public class Mime4jHybridParser {
             return new ArrayList<>();
         }
 
-        logger.info("Parsing multipart/related request, Content-Type: {}", contentType);
-        logger.debug("Body size: {} bytes", bodyBytes.length);
+        logger.info("Parsing multipart/related request from InputStream, Content-Type: {}", contentType);
 
         List<MultipartPart> parts = new ArrayList<>();
 
@@ -113,10 +112,9 @@ public class Mime4jHybridParser {
             // Construct MIME message headers
             String mimeHeaders = String.format("Content-Type: %s\r\n\r\n", contentType);
             ByteArrayInputStream headerStream = new ByteArrayInputStream(mimeHeaders.getBytes("UTF-8"));
-            ByteArrayInputStream bodyStream = new ByteArrayInputStream(bodyBytes);
 
-            // Use SequenceInputStream to combine headers and body
-            try (SequenceInputStream combinedStream = new SequenceInputStream(headerStream, bodyStream);
+            // Use SequenceInputStream to combine headers and body stream
+            try (SequenceInputStream combinedStream = new SequenceInputStream(headerStream, inputStream);
                  BufferedInputStream bufferedStream = new BufferedInputStream(combinedStream, 8192)) {
                 parser.parse(bufferedStream);
             }

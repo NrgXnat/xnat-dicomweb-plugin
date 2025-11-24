@@ -15,6 +15,7 @@ import org.mockito.MockitoAnnotations;
 import org.nrg.xdat.security.services.RoleHolder;
 import org.nrg.xdat.security.services.UserManagementServiceI;
 import org.nrg.xft.security.UserI;
+import org.nrg.xnat.dicomweb.service.StowRsService;
 
 import javax.servlet.http.HttpServletRequest;
 
@@ -32,6 +33,9 @@ public class StowRsApiTest {
     private RoleHolder mockRoleHolder;
 
     @Mock
+    private StowRsService mockStowRsService;
+
+    @Mock
     private HttpServletRequest mockRequest;
 
     @Mock
@@ -42,7 +46,7 @@ public class StowRsApiTest {
     @Before
     public void setUp() {
         MockitoAnnotations.initMocks(this);
-        stowRsApi = new StowRsApi(mockUserManagementService, mockRoleHolder);
+        stowRsApi = new StowRsApi(mockUserManagementService, mockRoleHolder, mockStowRsService);
     }
 
     // Tests removed - StowRsApi now uses XNAT's standard import pipeline (GradualDicomImporter)

@@ -3,19 +3,13 @@ package org.nrg.xnat.dicomweb.parser;
 import org.junit.After;
 import org.junit.Before;
 import org.junit.Test;
-import org.mockito.Mock;
-import org.mockito.MockitoAnnotations;
 
-import javax.servlet.ServletInputStream;
-import javax.servlet.http.HttpServletRequest;
 import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
-import java.io.File;
 import java.io.InputStream;
 import java.util.List;
 
 import static org.junit.Assert.*;
-import static org.mockito.Mockito.when;
 
 /**
  * Mime4jHybridParser unit tests
@@ -24,12 +18,8 @@ public class Mime4jHybridParserTest {
 
     private Mime4jHybridParser parser;
 
-    @Mock
-    private HttpServletRequest mockRequest;
-
     @Before
     public void setUp() {
-        MockitoAnnotations.initMocks(this);
         parser = new Mime4jHybridParser();
     }
 
@@ -45,10 +35,10 @@ public class Mime4jHybridParserTest {
      */
     @Test
     public void testNonMultipartRequest() throws Exception {
-        when(mockRequest.getContentType()).thenReturn("application/json");
-        when(mockRequest.getInputStream()).thenReturn(createEmptyInputStream());
+        String contentType = "application/json";
+        InputStream inputStream = new ByteArrayInputStream(new byte[0]);
 
-        List<Mime4jHybridParser.MultipartPart> parts = parser.parse(mockRequest);
+        List<Mime4jHybridParser.MultipartPart> parts = parser.parse(contentType, inputStream);
 
         assertNotNull(parts);
         assertEquals(0, parts.size());
@@ -66,12 +56,10 @@ public class Mime4jHybridParserTest {
             new Part("Another small file".getBytes(), "text/plain")
         );
 
-        when(mockRequest.getContentType())
-            .thenReturn("multipart/related; boundary=" + boundary);
-        when(mockRequest.getInputStream())
-            .thenReturn(createServletInputStream(multipartData));
+        String contentType = "multipart/related; boundary=" + boundary;
+        InputStream inputStream = new ByteArrayInputStream(multipartData);
 
-        List<Mime4jHybridParser.MultipartPart> parts = parser.parse(mockRequest);
+        List<Mime4jHybridParser.MultipartPart> parts = parser.parse(contentType, inputStream);
 
         assertEquals(2, parts.size());
 
@@ -108,12 +96,10 @@ public class Mime4jHybridParserTest {
             new Part(largeData, "application/octet-stream")
         );
 
-        when(mockRequest.getContentType())
-            .thenReturn("multipart/related; boundary=" + boundary);
-        when(mockRequest.getInputStream())
-            .thenReturn(createServletInputStream(multipartData));
+        String contentType = "multipart/related; boundary=" + boundary;
+        InputStream inputStream = new ByteArrayInputStream(multipartData);
 
-        List<Mime4jHybridParser.MultipartPart> parts = parser.parse(mockRequest);
+        List<Mime4jHybridParser.MultipartPart> parts = parser.parse(contentType, inputStream);
 
         assertEquals(1, parts.size());
 
@@ -152,12 +138,10 @@ public class Mime4jHybridParserTest {
             new Part("Another small".getBytes(), "text/plain")
         );
 
-        when(mockRequest.getContentType())
-            .thenReturn("multipart/related; boundary=" + boundary);
-        when(mockRequest.getInputStream())
-            .thenReturn(createServletInputStream(multipartData));
+        String contentType = "multipart/related; boundary=" + boundary;
+        InputStream inputStream = new ByteArrayInputStream(multipartData);
 
-        List<Mime4jHybridParser.MultipartPart> parts = parser.parse(mockRequest);
+        List<Mime4jHybridParser.MultipartPart> parts = parser.parse(contentType, inputStream);
 
         assertEquals(3, parts.size());
 
@@ -184,12 +168,10 @@ public class Mime4jHybridParserTest {
             new Part(content.getBytes(), "text/plain")
         );
 
-        when(mockRequest.getContentType())
-            .thenReturn("multipart/related; boundary=" + boundary);
-        when(mockRequest.getInputStream())
-            .thenReturn(createServletInputStream(multipartData));
+        String contentType = "multipart/related; boundary=" + boundary;
+        InputStream inputStream = new ByteArrayInputStream(multipartData);
 
-        List<Mime4jHybridParser.MultipartPart> parts = parser.parse(mockRequest);
+        List<Mime4jHybridParser.MultipartPart> parts = parser.parse(contentType, inputStream);
         assertEquals(1, parts.size());
 
         Mime4jHybridParser.MultipartPart part = parts.get(0);
@@ -263,46 +245,6 @@ public class Mime4jHybridParserTest {
             data[i] = (byte) (i % 256);
         }
         return data;
-    }
-
-    /**
-     * Create ServletInputStream
-     */
-    private ServletInputStream createServletInputStream(final byte[] data) {
-        final ByteArrayInputStream bis = new ByteArrayInputStream(data);
-        return new ServletInputStream() {
-            @Override
-            public int read() {
-                return bis.read();
-            }
-
-            @Override
-            public int read(byte[] b, int off, int len) {
-                return bis.read(b, off, len);
-            }
-
-            @Override
-            public boolean isFinished() {
-                return bis.available() == 0;
-            }
-
-            @Override
-            public boolean isReady() {
-                return true;
-            }
-
-            @Override
-            public void setReadListener(javax.servlet.ReadListener readListener) {
-                throw new UnsupportedOperationException("setReadListener not supported");
-            }
-        };
-    }
-
-    /**
-     * Create empty ServletInputStream
-     */
-    private ServletInputStream createEmptyInputStream() {
-        return createServletInputStream(new byte[0]);
     }
 
     /**

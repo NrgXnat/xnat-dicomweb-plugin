@@ -1,0 +1,91 @@
+/*
+ * XNAT DICOMweb Proxy Plugin
+ * Copyright (c) 2025 XNATWorks.
+ * All rights reserved.
+ */
+
+package org.nrg.xnat.dicomweb.service;
+
+/**
+ * Represents a failed DICOM instance during STOW-RS operation.
+ * Contains information needed for the FailedSOPSequence in the response.
+ */
+public class FailedInstance {
+
+    /**
+     * DICOM failure reason codes (per PS3.18 Table 10.5.1-1)
+     */
+    public static final int PROCESSING_FAILURE = 0x0110;           // General processing failure
+    public static final int CANNOT_UNDERSTAND = 0x0122;            // Cannot understand
+    public static final int OUT_OF_RESOURCES = 0x0213;             // Out of resources
+    public static final int DATA_SET_DOES_NOT_MATCH_SOP_CLASS = 0xA900; // Data set does not match SOP class
+
+    private final int instanceIndex;
+    private final String sopClassUid;
+    private final String sopInstanceUid;
+    private final int failureReason;
+    private final String errorMessage;
+
+    /**
+     * Create a failed instance with full details
+     */
+    public FailedInstance(int instanceIndex, String sopClassUid, String sopInstanceUid,
+                          int failureReason, String errorMessage) {
+        this.instanceIndex = instanceIndex;
+        this.sopClassUid = sopClassUid;
+        this.sopInstanceUid = sopInstanceUid;
+        this.failureReason = failureReason;
+        this.errorMessage = errorMessage;
+    }
+
+    /**
+     * Create a failed instance when SOP UIDs are not available (e.g., non-DICOM file)
+     */
+    public FailedInstance(int instanceIndex, int failureReason, String errorMessage) {
+        this(instanceIndex, null, null, failureReason, errorMessage);
+    }
+
+    /**
+     * Create a failed instance with default processing failure reason
+     */
+    public static FailedInstance processingFailure(int instanceIndex, String errorMessage) {
+        return new FailedInstance(instanceIndex, PROCESSING_FAILURE, errorMessage);
+    }
+
+    /**
+     * Create a failed instance for non-DICOM content
+     */
+    public static FailedInstance cannotUnderstand(int instanceIndex, String errorMessage) {
+        return new FailedInstance(instanceIndex, CANNOT_UNDERSTAND, errorMessage);
+    }
+
+    public int getInstanceIndex() {
+        return instanceIndex;
+    }
+
+    public String getSopClassUid() {
+        return sopClassUid;
+    }
+
+    public String getSopInstanceUid() {
+        return sopInstanceUid;
+    }
+
+    public int getFailureReason() {
+        return failureReason;
+    }
+
+    public String getErrorMessage() {
+        return errorMessage;
+    }
+
+    public boolean hasSopUids() {
+        return sopClassUid != null && sopInstanceUid != null;
+    }
+
+    @Override
+    public String toString() {
+        return String.format("FailedInstance[index=%d, reason=0x%04X, message=%s]",
+            instanceIndex, failureReason, errorMessage);
+    }
+}
