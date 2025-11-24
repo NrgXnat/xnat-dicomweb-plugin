@@ -102,55 +102,6 @@ public class StowRsApi extends AbstractXapiRestController {
     }
 
     /**
-     * Store DICOM instances to a specific study (STOW-RS)
-     * POST /dicomweb/projects/{projectId}/studies/{studyId}
-     * Instances must belong to the specified study.
-     */
-    @XapiRequestMapping(
-        value = "/dicomweb/projects/{projectId}/studies/{studyId}",
-        method = RequestMethod.POST,
-        produces = "application/dicom+json",
-        consumes = "*/*"
-    )
-    @ApiOperation(value = "Store DICOM instances to a specific study (STOW-RS)", response = String.class)
-    @ApiResponses({
-        @ApiResponse(code = 200, message = "Instances stored successfully"),
-        @ApiResponse(code = 400, message = "Invalid request format"),
-        @ApiResponse(code = 401, message = "Authentication required"),
-        @ApiResponse(code = 403, message = "Insufficient permissions"),
-        @ApiResponse(code = 500, message = "Internal server error")
-    })
-    public ResponseEntity<String> storeInstancesToStudy(
-            @PathVariable String projectId,
-            @PathVariable String studyId,
-            HttpServletRequest request) {
-
-        try {
-            UserI user = getSessionUser();
-
-            // Build StowRsParams from path variables and query parameters
-            Map<String, Object> params = new HashMap<>();
-            params.put("project", projectId);
-            params.put("subject",studyId);
-
-            StowRsResult result = stowRsService.storeInstances(user, params, request);
-
-            return ResponseEntity.ok()
-                .contentType(MediaType.parseMediaType(DicomWebUtils.getDicomJsonContentType()))
-                .body(result.getJsonResponse());
-
-        } catch (StowRsException e) {
-            logger.error("STOW-RS error: {}", e.getMessage(), e);
-            return ResponseEntity.status(e.getHttpStatus())
-                .body(createErrorResponse(e.getMessage()));
-        } catch (Exception e) {
-            logger.error("Unexpected error during STOW-RS", e);
-            return ResponseEntity.internalServerError()
-                .body(createErrorResponse("Internal server error: " + e.getMessage()));
-        }
-    }
-
-    /**
      * Create error response in JSON format
      */
     private String createErrorResponse(String message) {

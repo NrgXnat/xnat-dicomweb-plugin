@@ -12,18 +12,18 @@ import org.dcm4che3.data.Sequence;
 import org.dcm4che3.data.Tag;
 import org.dcm4che3.data.VR;
 import org.nrg.action.ClientException;
-import org.nrg.action.ServerException;
 import org.nrg.xdat.XDAT;
 import org.nrg.xft.security.UserI;
-import org.nrg.xnat.archive.GradualDicomImporter;
 import org.nrg.xnat.archive.Operation;
-import org.nrg.xnat.dicomweb.helpers.InputStreamFileWriterWrapper;
 import org.nrg.xnat.dicomweb.parser.Mime4jHybridParser;
 import org.nrg.xnat.dicomweb.parser.Mime4jHybridParser.MultipartPart;
 import org.nrg.xnat.dicomweb.service.FailedInstance;
 import org.nrg.xnat.dicomweb.service.StowRsException;
 import org.nrg.xnat.dicomweb.service.StowRsResult;
 import org.nrg.xnat.dicomweb.service.StowRsService;
+import org.nrg.xnat.dicomweb.service.impl.strategy.DicomImportStrategy;
+import org.nrg.xnat.dicomweb.service.impl.strategy.GradualDicomImporterStrategy;
+import org.nrg.xnat.dicomweb.service.impl.strategy.DirectWriteImporterStrategy;
 import org.nrg.xnat.dicomweb.utils.DicomWebUtils;
 import org.nrg.xnat.helpers.prearchive.PrearcDatabase;
 import org.nrg.xnat.helpers.prearchive.PrearcSession;
@@ -32,20 +32,16 @@ import org.nrg.xnat.helpers.prearchive.SessionData;
 import org.nrg.xnat.helpers.prearchive.handlers.PrearchiveOperationHandlerResolver;
 import org.nrg.xnat.helpers.prearchive.handlers.PrearchiveRebuildHandler;
 import org.nrg.xnat.helpers.prearchive.handlers.PrearchiveSeparatePetMrHandler;
-import org.nrg.xnat.restlet.util.FileWriterWrapperI;
 import org.nrg.xnat.restlet.util.RequestUtil;
 import org.nrg.xnat.services.messaging.prearchive.PrearchiveOperationRequest;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 
 import javax.servlet.http.HttpServletRequest;
 import java.io.File;
-import java.io.IOException;
-import java.io.InputStream;
-import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
-import java.util.Arrays;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
@@ -55,6 +51,7 @@ import java.util.Set;
 /**
  * Implementation of STOW-RS service.
  * Handles the business logic for storing DICOM instances.
+ * Uses strategy pattern to support different import methods.
  */
 @Service
 public class StowRsServiceImpl implements StowRsService {
@@ -63,39 +60,72 @@ public class StowRsServiceImpl implements StowRsService {
 
     private static final String SLASH = "/";
 
-    // DICOM file prefix offset and magic bytes
-    private static final int DICOM_PREFIX_OFFSET = 128;
-    private static final byte[] DICOM_MAGIC_BYTES = "DICM".getBytes(StandardCharsets.US_ASCII);
-
-    // Valid DICOM content types
-    private static final Set<String> VALID_DICOM_CONTENT_TYPES = new HashSet<>(Arrays.asList(
-        "application/dicom",
-        "application/octet-stream"  // Some clients use this
-    ));
-
-    private Map<String, Object> defaultParams = getDefaultParams();
     private final Mime4jHybridParser multipartParser;
+    private final GradualDicomImporterStrategy gradualImporter;
+    private final DirectWriteImporterStrategy directWriteImporter;
 
-    public StowRsServiceImpl() {
+    // Default import strategy
+    private DicomImportStrategy defaultStrategy;
+
+    @Autowired
+    public StowRsServiceImpl(GradualDicomImporterStrategy gradualImporter,
+                              DirectWriteImporterStrategy directWriteImporter) {
         this.multipartParser = new Mime4jHybridParser();
+        this.gradualImporter = gradualImporter;
+        this.directWriteImporter = directWriteImporter;
+        this.defaultStrategy = gradualImporter;  // Default to GradualDicomImporter
+    }
+
+    /**
+     * Get the GradualDicomImporter strategy.
+     */
+    public DicomImportStrategy getGradualImporterStrategy() {
+        return gradualImporter;
+    }
+
+    /**
+     * Get the DirectWrite strategy.
+     */
+    public DicomImportStrategy getDirectWriteStrategy() {
+        return directWriteImporter;
+    }
+
+    /**
+     * Set the default import strategy.
+     */
+    public void setDefaultStrategy(DicomImportStrategy strategy) {
+        this.defaultStrategy = strategy;
+        logger.info("Default import strategy set to: {}", strategy.getName());
     }
 
     @Override
     public StowRsResult storeInstances(UserI user, Map<String, Object> params, HttpServletRequest request)
             throws StowRsException {
+        return storeInstances(user, params, request, defaultStrategy);
+    }
 
-        logger.info("STOW-RS request from user {} with params {}", user.getLogin(), params);
+    /**
+     * Store DICOM instances using the specified import strategy.
+     */
+    public StowRsResult storeInstances(UserI user, Map<String, Object> params,
+                                        HttpServletRequest request, DicomImportStrategy strategy)
+            throws StowRsException {
+
+        logger.info("STOW-RS request from user {} with params {}, strategy: {}",
+            user.getLogin(), params, strategy.getName());
         logger.debug("Content-Type: {}, Content-Length: {}",
                 request.getContentType(), request.getContentLength());
 
         List<MultipartPart> parts = null;
         Set<String> prearchiveUris = Sets.newLinkedHashSet();
         List<FailedInstance> failedInstances = new ArrayList<>();
-        params.putAll(defaultParams);
+
+        // Add default params
+        Map<String, Object> mergedParams = new HashMap<>(getDefaultParams());
+        mergedParams.putAll(params);
 
         try {
-
-            // Parse multipart/related request directly from InputStream (memory efficient)
+            // Parse multipart/related request directly from InputStream
             parts = multipartParser.parse(request.getContentType(), request.getInputStream());
 
             if (parts.isEmpty()) {
@@ -108,29 +138,8 @@ public class StowRsServiceImpl implements StowRsService {
                 parts.stream().filter(MultipartPart::isInMemory).count(),
                 parts.stream().filter(p -> !p.isInMemory()).count());
 
-            // Import each DICOM instance to prearchive
-            logger.info("Importing {} parts to prearchive", parts.size());
-            for (int i = 0; i < parts.size(); i++) {
-                MultipartPart part = parts.get(i);
-
-                // Pre-validation: Check if this looks like a DICOM file
-                FailedInstance validationFailure = validateDicomPart(part, i);
-                if (validationFailure != null) {
-                    logger.warn("Part {} failed pre-validation: {}", i, validationFailure.getErrorMessage());
-                    failedInstances.add(validationFailure);
-                    continue;  // Skip this part, don't send to GradualDicomImporter
-                }
-
-                try {
-                    importInstance(user, part, i, params, prearchiveUris);
-                } catch (ClientException | ServerException e) {
-                    logger.error("Failed to import instance {}: {}", i, e.getMessage(), e);
-                    // Collect failure information
-                    FailedInstance failure = FailedInstance.processingFailure(i, e.getMessage());
-                    failedInstances.add(failure);
-                    // Continue with other instances
-                }
-            }
+            // Import DICOM instances using the selected strategy
+            strategy.importInstances(user, parts, mergedParams, prearchiveUris, failedInstances);
 
             if (prearchiveUris.isEmpty()) {
                 logger.warn("No instances were successfully imported");
@@ -142,7 +151,7 @@ public class StowRsServiceImpl implements StowRsService {
 
             // Build sessions
             logger.info("Building XML for {} DICOM sessions", prearchiveUris.size());
-            Set<String> archiveUrls = buildSessions(user, prearchiveUris, params);
+            Set<String> archiveUrls = buildSessions(user, prearchiveUris, mergedParams);
 
             // Build STOW-RS response with failure information
             String jsonResponse = buildStowRsResponse(prearchiveUris, archiveUrls, failedInstances, request);
@@ -167,7 +176,7 @@ public class StowRsServiceImpl implements StowRsService {
             logger.error("STOW-RS error", e);
             throw StowRsException.serverError("Internal server error: " + e.getMessage(), e);
         } finally {
-            // Clean up resources (critical for disk-based parts)
+            // Clean up resources
             if (parts != null) {
                 multipartParser.cleanup(parts);
             }
@@ -182,126 +191,6 @@ public class StowRsServiceImpl implements StowRsService {
         defaultParams.put("overwrite", "append");
         defaultParams.put("overwrite_files", "true");
         return defaultParams;
-    }
-
-    /**
-     * Validate that a part is likely a DICOM file before sending to GradualDicomImporter.
-     * Returns a FailedInstance if validation fails, null if validation passes.
-     *
-     * Checks:
-     * 1. Content-Type (if specified) should be application/dicom or application/octet-stream
-     * 2. DICOM magic bytes "DICM" at offset 128 (for files with Part 10 header)
-     */
-    private FailedInstance validateDicomPart(MultipartPart part, int index) {
-        String contentType = part.getContentType();
-
-        // Check 1: Content-Type validation (if specified and not generic)
-        if (contentType != null && !contentType.isEmpty()) {
-            String normalizedType = contentType.toLowerCase().split(";")[0].trim();
-            if (!VALID_DICOM_CONTENT_TYPES.contains(normalizedType) &&
-                !normalizedType.startsWith("application/dicom")) {
-                logger.info("Part {} has non-DICOM Content-Type: {}", index, contentType);
-                return FailedInstance.cannotUnderstand(index,
-                    "Invalid Content-Type: " + contentType + ". Expected application/dicom");
-            }
-        }
-
-        // Check 2: DICOM magic bytes validation
-        // For files >= 132 bytes, check for "DICM" at offset 128
-        if (part.getSize() >= DICOM_PREFIX_OFFSET + DICOM_MAGIC_BYTES.length) {
-            try (InputStream is = part.getInputStream()) {
-                byte[] header = new byte[DICOM_PREFIX_OFFSET + DICOM_MAGIC_BYTES.length];
-                int bytesRead = 0;
-                while (bytesRead < header.length) {
-                    int read = is.read(header, bytesRead, header.length - bytesRead);
-                    if (read == -1) break;
-                    bytesRead += read;
-                }
-
-                if (bytesRead >= DICOM_PREFIX_OFFSET + DICOM_MAGIC_BYTES.length) {
-                    byte[] magicBytes = new byte[DICOM_MAGIC_BYTES.length];
-                    System.arraycopy(header, DICOM_PREFIX_OFFSET, magicBytes, 0, DICOM_MAGIC_BYTES.length);
-
-                    if (!Arrays.equals(magicBytes, DICOM_MAGIC_BYTES)) {
-                        String foundMagic = new String(magicBytes, StandardCharsets.US_ASCII);
-                        logger.info("Part {} does not have DICOM magic bytes. Found: '{}' at offset {}",
-                            index, foundMagic, DICOM_PREFIX_OFFSET);
-                        return FailedInstance.cannotUnderstand(index,
-                            "Not a valid DICOM file: missing DICM header");
-                    }
-                }
-            } catch (IOException e) {
-                logger.warn("Failed to read part {} for validation: {}", index, e.getMessage());
-                // Don't fail validation on read errors - let GradualDicomImporter handle it
-            }
-        } else if (part.getSize() > 0 && part.getSize() < DICOM_PREFIX_OFFSET) {
-            // File too small to be a valid DICOM Part 10 file
-            logger.info("Part {} is too small to be a valid DICOM file: {} bytes", index, part.getSize());
-            return FailedInstance.cannotUnderstand(index,
-                "File too small to be a valid DICOM file: " + part.getSize() + " bytes");
-        }
-
-        // Validation passed
-        return null;
-    }
-
-    /**
-     * Import a single DICOM instance using GradualDicomImporter
-     */
-    private void importInstance(UserI user, MultipartPart part, int index,
-                                Map<String, Object> params, Set<String> uris)
-            throws ServerException, ClientException {
-
-        FileWriterWrapperI fw = new InputStreamFileWriterWrapper(part, index);
-        logger.debug("Importing DICOM instance: {} ({} bytes)", fw.getName(), part.getSize());
-
-        final GradualDicomImporter importer = new GradualDicomImporter(
-            getClass().getName(),
-            user,
-            fw,
-            params
-        );
-
-        // Set the DICOM object identifier
-        setDicomObjectIdentifier(importer);
-
-        // Import and collect URIs
-        try {
-            List<String> importedUris = importer.call();
-            if (importedUris != null) {
-                uris.addAll(importedUris);
-                logger.debug("Successfully imported to: {}", importedUris);
-            } else {
-                logger.warn("Import returned null URIs");
-            }
-        } catch (Exception e) {
-            logger.error("Failed to import DICOM instance: {}", e.getMessage());
-            throw new ServerException("DICOM import failed: " + e.getMessage(), e);
-        }
-    }
-
-    /**
-     * Set DICOM object identifier using reflection
-     */
-    private void setDicomObjectIdentifier(GradualDicomImporter importer) throws ServerException {
-        try {
-            Object identifier = XDAT.getContextService().getBean("dicomObjectIdentifier");
-            java.lang.reflect.Method setIdentifierMethod = null;
-            for (java.lang.reflect.Method method : importer.getClass().getMethods()) {
-                if ("setIdentifier".equals(method.getName()) && method.getParameterCount() == 1) {
-                    setIdentifierMethod = method;
-                    break;
-                }
-            }
-            if (setIdentifierMethod != null) {
-                setIdentifierMethod.invoke(importer, identifier);
-            } else {
-                logger.warn("Could not find setIdentifier method on GradualDicomImporter");
-            }
-        } catch (Exception e) {
-            logger.error("Failed to set DicomObjectIdentifier bean", e);
-            throw new ServerException("DICOM import configuration error: " + e.getMessage(), e);
-        }
     }
 
     /**
@@ -413,7 +302,7 @@ public class StowRsServiceImpl implements StowRsService {
             );
             archiveUrls.add(url);
         } else {
-            throw new ServerException("Unable to lock session for archiving.");
+            throw new org.nrg.action.ServerException("Unable to lock session for archiving.");
         }
     }
 
@@ -444,7 +333,6 @@ public class StowRsServiceImpl implements StowRsService {
 
     /**
      * Build DICOM JSON response per STOW-RS specification (PS3.18)
-     * Includes both ReferencedSOPSequence for successes and FailedSOPSequence for failures.
      */
     private String buildStowRsResponse(Set<String> prearchiveUris, Set<String> archiveUrls,
                                        List<FailedInstance> failedInstances,
@@ -453,7 +341,7 @@ public class StowRsServiceImpl implements StowRsService {
             Attributes attrs = new Attributes();
             int successCount = prearchiveUris.size();
 
-            // Set RetrieveURL (0008,1190) - URL to retrieve the stored instances
+            // Set RetrieveURL (0008,1190)
             if (successCount > 0) {
                 String firstUri = archiveUrls.isEmpty() ?
                     prearchiveUris.iterator().next() :
@@ -461,22 +349,15 @@ public class StowRsServiceImpl implements StowRsService {
                 attrs.setString(Tag.RetrieveURL, VR.UR, firstUri);
             }
 
-            // Create ReferencedSOPSequence (0008,1199) for successful instances
+            // Create ReferencedSOPSequence (0008,1199)
             Sequence referencedSeq = attrs.newSequence(Tag.ReferencedSOPSequence, successCount);
-            // Note: In a full implementation, we would add items with:
-            // - ReferencedSOPClassUID (0008,1150)
-            // - ReferencedSOPInstanceUID (0008,1155)
-            // - RetrieveURL (0008,1190)
 
-            // Create FailedSOPSequence (0008,1198) for failed instances
+            // Create FailedSOPSequence (0008,1198)
             Sequence failedSeq = attrs.newSequence(Tag.FailedSOPSequence, failedInstances.size());
             for (FailedInstance failure : failedInstances) {
                 Attributes failedItem = new Attributes();
-
-                // Set FailureReason (0008,1197) - required
                 failedItem.setInt(Tag.FailureReason, VR.US, failure.getFailureReason());
 
-                // Set ReferencedSOPClassUID and ReferencedSOPInstanceUID if available
                 if (failure.hasSopUids()) {
                     failedItem.setString(Tag.ReferencedSOPClassUID, VR.UI, failure.getSopClassUid());
                     failedItem.setString(Tag.ReferencedSOPInstanceUID, VR.UI, failure.getSopInstanceUid());
