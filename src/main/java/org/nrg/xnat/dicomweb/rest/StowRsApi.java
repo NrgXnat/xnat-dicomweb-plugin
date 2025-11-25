@@ -13,6 +13,7 @@ import io.swagger.annotations.ApiResponses;
 import org.nrg.framework.annotations.XapiRestController;
 import org.nrg.xapi.rest.AbstractXapiRestController;
 import org.nrg.xapi.rest.XapiRequestMapping;
+import org.nrg.xdat.om.XnatProjectdata;
 import org.nrg.xdat.security.services.RoleHolder;
 import org.nrg.xdat.security.services.UserManagementServiceI;
 import org.nrg.xft.security.UserI;
@@ -89,6 +90,13 @@ public class StowRsApi extends AbstractXapiRestController {
 
         try {
             UserI user = getSessionUser();
+
+            // Verify project exists and user has access
+            XnatProjectdata project = XnatProjectdata.getXnatProjectdatasById(projectId, user, false);
+            if (project == null) {
+                logger.error("Project '{}' not found or user '{}' does not have access", projectId, user.getLogin());
+                throw StowRsException.forbidden("Project '" + projectId + "' not found or access denied");
+            }
 
             // Build StowRsParams from path variables and query parameters
             Map<String, Object> params = new HashMap<>();
