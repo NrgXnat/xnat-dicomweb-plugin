@@ -459,6 +459,15 @@ public class XnatDicomServiceImpl implements XnatDicomService {
                 attrs.setString(Tag.StudyDate, VR.DA, "");
             }
 
+            // Study time (use session time if available)
+            Object sessionTimeObj = session.getTime();
+            if (sessionTimeObj != null) {
+                String timeStr = sessionTimeObj.toString().replaceAll(":", "");
+                attrs.setString(Tag.StudyTime, VR.TM, timeStr);
+            } else {
+                attrs.setString(Tag.StudyTime, VR.TM, "");
+            }
+
             String label = session.getLabel();
             attrs.setString(Tag.StudyDescription, VR.LO, label != null ? label : "");
             attrs.setString(Tag.AccessionNumber, VR.SH, label != null ? label : "");
