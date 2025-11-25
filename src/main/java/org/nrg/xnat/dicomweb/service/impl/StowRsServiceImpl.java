@@ -149,16 +149,9 @@ public class StowRsServiceImpl implements StowRsService {
             logger.info("Successfully imported {} sessions to prearchive, {} failures",
                 prearchiveUris.size(), failedInstances.size());
 
-            // Build sessions - skip for DirectWrite as it needs manual registration
-            Set<String> archiveUrls = new HashSet<>();
-            if (strategy.getName().equals("DirectWrite")) {
-                logger.info("DirectWrite strategy: {} sessions created. Files written but not registered in PrearcDatabase.",
-                    prearchiveUris.size());
-                logger.info("Sessions need to be manually registered through XNAT UI prearchive rebuild process.");
-            } else {
-                logger.info("Building XML for {} DICOM sessions", prearchiveUris.size());
-                archiveUrls = buildSessions(user, prearchiveUris, mergedParams);
-            }
+            // Build sessions
+            logger.info("Building XML for {} DICOM sessions", prearchiveUris.size());
+            Set<String> archiveUrls = buildSessions(user, prearchiveUris, mergedParams);
 
             // Build STOW-RS response with failure information
             String jsonResponse = buildStowRsResponse(prearchiveUris, archiveUrls, failedInstances, request);

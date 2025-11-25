@@ -10,12 +10,16 @@ import org.dcm4che3.data.Attributes;
 import org.dcm4che3.data.Tag;
 import org.dcm4che3.data.UID;
 import org.dcm4che3.io.DicomOutputStream;
+import org.nrg.framework.constants.PrearchiveCode;
 import org.nrg.xdat.XDAT;
 import org.nrg.xft.security.UserI;
 import org.nrg.xnat.dicomweb.parser.Mime4jHybridParser.MultipartPart;
 import org.nrg.xnat.dicomweb.service.FailedInstance;
 import org.nrg.xnat.dicomweb.utils.DicomValidationUtils;
 import org.nrg.xnat.dicomweb.utils.DicomWebUtils;
+import org.nrg.xnat.helpers.prearchive.PrearcDatabase;
+import org.nrg.xnat.helpers.prearchive.PrearcUtils;
+import org.nrg.xnat.helpers.prearchive.SessionData;
 import org.nrg.xnat.helpers.uri.URIManager;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -27,6 +31,7 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.text.SimpleDateFormat;
 import java.util.ArrayList;
+import java.util.Calendar;
 import java.util.Date;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -130,18 +135,24 @@ public class DirectWriteImporterStrategy implements DicomImportStrategy {
             List<DicomInstanceInfo> instances = entry.getValue();
 
             try {
-                // Create prearchive session directory
-                String sessionUri = createPrearchiveSession(user, projectId, studyUid, timestamp, instances);
+                // Get first instance to extract metadata for session creation
+                DicomInstanceInfo firstInstance = instances.get(0);
 
-                if (sessionUri != null) {
+                // Create or get existing prearchive session (with PrearcDatabase registration)
+                SessionData session = createOrGetPrearchiveSession(user, projectId, studyUid,
+                                                                   timestamp, firstInstance.attrs);
+
+                if (session != null) {
                     // Write DICOM files to session directory
-                    writeInstancesToSession(projectId, studyUid, timestamp, instances, failedInstances);
+                    File sessionDir = new File(session.getUrl());
+                    writeInstancesToSession(sessionDir, instances, failedInstances);
 
-                    // Add to prearchiveUris so buildSessions() can register and build the session
+                    // Build prearchive URI from session data
+                    String sessionUri = "/prearchive/projects/" + projectId + "/" +
+                                       session.getTimestamp() + "/" + session.getFolderName();
                     prearchiveUris.add(sessionUri);
 
-                    logger.info("DirectWrite: Files written to {}. Will be registered via buildSession().",
-                        sessionUri);
+                    logger.info("DirectWrite: Session registered and files written to {}.", sessionUri);
                 }
             } catch (Exception e) {
                 logger.error("Failed to process study {}: {}", studyUid, e.getMessage(), e);
@@ -157,42 +168,66 @@ public class DirectWriteImporterStrategy implements DicomImportStrategy {
     }
 
     /**
-     * Create a prearchive session directory for the given study.
-     * Calls PrearcUtils.buildSession() to register it in the prearchive database.
+     * Create or get existing prearchive session using PrearcDatabase API.
+     * This follows the e39978f implementation approach.
      */
-    private String createPrearchiveSession(UserI user, String projectId, String studyUid,
-                                          String timestamp, List<DicomInstanceInfo> instances)
+    private SessionData createOrGetPrearchiveSession(UserI user, String projectId, String studyUid,
+                                                     String timestamp, Attributes dicomAttrs)
             throws Exception {
         File prearchiveRoot = new File(XDAT.getSiteConfigPreferences().getPrearchivePath());
+        File prearchiveProjectDir = new File(prearchiveRoot, projectId + "/" + timestamp);
 
-        String sessionName = studyUid;
-        File sessionDir = new File(prearchiveRoot, projectId + "/" + timestamp + "/" + sessionName);
-
-        if (!sessionDir.exists() && !sessionDir.mkdirs()) {
-            throw new IOException("Failed to create session directory: " + sessionDir);
+        if (!prearchiveProjectDir.exists() && !prearchiveProjectDir.mkdirs()) {
+            throw new IOException("Failed to create prearchive project directory: " + prearchiveProjectDir);
         }
 
-        logger.info("Created prearchive session directory: {}", sessionDir);
+        // Create SessionData to initialize or find existing session
+        SessionData initialize = new SessionData();
+        initialize.setProject(projectId);
+        initialize.setTag(studyUid);  // KEY: This is how sessions are matched by StudyInstanceUID!
 
-        // First write the files (will be done by caller)
-        // Then build the session to register it in PrearcDatabase
-        // Note: We return the URI now, and the caller will write files,
-        // then buildSessions() will be called separately
+        // Derive session name from DICOM metadata (XNAT uses PatientID by default)
+        String patientID = dicomAttrs.getString(Tag.PatientID, "");
+        String sessionLabel = patientID.replaceAll("[^a-zA-Z0-9_]", "_");
+        if (sessionLabel.isEmpty()) {
+            // Fallback if no PatientID
+            sessionLabel = "DICOMWEB_" + studyUid.substring(0, Math.min(20, studyUid.length()));
+        }
 
-        return "/prearchive/projects/" + projectId + "/" + timestamp + "/" + sessionName;
+        initialize.setFolderName(sessionLabel);
+        initialize.setName(sessionLabel);
+        initialize.setUrl(new File(prearchiveProjectDir, sessionLabel).getAbsolutePath());
+        initialize.setTimestamp(timestamp);
+        initialize.setStatus(PrearcUtils.PrearcStatus.RECEIVING);
+        initialize.setLastBuiltDate(Calendar.getInstance().getTime());
+        initialize.setSource("DICOMWEB_STOW");
+
+        // Set study date if available
+        Date studyDate = dicomAttrs.getDate(Tag.StudyDate);
+        if (studyDate != null) {
+            initialize.setScan_date(studyDate);
+        }
+
+        // Get or create session - this will find existing session with same StudyInstanceUID!
+        PrearcDatabase.Either<SessionData, SessionData> getOrCreate =
+            PrearcDatabase.eitherGetOrCreateSession(initialize, prearchiveProjectDir, PrearchiveCode.Manual);
+
+        SessionData session = getOrCreate.isLeft() ? getOrCreate.getLeft() : getOrCreate.getRight();
+
+        String action = getOrCreate.isLeft() ? "Created new" : "Using existing";
+        logger.info("DirectWrite: {} session for StudyInstanceUID {}: {}",
+            action, studyUid, session.getUrl());
+
+        return session;
     }
 
     /**
      * Write DICOM instances to the prearchive session directory.
      */
-    private void writeInstancesToSession(String projectId, String studyUid, String timestamp,
+    private void writeInstancesToSession(File sessionDir,
                                           List<DicomInstanceInfo> instances,
                                           List<FailedInstance> failedInstances) {
-        File prearchiveRoot = new File(XDAT.getSiteConfigPreferences().getPrearchivePath());
-        String sessionName = studyUid;
-        File sessionDir = new File(prearchiveRoot, projectId + "/" + timestamp + "/" + sessionName);
-
-        // Create SCANS directory (XNAT standard structure)
+        // Create SCANS directory (XNAT standard structure - e39978f format)
         File scansDir = new File(sessionDir, "SCANS");
 
         for (DicomInstanceInfo info : instances) {
