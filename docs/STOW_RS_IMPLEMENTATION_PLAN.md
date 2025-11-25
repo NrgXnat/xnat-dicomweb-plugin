@@ -2,11 +2,21 @@
 
 ## ✅ IMPLEMENTATION COMPLETE
 
+> **Note:** This document represents the original implementation plan. The actual implementation evolved during development and includes additional features:
+> - **Strategy Pattern**: Two import strategies (`GradualDicomImporter` and `DirectWrite`) are available via query parameter
+> - **DirectWrite Enhancement**: Uses `PrearcDatabase.eitherGetOrCreateSession()` for automatic session registration (matching the e39978f implementation approach)
+> - **Project Validation**: Added early validation in StowRsApi to verify project exists before processing
+> - **Multipart Parser**: Uses custom `Mime4jHybridParser` instead of Apache Commons FileUpload
+> - **Session Registration**: Both strategies now automatically register sessions in PrearcDatabase for immediate visibility in XNAT UI
+>
+> See `dicomweb-doc/DirectWrite_Implementation_Comparison.md` for detailed comparison of implementations.
+
 This document outlines the implementation of STOW-RS (STore Over the Web by RESTful Services) support for the XNAT DICOMweb Proxy Plugin, completing the DICOMweb triumvirate (QIDO-RS, WADO-RS, STOW-RS).
 
 **Status:** Fully implemented and tested
 **Version:** 1.1.3
-**Completion Date:** November 17, 2025
+**Original Plan Date:** November 17, 2025
+**Latest Update:** November 25, 2025
 
 ## Overview
 

@@ -1,5 +1,13 @@
 # STOW-RS Deployment Success
 
+> **Historical Note**: This document describes the initial STOW-RS implementation (November 2025). The current implementation has been enhanced with:
+> - Strategy pattern (GradualDicomImporter and DirectWrite strategies)
+> - Automatic session registration via PrearcDatabase API
+> - Project validation in StowRsApi
+> - Improved multipart parsing with Mime4jHybridParser
+>
+> See README.md and `dicomweb-doc/` for current implementation details.
+
 **Date**: 2025-11-18
 **Status**: ✅ **WORKING - First successful STOW-RS upload!**
 

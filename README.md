@@ -65,10 +65,15 @@ All endpoints are prefixed with `/xapi/dicomweb/projects/{projectId}`
 
 ### STOW-RS (Store) Endpoints
 
-- **Store Instances**: `POST /xapi/dicomweb/projects/{projectId}/studies`
+- **Store Instances**: `POST /xapi/dicomweb/projects/{projectId}/studies?strategy={strategyName}`
   - Upload DICOM instances via multipart/related request
   - Requires Edit permission on the project
+  - Validates project exists before processing
   - Returns STOW-RS response with success/failure status per instance
+  - **Strategy Parameter** (optional):
+    - `GradualDicomImporter` (default) - Uses XNAT's standard import pipeline with full validation
+    - `DirectWrite` - Direct write to prearchive with automatic session registration via PrearcDatabase API
+    - Both strategies support automatic session registration and archiving
 
 ## Using with OHIF Viewer
 
