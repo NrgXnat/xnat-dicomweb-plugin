@@ -94,6 +94,7 @@ public class DirectWriteImporterStrategy implements DicomImportStrategy {
                 String seriesUid = attrs.getString(Tag.SeriesInstanceUID);
                 String sopInstanceUid = attrs.getString(Tag.SOPInstanceUID);
                 String sopClassUid = attrs.getString(Tag.SOPClassUID);
+                String seriesNumber = attrs.getString(Tag.SeriesNumber, "1");
 
                 if (studyUid == null || studyUid.isEmpty()) {
                     logger.warn("Part {} missing StudyInstanceUID", i);
@@ -109,7 +110,7 @@ public class DirectWriteImporterStrategy implements DicomImportStrategy {
 
                 // Add to study group
                 studyGroups.computeIfAbsent(studyUid, k -> new ArrayList<>())
-                    .add(new DicomInstanceInfo(i, attrs, part, sopClassUid, sopInstanceUid, seriesUid));
+                    .add(new DicomInstanceInfo(i, attrs, part, sopClassUid, sopInstanceUid, seriesUid, seriesNumber));
 
                 logger.debug("Part {} parsed: Study={}, Series={}, SOP={}",
                     i, studyUid, seriesUid, sopInstanceUid);
@@ -129,14 +130,18 @@ public class DirectWriteImporterStrategy implements DicomImportStrategy {
             List<DicomInstanceInfo> instances = entry.getValue();
 
             try {
-                // Create prearchive session
-                String sessionUri = createPrearchiveSession(projectId, studyUid, timestamp);
+                // Create prearchive session directory
+                String sessionUri = createPrearchiveSession(user, projectId, studyUid, timestamp, instances);
 
                 if (sessionUri != null) {
-                    prearchiveUris.add(sessionUri);
-
                     // Write DICOM files to session directory
                     writeInstancesToSession(projectId, studyUid, timestamp, instances, failedInstances);
+
+                    // Add to prearchiveUris so buildSessions() can register and build the session
+                    prearchiveUris.add(sessionUri);
+
+                    logger.info("DirectWrite: Files written to {}. Will be registered via buildSession().",
+                        sessionUri);
                 }
             } catch (Exception e) {
                 logger.error("Failed to process study {}: {}", studyUid, e.getMessage(), e);
@@ -152,10 +157,12 @@ public class DirectWriteImporterStrategy implements DicomImportStrategy {
     }
 
     /**
-     * Create a prearchive session for the given study.
+     * Create a prearchive session directory for the given study.
+     * Calls PrearcUtils.buildSession() to register it in the prearchive database.
      */
-    private String createPrearchiveSession(String projectId, String studyUid, String timestamp)
-            throws IOException {
+    private String createPrearchiveSession(UserI user, String projectId, String studyUid,
+                                          String timestamp, List<DicomInstanceInfo> instances)
+            throws Exception {
         File prearchiveRoot = new File(XDAT.getSiteConfigPreferences().getPrearchivePath());
 
         String sessionName = studyUid;
@@ -165,7 +172,12 @@ public class DirectWriteImporterStrategy implements DicomImportStrategy {
             throw new IOException("Failed to create session directory: " + sessionDir);
         }
 
-        logger.debug("Created prearchive session directory: {}", sessionDir);
+        logger.info("Created prearchive session directory: {}", sessionDir);
+
+        // First write the files (will be done by caller)
+        // Then build the session to register it in PrearcDatabase
+        // Note: We return the URI now, and the caller will write files,
+        // then buildSessions() will be called separately
 
         return "/prearchive/projects/" + projectId + "/" + timestamp + "/" + sessionName;
     }
@@ -180,11 +192,14 @@ public class DirectWriteImporterStrategy implements DicomImportStrategy {
         String sessionName = studyUid;
         File sessionDir = new File(prearchiveRoot, projectId + "/" + timestamp + "/" + sessionName);
 
+        // Create SCANS directory (XNAT standard structure)
+        File scansDir = new File(sessionDir, "SCANS");
+
         for (DicomInstanceInfo info : instances) {
             try {
-                // Create series subdirectory
-                String seriesUid = info.seriesUid != null ? info.seriesUid : "unknown_series";
-                File seriesDir = new File(sessionDir, seriesUid);
+                // Create series subdirectory using series number (e39978f structure)
+                String seriesNumber = info.seriesNumber != null ? info.seriesNumber : "1";
+                File seriesDir = new File(scansDir, seriesNumber);
                 if (!seriesDir.exists() && !seriesDir.mkdirs()) {
                     throw new IOException("Failed to create series directory: " + seriesDir);
                 }
@@ -222,15 +237,17 @@ public class DirectWriteImporterStrategy implements DicomImportStrategy {
         final String sopClassUid;
         final String sopInstanceUid;
         final String seriesUid;
+        final String seriesNumber;
 
         DicomInstanceInfo(int partIndex, Attributes attrs, MultipartPart part,
-                          String sopClassUid, String sopInstanceUid, String seriesUid) {
+                          String sopClassUid, String sopInstanceUid, String seriesUid, String seriesNumber) {
             this.partIndex = partIndex;
             this.attrs = attrs;
             this.part = part;
             this.sopClassUid = sopClassUid;
             this.sopInstanceUid = sopInstanceUid;
             this.seriesUid = seriesUid;
+            this.seriesNumber = seriesNumber;
         }
     }
 }

@@ -149,9 +149,16 @@ public class StowRsServiceImpl implements StowRsService {
             logger.info("Successfully imported {} sessions to prearchive, {} failures",
                 prearchiveUris.size(), failedInstances.size());
 
-            // Build sessions
-            logger.info("Building XML for {} DICOM sessions", prearchiveUris.size());
-            Set<String> archiveUrls = buildSessions(user, prearchiveUris, mergedParams);
+            // Build sessions - skip for DirectWrite as it needs manual registration
+            Set<String> archiveUrls = new HashSet<>();
+            if (strategy.getName().equals("DirectWrite")) {
+                logger.info("DirectWrite strategy: {} sessions created. Files written but not registered in PrearcDatabase.",
+                    prearchiveUris.size());
+                logger.info("Sessions need to be manually registered through XNAT UI prearchive rebuild process.");
+            } else {
+                logger.info("Building XML for {} DICOM sessions", prearchiveUris.size());
+                archiveUrls = buildSessions(user, prearchiveUris, mergedParams);
+            }
 
             // Build STOW-RS response with failure information
             String jsonResponse = buildStowRsResponse(prearchiveUris, archiveUrls, failedInstances, request);
@@ -213,27 +220,29 @@ public class StowRsServiceImpl implements StowRsService {
             }
 
             try {
-                final SessionData sessionData = PrearcDatabase.getSession(
+                SessionData sessionData = PrearcDatabase.getSession(
                     elements[5],  // session name
                     elements[4],  // timestamp
                     elements[3]   // project
                 );
 
-                PrearchiveOperationRequest request = new PrearchiveOperationRequest(
-                    user,
-                    Operation.Rebuild,
-                    sessionData,
-                    new File(sessionData.getUrl()),
-                    populateAdditionalValues(params)
-                );
+                if (sessionData != null) {
+                    PrearchiveOperationRequest request = new PrearchiveOperationRequest(
+                        user,
+                        Operation.Rebuild,
+                        sessionData,
+                        new File(sessionData.getUrl()),
+                        populateAdditionalValues(params)
+                    );
 
-                PrearchiveRebuildHandler handler =
-                    (PrearchiveRebuildHandler) resolver.getHandler(request);
-                boolean buildSuccessful = handler.rebuild();
+                    PrearchiveRebuildHandler handler =
+                        (PrearchiveRebuildHandler) resolver.getHandler(request);
+                    boolean buildSuccessful = handler.rebuild();
 
-                if (buildSuccessful) {
-                    handlePostBuild(user, archiveUrls, override, appendMerge,
-                        request, handler, sessionData, params, resolver);
+                    if (buildSuccessful) {
+                        handlePostBuild(user, archiveUrls, override, appendMerge,
+                            request, handler, sessionData, params, resolver);
+                    }
                 }
             } catch (Exception e) {
                 logger.error("Unable to build/archive prearchive session: {}", sessionUri, e);
