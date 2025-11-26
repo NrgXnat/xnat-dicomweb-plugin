@@ -20,8 +20,6 @@ import org.nrg.xft.security.UserI;
 import org.nrg.xnat.dicomweb.service.StowRsException;
 import org.nrg.xnat.dicomweb.service.StowRsResult;
 import org.nrg.xnat.dicomweb.service.StowRsService;
-import org.nrg.xnat.dicomweb.service.impl.StowRsServiceImpl;
-import org.nrg.xnat.dicomweb.service.impl.strategy.DicomImportStrategy;
 import org.nrg.xnat.dicomweb.utils.DicomWebUtils;
 import org.nrg.xnat.helpers.uri.URIManager;
 import org.slf4j.Logger;
@@ -65,7 +63,6 @@ public class StowRsApi extends AbstractXapiRestController {
      * POST /dicomweb/projects/{projectId}/studies
      *
      * @param projectId XNAT project ID
-     * @param strategy Optional import strategy: "GradualDicomImporter" (default) or "DirectWrite"
      * @param request HTTP request containing multipart/related DICOM data
      * @return STOW-RS response in DICOM JSON format
      */
@@ -85,7 +82,6 @@ public class StowRsApi extends AbstractXapiRestController {
     })
     public ResponseEntity<String> storeInstances(
             @PathVariable String projectId,
-            @RequestParam(required = false) String strategy,
             HttpServletRequest request) {
 
         try {
@@ -102,17 +98,8 @@ public class StowRsApi extends AbstractXapiRestController {
             Map<String, Object> params = new HashMap<>();
             params.put(URIManager.PROJECT_ID, projectId);
 
-            // Select import strategy based on parameter
-            StowRsResult result;
-            if (stowRsService instanceof StowRsServiceImpl) {
-                StowRsServiceImpl serviceImpl = (StowRsServiceImpl) stowRsService;
-                DicomImportStrategy importStrategy = selectStrategy(serviceImpl, strategy);
-                logger.info("Using import strategy: {}", importStrategy.getName());
-                result = serviceImpl.storeInstances(user, params, request, importStrategy);
-            } else {
-                // Fallback to default behavior
-                result = stowRsService.storeInstances(user, params, request);
-            }
+            // Store instances using DirectWrite strategy
+            StowRsResult result = stowRsService.storeInstances(user, params, request);
 
             return ResponseEntity.ok()
                 .contentType(MediaType.parseMediaType(DicomWebUtils.getDicomJsonContentType()))
@@ -126,33 +113,6 @@ public class StowRsApi extends AbstractXapiRestController {
             logger.error("Unexpected error during STOW-RS", e);
             return ResponseEntity.internalServerError()
                 .body(createErrorResponse("Internal server error: " + e.getMessage()));
-        }
-    }
-
-    /**
-     * Select the import strategy based on the strategy parameter.
-     *
-     * @param service StowRsServiceImpl instance
-     * @param strategyName Strategy name: "GradualDicomImporter" or "DirectWrite"
-     * @return The selected DicomImportStrategy
-     */
-    private DicomImportStrategy selectStrategy(StowRsServiceImpl service, String strategyName) {
-        if (strategyName == null || strategyName.isEmpty()) {
-            // Use default strategy (GradualDicomImporter)
-            return service.getGradualImporterStrategy();
-        }
-
-        switch (strategyName.toLowerCase()) {
-            case "directwrite":
-            case "direct":
-                return service.getDirectWriteStrategy();
-            case "gradualdicomimporter":
-            case "gradual":
-            case "default":
-                return service.getGradualImporterStrategy();
-            default:
-                logger.warn("Unknown strategy '{}', using default GradualDicomImporter", strategyName);
-                return service.getGradualImporterStrategy();
         }
     }
 

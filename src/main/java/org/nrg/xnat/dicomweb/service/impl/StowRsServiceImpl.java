@@ -21,8 +21,7 @@ import org.nrg.xnat.dicomweb.service.FailedInstance;
 import org.nrg.xnat.dicomweb.service.StowRsException;
 import org.nrg.xnat.dicomweb.service.StowRsResult;
 import org.nrg.xnat.dicomweb.service.StowRsService;
-import org.nrg.xnat.dicomweb.service.impl.strategy.DicomImportStrategy;
-import org.nrg.xnat.dicomweb.service.impl.strategy.GradualDicomImporterStrategy;
+import org.nrg.xnat.dicomweb.service.SuccessfulInstance;
 import org.nrg.xnat.dicomweb.service.impl.strategy.DirectWriteImporterStrategy;
 import org.nrg.xnat.dicomweb.utils.DicomWebUtils;
 import org.nrg.xnat.helpers.prearchive.PrearcDatabase;
@@ -61,63 +60,26 @@ public class StowRsServiceImpl implements StowRsService {
     private static final String SLASH = "/";
 
     private final Mime4jHybridParser multipartParser;
-    private final GradualDicomImporterStrategy gradualImporter;
     private final DirectWriteImporterStrategy directWriteImporter;
 
-    // Default import strategy
-    private DicomImportStrategy defaultStrategy;
-
     @Autowired
-    public StowRsServiceImpl(GradualDicomImporterStrategy gradualImporter,
-                              DirectWriteImporterStrategy directWriteImporter) {
+    public StowRsServiceImpl(DirectWriteImporterStrategy directWriteImporter) {
         this.multipartParser = new Mime4jHybridParser();
-        this.gradualImporter = gradualImporter;
         this.directWriteImporter = directWriteImporter;
-        this.defaultStrategy = gradualImporter;  // Default to GradualDicomImporter
-    }
-
-    /**
-     * Get the GradualDicomImporter strategy.
-     */
-    public DicomImportStrategy getGradualImporterStrategy() {
-        return gradualImporter;
-    }
-
-    /**
-     * Get the DirectWrite strategy.
-     */
-    public DicomImportStrategy getDirectWriteStrategy() {
-        return directWriteImporter;
-    }
-
-    /**
-     * Set the default import strategy.
-     */
-    public void setDefaultStrategy(DicomImportStrategy strategy) {
-        this.defaultStrategy = strategy;
-        logger.info("Default import strategy set to: {}", strategy.getName());
     }
 
     @Override
     public StowRsResult storeInstances(UserI user, Map<String, Object> params, HttpServletRequest request)
             throws StowRsException {
-        return storeInstances(user, params, request, defaultStrategy);
-    }
 
-    /**
-     * Store DICOM instances using the specified import strategy.
-     */
-    public StowRsResult storeInstances(UserI user, Map<String, Object> params,
-                                        HttpServletRequest request, DicomImportStrategy strategy)
-            throws StowRsException {
-
-        logger.info("STOW-RS request from user {} with params {}, strategy: {}",
-            user.getLogin(), params, strategy.getName());
+        logger.info("STOW-RS request from user {} with params {}, strategy: DirectWrite",
+            user.getLogin(), params);
         logger.debug("Content-Type: {}, Content-Length: {}",
                 request.getContentType(), request.getContentLength());
 
         List<MultipartPart> parts = null;
         Set<String> prearchiveUris = Sets.newLinkedHashSet();
+        List<SuccessfulInstance> successfulInstances = new ArrayList<>();
         List<FailedInstance> failedInstances = new ArrayList<>();
 
         // Add default params
@@ -138,8 +100,8 @@ public class StowRsServiceImpl implements StowRsService {
                 parts.stream().filter(MultipartPart::isInMemory).count(),
                 parts.stream().filter(p -> !p.isInMemory()).count());
 
-            // Import DICOM instances using the selected strategy
-            strategy.importInstances(user, parts, mergedParams, prearchiveUris, failedInstances);
+            // Import DICOM instances using DirectWrite strategy
+            directWriteImporter.importInstances(user, parts, mergedParams, prearchiveUris, successfulInstances, failedInstances);
 
             if (prearchiveUris.isEmpty()) {
                 logger.warn("No instances were successfully imported");
@@ -153,8 +115,8 @@ public class StowRsServiceImpl implements StowRsService {
             logger.info("Building XML for {} DICOM sessions", prearchiveUris.size());
             Set<String> archiveUrls = buildSessions(user, prearchiveUris, mergedParams);
 
-            // Build STOW-RS response with failure information
-            String jsonResponse = buildStowRsResponse(prearchiveUris, archiveUrls, failedInstances, request);
+            // Build STOW-RS response with successful and failed instances
+            String jsonResponse = buildStowRsResponse(successfulInstances, archiveUrls, failedInstances, request);
 
             return new StowRsResult(
                 prearchiveUris,
@@ -336,23 +298,44 @@ public class StowRsServiceImpl implements StowRsService {
     /**
      * Build DICOM JSON response per STOW-RS specification (PS3.18)
      */
-    private String buildStowRsResponse(Set<String> prearchiveUris, Set<String> archiveUrls,
+    private String buildStowRsResponse(List<SuccessfulInstance> successfulInstances, Set<String> archiveUrls,
                                        List<FailedInstance> failedInstances,
                                        HttpServletRequest request) {
         try {
             Attributes attrs = new Attributes();
-            int successCount = prearchiveUris.size();
+            int successCount = successfulInstances.size();
 
-            // Set RetrieveURL (0008,1190)
-            if (successCount > 0) {
-                String firstUri = archiveUrls.isEmpty() ?
-                    prearchiveUris.iterator().next() :
-                    archiveUrls.iterator().next();
-                attrs.setString(Tag.RetrieveURL, VR.UR, firstUri);
+            // Set top-level RetrieveURL (0008,1190) - use first archive URL if available
+            if (successCount > 0 && !archiveUrls.isEmpty()) {
+                String firstArchiveUrl = archiveUrls.iterator().next();
+                attrs.setString(Tag.RetrieveURL, VR.UR, firstArchiveUrl);
             }
 
-            // Create ReferencedSOPSequence (0008,1199)
+            // Create ReferencedSOPSequence (0008,1199) - POPULATE with successful instances
             Sequence referencedSeq = attrs.newSequence(Tag.ReferencedSOPSequence, successCount);
+            for (SuccessfulInstance success : successfulInstances) {
+                Attributes refItem = new Attributes();
+
+                // ReferencedSOPClassUID (0008,1150)
+                if (success.getSopClassUid() != null) {
+                    refItem.setString(Tag.ReferencedSOPClassUID, VR.UI, success.getSopClassUid());
+                }
+
+                // ReferencedSOPInstanceUID (0008,1155)
+                refItem.setString(Tag.ReferencedSOPInstanceUID, VR.UI, success.getSopInstanceUid());
+
+                // RetrieveURL (0008,1190) - Use archive URL if available, otherwise prearchive URL
+                String retrieveUrl = success.getRetrieveUrl();
+                if (!archiveUrls.isEmpty()) {
+                    // If we have archive URLs, prefer those over prearchive URLs
+                    retrieveUrl = archiveUrls.iterator().next();
+                }
+                refItem.setString(Tag.RetrieveURL, VR.UR, retrieveUrl);
+
+                referencedSeq.add(refItem);
+                logger.debug("Added successful instance to response: SOP={}, Class={}",
+                    success.getSopInstanceUid(), success.getSopClassUid());
+            }
 
             // Create FailedSOPSequence (0008,1198)
             Sequence failedSeq = attrs.newSequence(Tag.FailedSOPSequence, failedInstances.size());
@@ -369,6 +352,7 @@ public class StowRsServiceImpl implements StowRsService {
                 logger.debug("Added failed instance to response: {}", failure);
             }
 
+            logger.info("Built STOW-RS response: {} successful, {} failed", successCount, failedInstances.size());
             return DicomWebUtils.toJson(attrs);
 
         } catch (Exception e) {

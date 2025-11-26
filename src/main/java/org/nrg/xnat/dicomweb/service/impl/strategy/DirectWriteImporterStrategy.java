@@ -15,6 +15,7 @@ import org.nrg.xdat.XDAT;
 import org.nrg.xft.security.UserI;
 import org.nrg.xnat.dicomweb.parser.Mime4jHybridParser.MultipartPart;
 import org.nrg.xnat.dicomweb.service.FailedInstance;
+import org.nrg.xnat.dicomweb.service.SuccessfulInstance;
 import org.nrg.xnat.dicomweb.utils.DicomValidationUtils;
 import org.nrg.xnat.dicomweb.utils.DicomWebUtils;
 import org.nrg.xnat.helpers.prearchive.PrearcDatabase;
@@ -60,6 +61,7 @@ public class DirectWriteImporterStrategy implements DicomImportStrategy {
     public void importInstances(UserI user, List<MultipartPart> parts,
                                  Map<String, Object> params,
                                  Set<String> prearchiveUris,
+                                 List<SuccessfulInstance> successfulInstances,
                                  List<FailedInstance> failedInstances) {
         logger.info("Importing {} parts to prearchive via DirectWrite", parts.size());
 
@@ -114,8 +116,8 @@ public class DirectWriteImporterStrategy implements DicomImportStrategy {
                 }
 
                 // Add to study group
-                studyGroups.computeIfAbsent(studyUid, k -> new ArrayList<>())
-                    .add(new DicomInstanceInfo(i, attrs, part, sopClassUid, sopInstanceUid, seriesUid, seriesNumber));
+                DicomInstanceInfo info = new DicomInstanceInfo(i, attrs, part, sopClassUid, sopInstanceUid, seriesUid, seriesNumber);
+                studyGroups.computeIfAbsent(studyUid, k -> new ArrayList<>()).add(info);
 
                 logger.debug("Part {} parsed: Study={}, Series={}, SOP={}",
                     i, studyUid, seriesUid, sopInstanceUid);
@@ -145,7 +147,7 @@ public class DirectWriteImporterStrategy implements DicomImportStrategy {
                 if (session != null) {
                     // Write DICOM files to session directory
                     File sessionDir = new File(session.getUrl());
-                    writeInstancesToSession(sessionDir, instances, failedInstances);
+                    writeInstancesToSession(sessionDir, instances, successfulInstances, failedInstances, projectId, studyUid);
 
                     // Build prearchive URI from session data
                     String sessionUri = "/prearchive/projects/" + projectId + "/" +
@@ -163,8 +165,8 @@ public class DirectWriteImporterStrategy implements DicomImportStrategy {
             }
         }
 
-        logger.info("DirectWrite completed: {} sessions, {} failures",
-            prearchiveUris.size(), failedInstances.size());
+        logger.info("DirectWrite completed: {} sessions, {} successful instances, {} failures",
+            prearchiveUris.size(), successfulInstances.size(), failedInstances.size());
     }
 
     /**
@@ -226,7 +228,10 @@ public class DirectWriteImporterStrategy implements DicomImportStrategy {
      */
     private void writeInstancesToSession(File sessionDir,
                                           List<DicomInstanceInfo> instances,
-                                          List<FailedInstance> failedInstances) {
+                                          List<SuccessfulInstance> successfulInstances,
+                                          List<FailedInstance> failedInstances,
+                                          String projectId,
+                                          String studyUid) {
         // Create SCANS directory (XNAT standard structure - e39978f format)
         File scansDir = new File(sessionDir, "SCANS");
 
@@ -252,6 +257,13 @@ public class DirectWriteImporterStrategy implements DicomImportStrategy {
                 }
 
                 logger.debug("Written DICOM file: {}", dicomFile);
+
+                // Record successful instance
+                // Build retrieve URL: /archive/projects/{project}/subjects/{subject}/experiments/{session}
+                // For now, use prearchive path; will be updated to archive after buildSessions
+                String retrieveUrl = "/prearchive/projects/" + projectId + "/studies/" + studyUid;
+                SuccessfulInstance success = new SuccessfulInstance(info.sopClassUid, info.sopInstanceUid, retrieveUrl);
+                successfulInstances.add(success);
 
             } catch (Exception e) {
                 logger.error("Failed to write instance {} to prearchive: {}",

@@ -9,6 +9,7 @@ package org.nrg.xnat.dicomweb.service.impl.strategy;
 import org.nrg.xft.security.UserI;
 import org.nrg.xnat.dicomweb.parser.Mime4jHybridParser.MultipartPart;
 import org.nrg.xnat.dicomweb.service.FailedInstance;
+import org.nrg.xnat.dicomweb.service.SuccessfulInstance;
 
 import java.util.List;
 import java.util.Map;
@@ -33,10 +34,12 @@ public interface DicomImportStrategy {
      * @param parts The parsed multipart parts containing DICOM data
      * @param params Import parameters (projectId, etc.)
      * @param prearchiveUris Output: collected prearchive URIs for successful imports
+     * @param successfulInstances Output: collected successful instance details (SOP UIDs, retrieve URLs)
      * @param failedInstances Output: collected failure information
      */
     void importInstances(UserI user, List<MultipartPart> parts,
                          Map<String, Object> params,
                          Set<String> prearchiveUris,
+                         List<SuccessfulInstance> successfulInstances,
                          List<FailedInstance> failedInstances);
 }
