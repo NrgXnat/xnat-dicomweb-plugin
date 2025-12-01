@@ -1413,7 +1413,7 @@ public class XnatDicomServiceImpl implements XnatDicomService {
                 InputStream stream = dicomInstances.get(i);
 
                 try {
-                    // Read DICOM to get metadata
+                    // Read DICOM with all data (including PixelData) because we need to write complete files later
                     Attributes attrs = DicomWebUtils.readDicom(stream);
                     String studyInstanceUID = attrs.getString(Tag.StudyInstanceUID);
                     String sopInstanceUID = attrs.getString(Tag.SOPInstanceUID);

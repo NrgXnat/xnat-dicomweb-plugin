@@ -1,6 +1,7 @@
 package org.nrg.xnat.dicomweb.utils;
 
 import org.dcm4che3.data.Attributes;
+import org.dcm4che3.data.Tag;
 import org.dcm4che3.io.DicomInputStream;
 import org.dcm4che3.json.JSONWriter;
 
@@ -28,11 +29,56 @@ public class DicomWebUtils {
     }
 
     /**
-     * Read DICOM attributes from input stream
+     * Read DICOM attributes from input stream (includes all bulk data by default)
+     *
+     * @param is Input stream containing DICOM data
+     * @return DICOM attributes including all bulk data (PixelData, etc.) and FileMetaInformation
+     * @throws IOException if reading fails
      */
     public static Attributes readDicom(InputStream is) throws IOException {
+        return readDicom(is, true);
+    }
+
+    /**
+     * Read DICOM attributes from input stream with option to exclude bulk data
+     *
+     * <p>Note: "Bulk Data" in DICOM refers to large binary attributes with VRs: OB, OD, OF, OL, OW, UN, UC, UR, UT.
+     * The most common bulk data is PixelData (7FE0,0010), which typically comprises 95%+ of file size.
+     * Other bulk data includes: OverlayData, WaveformData, AudioSampleData, EncapsulatedDocument, etc.</p>
+     *
+     * <p>When includePixelData=false, bulk data is replaced with URI references (BulkData objects)
+     * containing offset/length information, which can save 96-99% memory while preserving data location.</p>
+     *
+     * @param is Input stream containing DICOM data
+     * @param includePixelData If false, all bulk data will be replaced with URI references to save memory.
+     *                         If true, all bulk data will be included as actual binary content.
+     * @return DICOM attributes including FileMetaInformation
+     * @throws IOException if reading fails
+     * @see DicomInputStream.IncludeBulkData
+     */
+    public static Attributes readDicom(InputStream is, boolean includePixelData) throws IOException {
         try (DicomInputStream dis = new DicomInputStream(is)) {
-            return dis.readDataset(-1, -1);
+            // Configure whether to include bulk data (PixelData, etc.)
+            if (includePixelData) {
+                dis.setIncludeBulkData(DicomInputStream.IncludeBulkData.YES);
+            } else {
+                // Use URI mode instead of NO to preserve bulk data location info (offset/length)
+                // This allows accessing bulk data later if needed, while saving memory now
+                dis.setIncludeBulkData(DicomInputStream.IncludeBulkData.URI);
+            }
+
+            // Read FileMetaInformation
+            Attributes fmi = dis.readFileMetaInformation();
+
+            // Read dataset
+            Attributes dataset = dis.readDataset();
+
+            // Merge FileMetaInformation into dataset
+            if (fmi != null) {
+                dataset.addAll(fmi);
+            }
+
+            return dataset;
         }
     }
 
