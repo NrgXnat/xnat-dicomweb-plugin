@@ -12,6 +12,7 @@ import org.nrg.xdat.security.services.RoleHolder;
 import org.nrg.xdat.security.services.UserManagementServiceI;
 import org.nrg.xft.security.UserI;
 import org.nrg.xnat.dicomweb.service.XnatDicomService;
+import org.nrg.xnat.dicomweb.utils.BulkDataHandler;
 import org.nrg.xnat.dicomweb.utils.DicomWebUtils;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -112,7 +113,8 @@ public class WadoRsApi extends AbstractXapiRestController {
     public ResponseEntity<String> retrieveInstanceMetadata(@PathVariable String projectId,
                                                            @PathVariable String studyUID,
                                                            @PathVariable String seriesUID,
-                                                           @PathVariable String instanceUID) {
+                                                           @PathVariable String instanceUID,
+                                                           HttpServletRequest request) {
         try {
             UserI user = getSessionUser();
             Attributes attrs = dicomService.retrieveMetadata(user, projectId, studyUID, seriesUID, instanceUID);
@@ -121,7 +123,12 @@ public class WadoRsApi extends AbstractXapiRestController {
                 return ResponseEntity.notFound().build();
             }
 
-            String json = "[" + DicomWebUtils.toJson(attrs) + "]";
+            // Extract base URI for BulkDataURI generation
+            String requestUrl = request.getRequestURL().toString();
+            String baseUri = BulkDataHandler.extractBaseUri(requestUrl, projectId);
+
+            // Convert to JSON with BulkDataURI substitution
+            String json = "[" + DicomWebUtils.toJsonWithBulkDataURI(attrs, baseUri, studyUID, seriesUID, instanceUID) + "]";
 
             return ResponseEntity.ok()
                     .contentType(MediaType.parseMediaType(DicomWebUtils.getDicomJsonContentType()))
@@ -196,7 +203,8 @@ public class WadoRsApi extends AbstractXapiRestController {
             @ApiResponse(code = 500, message = "Internal error")
     })
     public ResponseEntity<String> retrieveStudyMetadata(@PathVariable String projectId,
-                                                         @PathVariable String studyUID) {
+                                                         @PathVariable String studyUID,
+                                                         HttpServletRequest request) {
         logger.info("=== retrieveStudyMetadata called ===");
         logger.info("Project ID: {}", projectId);
         logger.info("Study UID: {}", studyUID);
@@ -215,10 +223,19 @@ public class WadoRsApi extends AbstractXapiRestController {
                 return ResponseEntity.notFound().build();
             }
 
+            // Extract base URI for BulkDataURI generation
+            String requestUrl = request.getRequestURL().toString();
+            String baseUri = BulkDataHandler.extractBaseUri(requestUrl, projectId);
+
             String json = "[" + instances.stream()
                     .map(attrs -> {
                         try {
-                            return DicomWebUtils.toJson(attrs);
+                            // Extract SeriesInstanceUID and SOPInstanceUID from attributes
+                            String seriesUID = attrs.getString(org.dcm4che3.data.Tag.SeriesInstanceUID);
+                            String instanceUID = attrs.getString(org.dcm4che3.data.Tag.SOPInstanceUID);
+
+                            // Convert with BulkDataURI substitution
+                            return DicomWebUtils.toJsonWithBulkDataURI(attrs, baseUri, studyUID, seriesUID, instanceUID);
                         } catch (Exception e) {
                             logger.error("Error converting instance metadata to JSON", e);
                             return "{}";
@@ -392,6 +409,92 @@ public class WadoRsApi extends AbstractXapiRestController {
     }
 
     /**
+     * Retrieve bulk data for a specific DICOM attribute
+     * GET /dicomweb/projects/{projectId}/studies/{studyUID}/series/{seriesUID}/instances/{instanceUID}/bulkdata/{tag}
+     *
+     * Per DICOM PS3.18 Section 6.5.8 - Retrieve Bulk Data
+     * Returns raw bytes for large attributes (PixelData, OverlayData, etc.)
+     */
+    @XapiRequestMapping(
+            value = "/dicomweb/projects/{projectId}/studies/{studyUID}/series/{seriesUID}/instances/{instanceUID}/bulkdata/{tag}",
+            method = RequestMethod.GET,
+            produces = "application/octet-stream"
+    )
+    @ApiOperation(value = "Retrieve bulk data for a specific DICOM attribute (WADO-RS)", response = byte[].class)
+    @ApiResponses({
+            @ApiResponse(code = 200, message = "Bulk data retrieved"),
+            @ApiResponse(code = 401, message = "Must be authenticated"),
+            @ApiResponse(code = 404, message = "Instance or attribute not found"),
+            @ApiResponse(code = 400, message = "Invalid tag format"),
+            @ApiResponse(code = 500, message = "Internal error")
+    })
+    public ResponseEntity<byte[]> retrieveBulkData(@PathVariable String projectId,
+                                                    @PathVariable String studyUID,
+                                                    @PathVariable String seriesUID,
+                                                    @PathVariable String instanceUID,
+                                                    @PathVariable String tag) {
+        try {
+            UserI user = getSessionUser();
+
+            // Parse tag from hex string (e.g., "7FE00010" for PixelData)
+            int tagInt;
+            try {
+                tagInt = Integer.parseUnsignedInt(tag, 16);
+            } catch (NumberFormatException e) {
+                logger.warn("Invalid tag format: {}", tag);
+                return ResponseEntity.badRequest().build();
+            }
+
+            logger.debug("Retrieving bulk data for instance {} tag {}", instanceUID, tag);
+
+            // Retrieve the full DICOM instance
+            InputStream stream = dicomService.retrieveInstance(user, projectId, studyUID, seriesUID, instanceUID);
+
+            if (stream == null) {
+                logger.warn("Instance not found: {}", instanceUID);
+                return ResponseEntity.notFound().build();
+            }
+
+            // Read DICOM and extract the specified attribute's value
+            byte[] bulkData;
+            try (org.dcm4che3.io.DicomInputStream dis = new org.dcm4che3.io.DicomInputStream(stream)) {
+                // Read with all bulk data included
+                dis.setIncludeBulkData(org.dcm4che3.io.DicomInputStream.IncludeBulkData.YES);
+
+                Attributes attrs = dis.readDataset();
+
+                if (!attrs.contains(tagInt)) {
+                    logger.warn("Tag {} not found in instance {}", tag, instanceUID);
+                    return ResponseEntity.notFound().build();
+                }
+
+                bulkData = attrs.getBytes(tagInt);
+
+                if (bulkData == null || bulkData.length == 0) {
+                    logger.warn("Tag {} has no data in instance {}", tag, instanceUID);
+                    return ResponseEntity.notFound().build();
+                }
+
+                logger.info("Retrieved bulk data for tag {}: {} bytes", tag, bulkData.length);
+            }
+
+            // Return raw bytes
+            HttpHeaders headers = new HttpHeaders();
+            headers.setContentType(MediaType.APPLICATION_OCTET_STREAM);
+            headers.setContentLength(bulkData.length);
+
+            return ResponseEntity.ok()
+                    .headers(headers)
+                    .body(bulkData);
+
+        } catch (Exception e) {
+            logger.error("Error retrieving bulk data for instance {} tag {}: {}",
+                    instanceUID, tag, e.getMessage(), e);
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).build();
+        }
+    }
+
+    /**
      * Retrieve metadata for all instances in a series
      * GET /dicomweb/projects/{projectId}/studies/{studyUID}/series/{seriesUID}/metadata
      */
@@ -409,7 +512,8 @@ public class WadoRsApi extends AbstractXapiRestController {
     })
     public ResponseEntity<String> retrieveSeriesMetadata(@PathVariable String projectId,
                                                          @PathVariable String studyUID,
-                                                         @PathVariable String seriesUID) {
+                                                         @PathVariable String seriesUID,
+                                                         HttpServletRequest request) {
         try {
             UserI user = getSessionUser();
             List<Attributes> instances = dicomService.searchInstances(user, projectId, studyUID, seriesUID, null);
@@ -418,10 +522,18 @@ public class WadoRsApi extends AbstractXapiRestController {
                 return ResponseEntity.notFound().build();
             }
 
+            // Extract base URI for BulkDataURI generation
+            String requestUrl = request.getRequestURL().toString();
+            String baseUri = BulkDataHandler.extractBaseUri(requestUrl, projectId);
+
             String json = "[" + instances.stream()
                     .map(attrs -> {
                         try {
-                            return DicomWebUtils.toJson(attrs);
+                            // Extract SOPInstanceUID from attributes
+                            String instanceUID = attrs.getString(org.dcm4che3.data.Tag.SOPInstanceUID);
+
+                            // Convert with BulkDataURI substitution
+                            return DicomWebUtils.toJsonWithBulkDataURI(attrs, baseUri, studyUID, seriesUID, instanceUID);
                         } catch (Exception e) {
                             logger.error("Error converting metadata to JSON", e);
                             return "{}";

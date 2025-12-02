@@ -651,7 +651,20 @@ public class XnatDicomServiceImpl implements XnatDicomService {
 
                         for (File dicomFile : resolveDicomFiles(resource, scan)) {
                             try (DicomInputStream dis = new DicomInputStream(dicomFile)) {
-                                Attributes attrs = dis.readDataset(-1, -1);
+                                // Use URI mode to save memory - BulkData will reference file location
+                                dis.setIncludeBulkData(DicomInputStream.IncludeBulkData.URI);
+
+                                // Read FileMetaInformation
+                                Attributes fmi = dis.readFileMetaInformation();
+
+                                // Read dataset (bulk data replaced with BulkData objects containing file URI)
+                                Attributes attrs = dis.readDataset();
+
+                                // Merge FileMetaInformation
+                                if (fmi != null) {
+                                    attrs.addAll(fmi);
+                                }
+
                                 results.add(attrs);
                             } catch (Exception e) {
                                 logger.debug("Error reading DICOM candidate {}", dicomFile.getAbsolutePath(), e);

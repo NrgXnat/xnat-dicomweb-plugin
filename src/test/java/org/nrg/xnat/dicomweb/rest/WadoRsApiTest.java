@@ -14,11 +14,13 @@ import org.nrg.xnat.dicomweb.service.XnatDicomService;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 
+import javax.servlet.http.HttpServletRequest;
 import java.util.ArrayList;
 import java.util.List;
 
 import static org.junit.Assert.*;
 import static org.mockito.ArgumentMatchers.*;
+import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
 /**
@@ -63,8 +65,12 @@ public class WadoRsApiTest {
         when(mockDicomService.retrieveAllStudyInstanceMetadata(any(UserI.class), eq(projectId), eq(studyUID)))
             .thenReturn(mockInstances);
 
+        // Mock HttpServletRequest
+        HttpServletRequest mockRequest = mock(HttpServletRequest.class);
+        when(mockRequest.getRequestURL()).thenReturn(new StringBuffer("http://localhost:8080/xapi/dicomweb/projects/TestProject/studies/" + studyUID + "/metadata"));
+
         // Act
-        ResponseEntity<String> response = wadoRsApi.retrieveStudyMetadata(projectId, studyUID);
+        ResponseEntity<String> response = wadoRsApi.retrieveStudyMetadata(projectId, studyUID, mockRequest);
 
         // Assert
         assertEquals("Should return 200 OK", HttpStatus.OK, response.getStatusCode());
@@ -88,8 +94,12 @@ public class WadoRsApiTest {
         when(mockDicomService.retrieveAllStudyInstanceMetadata(any(UserI.class), eq(projectId), eq(studyUID)))
             .thenReturn(new ArrayList<>());
 
+        // Mock HttpServletRequest
+        HttpServletRequest mockRequest = mock(HttpServletRequest.class);
+        when(mockRequest.getRequestURL()).thenReturn(new StringBuffer("http://localhost:8080/xapi/dicomweb/projects/TestProject/studies/" + studyUID + "/metadata"));
+
         // Act
-        ResponseEntity<String> response = wadoRsApi.retrieveStudyMetadata(projectId, studyUID);
+        ResponseEntity<String> response = wadoRsApi.retrieveStudyMetadata(projectId, studyUID, mockRequest);
 
         // Assert
         assertEquals("Should return 404 Not Found for empty result", HttpStatus.NOT_FOUND, response.getStatusCode());
@@ -106,8 +116,12 @@ public class WadoRsApiTest {
         when(mockDicomService.retrieveAllStudyInstanceMetadata(any(UserI.class), eq(projectId), eq(studyUID)))
             .thenReturn(mockInstances);
 
+        // Mock HttpServletRequest
+        HttpServletRequest mockRequest = mock(HttpServletRequest.class);
+        when(mockRequest.getRequestURL()).thenReturn(new StringBuffer("http://localhost:8080/xapi/dicomweb/projects/TestProject/studies/" + studyUID + "/metadata"));
+
         // Act
-        ResponseEntity<String> response = wadoRsApi.retrieveStudyMetadata(projectId, studyUID);
+        ResponseEntity<String> response = wadoRsApi.retrieveStudyMetadata(projectId, studyUID, mockRequest);
 
         // Assert
         String responseBody = response.getBody();
@@ -130,8 +144,12 @@ public class WadoRsApiTest {
         when(mockDicomService.retrieveAllStudyInstanceMetadata(any(UserI.class), eq(projectId), eq(studyUID)))
             .thenReturn(mockInstances);
 
+        // Mock HttpServletRequest
+        HttpServletRequest mockRequest = mock(HttpServletRequest.class);
+        when(mockRequest.getRequestURL()).thenReturn(new StringBuffer("http://localhost:8080/xapi/dicomweb/projects/TestProject/studies/" + studyUID + "/metadata"));
+
         // Act - should not throw NullPointerException
-        ResponseEntity<String> response = wadoRsApi.retrieveStudyMetadata(projectId, studyUID);
+        ResponseEntity<String> response = wadoRsApi.retrieveStudyMetadata(projectId, studyUID, mockRequest);
 
         // Assert
         assertEquals("Should successfully return all instances without NPE", HttpStatus.OK, response.getStatusCode());
