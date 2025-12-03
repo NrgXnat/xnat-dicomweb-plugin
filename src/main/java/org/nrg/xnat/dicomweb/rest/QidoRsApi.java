@@ -38,6 +38,10 @@ public class QidoRsApi extends AbstractXapiRestController {
 
     private static final Logger logger = LoggerFactory.getLogger(QidoRsApi.class);
 
+    // Pagination constants
+    private static final int DEFAULT_PAGE_SIZE = 100;
+    private static final int MAX_PAGE_SIZE = 1000;
+
     private final XnatDicomService dicomService;
 
     @Autowired
@@ -46,6 +50,67 @@ public class QidoRsApi extends AbstractXapiRestController {
                      final RoleHolder roleHolder) {
         super(userManagementService, roleHolder);
         this.dicomService = dicomService;
+    }
+
+    /**
+     * Extract limit parameter from query params, with validation
+     */
+    private int getLimit(Map<String, String> queryParams) {
+        if (queryParams == null || !queryParams.containsKey("limit")) {
+            return DEFAULT_PAGE_SIZE;
+        }
+
+        try {
+            int limit = Integer.parseInt(queryParams.get("limit"));
+            if (limit <= 0) {
+                logger.warn("Invalid limit value: {}. Using default: {}", limit, DEFAULT_PAGE_SIZE);
+                return DEFAULT_PAGE_SIZE;
+            }
+            if (limit > MAX_PAGE_SIZE) {
+                logger.warn("Limit {} exceeds maximum {}. Using maximum.", limit, MAX_PAGE_SIZE);
+                return MAX_PAGE_SIZE;
+            }
+            return limit;
+        } catch (NumberFormatException e) {
+            logger.warn("Invalid limit parameter: {}. Using default: {}", queryParams.get("limit"), DEFAULT_PAGE_SIZE);
+            return DEFAULT_PAGE_SIZE;
+        }
+    }
+
+    /**
+     * Extract offset parameter from query params, with validation
+     */
+    private int getOffset(Map<String, String> queryParams) {
+        if (queryParams == null || !queryParams.containsKey("offset")) {
+            return 0;
+        }
+
+        try {
+            int offset = Integer.parseInt(queryParams.get("offset"));
+            if (offset < 0) {
+                logger.warn("Invalid offset value: {}. Using 0.", offset);
+                return 0;
+            }
+            return offset;
+        } catch (NumberFormatException e) {
+            logger.warn("Invalid offset parameter: {}. Using 0.", queryParams.get("offset"));
+            return 0;
+        }
+    }
+
+    /**
+     * Apply pagination to a list of results
+     */
+    private <T> List<T> applyPagination(List<T> results, int offset, int limit) {
+        if (results == null || results.isEmpty()) {
+            return results;
+        }
+
+        int total = results.size();
+        int fromIndex = Math.min(offset, total);
+        int toIndex = Math.min(offset + limit, total);
+
+        return results.subList(fromIndex, toIndex);
     }
 
     /**
@@ -72,10 +137,18 @@ public class QidoRsApi extends AbstractXapiRestController {
             // Convert query parameters to DICOM Attributes for filtering
             Attributes queryAttributes = parseQueryParameters(queryParams);
 
-            List<Attributes> studies = dicomService.searchStudies(user, projectId, queryAttributes);
+            // Get all studies matching the query
+            List<Attributes> allStudies = dicomService.searchStudies(user, projectId, queryAttributes);
+
+            // Get pagination parameters
+            int offset = getOffset(queryParams);
+            int limit = getLimit(queryParams);
+
+            // Apply pagination
+            List<Attributes> paginatedStudies = applyPagination(allStudies, offset, limit);
 
             // Convert to JSON array
-            String json = "[" + studies.stream()
+            String json = "[" + paginatedStudies.stream()
                     .map(attrs -> {
                         try {
                             return DicomWebUtils.toJson(attrs);
@@ -86,7 +159,9 @@ public class QidoRsApi extends AbstractXapiRestController {
                     })
                     .collect(Collectors.joining(",")) + "]";
 
+            // Return with X-Total-Count header
             return ResponseEntity.ok()
+                    .header("X-Total-Count", String.valueOf(allStudies.size()))
                     .contentType(MediaType.parseMediaType(DicomWebUtils.getDicomJsonContentType()))
                     .body(json);
 
@@ -121,9 +196,17 @@ public class QidoRsApi extends AbstractXapiRestController {
             // Convert query parameters to DICOM Attributes for filtering
             Attributes queryAttributes = parseQueryParameters(queryParams);
 
-            List<Attributes> series = dicomService.searchSeries(user, projectId, studyUID, queryAttributes);
+            // Get all series matching the query
+            List<Attributes> allSeries = dicomService.searchSeries(user, projectId, studyUID, queryAttributes);
 
-            String json = "[" + series.stream()
+            // Get pagination parameters
+            int offset = getOffset(queryParams);
+            int limit = getLimit(queryParams);
+
+            // Apply pagination
+            List<Attributes> paginatedSeries = applyPagination(allSeries, offset, limit);
+
+            String json = "[" + paginatedSeries.stream()
                     .map(attrs -> {
                         try {
                             return DicomWebUtils.toJson(attrs);
@@ -134,7 +217,9 @@ public class QidoRsApi extends AbstractXapiRestController {
                     })
                     .collect(Collectors.joining(",")) + "]";
 
+            // Return with X-Total-Count header
             return ResponseEntity.ok()
+                    .header("X-Total-Count", String.valueOf(allSeries.size()))
                     .contentType(MediaType.parseMediaType(DicomWebUtils.getDicomJsonContentType()))
                     .body(json);
 
@@ -170,9 +255,17 @@ public class QidoRsApi extends AbstractXapiRestController {
             // Convert query parameters to DICOM Attributes for filtering
             Attributes queryAttributes = parseQueryParameters(queryParams);
 
-            List<Attributes> instances = dicomService.searchInstances(user, projectId, studyUID, seriesUID, queryAttributes);
+            // Get all instances matching the query
+            List<Attributes> allInstances = dicomService.searchInstances(user, projectId, studyUID, seriesUID, queryAttributes);
 
-            String json = "[" + instances.stream()
+            // Get pagination parameters
+            int offset = getOffset(queryParams);
+            int limit = getLimit(queryParams);
+
+            // Apply pagination
+            List<Attributes> paginatedInstances = applyPagination(allInstances, offset, limit);
+
+            String json = "[" + paginatedInstances.stream()
                     .map(attrs -> {
                         try {
                             return DicomWebUtils.toJson(attrs);
@@ -183,7 +276,9 @@ public class QidoRsApi extends AbstractXapiRestController {
                     })
                     .collect(Collectors.joining(",")) + "]";
 
+            // Return with X-Total-Count header
             return ResponseEntity.ok()
+                    .header("X-Total-Count", String.valueOf(allInstances.size()))
                     .contentType(MediaType.parseMediaType(DicomWebUtils.getDicomJsonContentType()))
                     .body(json);
 
