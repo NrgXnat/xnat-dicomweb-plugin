@@ -446,9 +446,9 @@ public class XnatDicomServiceImpl implements XnatDicomService {
                 attrs.setString(Tag.StudyInstanceUID, VR.UI, studyUID);
             }
 
-            String subjectId = session.getSubjectId();
-            attrs.setString(Tag.PatientName, VR.PN, subjectId != null ? subjectId : "UNKNOWN");
-            attrs.setString(Tag.PatientID, VR.LO, subjectId != null ? subjectId : "UNKNOWN");
+            // Use helper methods to get DICOM patient information from original DICOM data
+            attrs.setString(Tag.PatientName, VR.PN, getPatientName(session));
+            attrs.setString(Tag.PatientID, VR.LO, getPatientID(session));
 
             // Format date
             Object sessionDateObj = session.getDate();
@@ -470,7 +470,9 @@ public class XnatDicomServiceImpl implements XnatDicomService {
 
             String label = session.getLabel();
             attrs.setString(Tag.StudyDescription, VR.LO, label != null ? label : "");
-            attrs.setString(Tag.AccessionNumber, VR.SH, label != null ? label : "");
+
+            // Use helper method to get AccessionNumber from original DICOM data
+            attrs.setString(Tag.AccessionNumber, VR.SH, getAccessionNumber(session));
 
             String id = session.getId();
             attrs.setString(Tag.StudyID, VR.SH, id != null ? id : "");
@@ -511,10 +513,9 @@ public class XnatDicomServiceImpl implements XnatDicomService {
                 attrs.setString(Tag.StudyInstanceUID, VR.UI, studyUID);
             }
 
-            // Patient identification
-            String subjectId = session.getSubjectId();
-            attrs.setString(Tag.PatientName, VR.PN, subjectId != null ? subjectId : "UNKNOWN");
-            attrs.setString(Tag.PatientID, VR.LO, subjectId != null ? subjectId : "UNKNOWN");
+            // Patient identification - use helper methods to get DICOM patient information
+            attrs.setString(Tag.PatientName, VR.PN, getPatientName(session));
+            attrs.setString(Tag.PatientID, VR.LO, getPatientID(session));
 
             // Study date and time
             Object sessionDateObj = session.getDate();
@@ -537,7 +538,9 @@ public class XnatDicomServiceImpl implements XnatDicomService {
             // Study description and identifiers
             String label = session.getLabel();
             attrs.setString(Tag.StudyDescription, VR.LO, label != null ? label : "");
-            attrs.setString(Tag.AccessionNumber, VR.SH, label != null ? label : "");
+
+            // Use helper method to get AccessionNumber from original DICOM data
+            attrs.setString(Tag.AccessionNumber, VR.SH, getAccessionNumber(session));
 
             String id = session.getId();
             attrs.setString(Tag.StudyID, VR.SH, id != null ? id : "");
@@ -1135,6 +1138,81 @@ public class XnatDicomServiceImpl implements XnatDicomService {
             logger.error("Error extracting frame via ImageIO", e);
             return null;
         }
+    }
+
+    /**
+     * Get DICOM patient name from session.
+     * Priority: 1) dcmPatientName field, 2) subject label, 3) subject ID
+     */
+    private String getPatientName(XnatImagesessiondata session) {
+        try {
+            // Try to get from dcmPatientName field (stored during DICOM import)
+            XFTItem item = session.getItem();
+            if (item != null) {
+                String dcmPatientName = (String) item.getProperty("dcmPatientName");
+                if (dcmPatientName != null && !dcmPatientName.isEmpty()) {
+                    return dcmPatientName;
+                }
+            }
+        } catch (Exception e) {
+            logger.debug("Could not get dcmPatientName from session", e);
+        }
+
+        // Fallback: use subject ID
+        String subjectId = session.getSubjectId();
+        return subjectId != null ? subjectId : "UNKNOWN";
+    }
+
+    /**
+     * Get DICOM patient ID from session.
+     * Priority: 1) dcmPatientId field, 2) session label, 3) subject ID
+     */
+    private String getPatientID(XnatImagesessiondata session) {
+        try {
+            // Try to get from dcmPatientId field (stored during DICOM import)
+            XFTItem item = session.getItem();
+            if (item != null) {
+                String dcmPatientId = (String) item.getProperty("dcmPatientId");
+                if (dcmPatientId != null && !dcmPatientId.isEmpty()) {
+                    return dcmPatientId;
+                }
+            }
+        } catch (Exception e) {
+            logger.debug("Could not get dcmPatientId from session", e);
+        }
+
+        // Fallback: use session label (which is usually the experiment label)
+        String label = session.getLabel();
+        if (label != null && !label.isEmpty()) {
+            return label;
+        }
+
+        // Final fallback: use subject ID
+        String subjectId = session.getSubjectId();
+        return subjectId != null ? subjectId : "UNKNOWN";
+    }
+
+    /**
+     * Get DICOM accession number from session.
+     * Priority: 1) dcmAccessionNumber field, 2) session label
+     */
+    private String getAccessionNumber(XnatImagesessiondata session) {
+        try {
+            // Try to get from dcmAccessionNumber field (stored during DICOM import)
+            XFTItem item = session.getItem();
+            if (item != null) {
+                String dcmAccessionNumber = (String) item.getProperty("dcmAccessionNumber");
+                if (dcmAccessionNumber != null && !dcmAccessionNumber.isEmpty()) {
+                    return dcmAccessionNumber;
+                }
+            }
+        } catch (Exception e) {
+            logger.debug("Could not get dcmAccessionNumber from session", e);
+        }
+
+        // Fallback: use session label
+        String label = session.getLabel();
+        return label != null ? label : "";
     }
 
     /**
