@@ -16,6 +16,7 @@ import org.nrg.xdat.om.XnatResourcecatalog;
 import org.nrg.xft.security.UserI;
 import org.nrg.xft.XFTItem;
 import org.nrg.xft.search.CriteriaCollection;
+import org.nrg.xdat.XDAT;
 import org.nrg.xnat.utils.CatalogUtils;
 import org.nrg.xnat.dicomweb.utils.DicomWebUtils;
 import org.slf4j.Logger;
@@ -813,7 +814,8 @@ public class XnatDicomServiceImpl implements XnatDicomService {
                 }
 
                 if (archivePath == null || archivePath.isEmpty()) {
-                    final String baseArchive = System.getProperty("xnat.archive", "/data/xnat/archive");
+                    // Use XNAT's configured archive path instead of system property
+                    final String baseArchive = XDAT.getSiteConfigPreferences().getArchivePath();
                     final String projectId = session.getProject();
                     final String sessionLabel = session.getLabel();
                     archivePath = buildFallbackArchivePath(baseArchive, projectId, sessionLabel);

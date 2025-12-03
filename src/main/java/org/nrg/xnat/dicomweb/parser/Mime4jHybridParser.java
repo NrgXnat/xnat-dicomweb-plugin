@@ -5,6 +5,7 @@ import org.apache.james.mime4j.parser.MimeStreamParser;
 import org.apache.james.mime4j.stream.BodyDescriptor;
 import org.apache.james.mime4j.stream.Field;
 import org.apache.james.mime4j.stream.MimeConfig;
+import org.nrg.xdat.XDAT;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -65,7 +66,8 @@ public class Mime4jHybridParser {
      * Create default temporary directory
      */
     private static File createDefaultTempDirectory() {
-        String baseTempDir = System.getProperty("java.io.tmpdir");
+        // Use XNAT's configured cache path for temporary files
+        String baseTempDir = XDAT.getSiteConfigPreferences().getCachePath();
         File dir = new File(baseTempDir, "stow-rs-" + System.currentTimeMillis());
         dir.mkdirs();
         return dir;
