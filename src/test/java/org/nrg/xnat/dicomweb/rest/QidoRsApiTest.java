@@ -49,12 +49,24 @@ public class QidoRsApiTest {
     @Mock
     private UserI mockUser;
 
+    @Mock
+    private org.nrg.xnat.dicomweb.config.DicomWebProperties mockProperties;
+
+    @Mock
+    private org.nrg.xnat.dicomweb.config.DicomWebProperties.PaginationConfig mockPaginationConfig;
+
     private QidoRsApi qidoRsApi;
 
     @Before
     public void setUp() {
         MockitoAnnotations.initMocks(this);
-        qidoRsApi = new QidoRsApi(mockDicomService, mockUserManagementService, mockRoleHolder) {
+
+        // Setup mock properties with default values
+        when(mockProperties.getPagination()).thenReturn(mockPaginationConfig);
+        when(mockPaginationConfig.getDefaultPageSize()).thenReturn(100);
+        when(mockPaginationConfig.getMaxPageSize()).thenReturn(1000);
+
+        qidoRsApi = new QidoRsApi(mockDicomService, mockProperties, mockUserManagementService, mockRoleHolder) {
             @Override
             protected UserI getSessionUser() {
                 return mockUser;

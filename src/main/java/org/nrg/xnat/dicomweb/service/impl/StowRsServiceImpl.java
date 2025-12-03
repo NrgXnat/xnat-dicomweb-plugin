@@ -15,6 +15,7 @@ import org.nrg.action.ClientException;
 import org.nrg.xdat.XDAT;
 import org.nrg.xft.security.UserI;
 import org.nrg.xnat.archive.Operation;
+import org.nrg.xnat.dicomweb.config.DicomWebProperties;
 import org.nrg.xnat.dicomweb.parser.Mime4jHybridParser;
 import org.nrg.xnat.dicomweb.parser.Mime4jHybridParser.MultipartPart;
 import org.nrg.xnat.dicomweb.service.FailedInstance;
@@ -63,9 +64,24 @@ public class StowRsServiceImpl implements StowRsService {
     private final DirectWriteImporterStrategy directWriteImporter;
 
     @Autowired
-    public StowRsServiceImpl(DirectWriteImporterStrategy directWriteImporter) {
-        this.multipartParser = new Mime4jHybridParser();
+    public StowRsServiceImpl(DirectWriteImporterStrategy directWriteImporter,
+                             DicomWebProperties properties) {
+        // Create parser with configured memory threshold
+        File tempDir = createTempDirectory();
+        long memoryThreshold = properties.getMultipart().getMemoryThreshold();
+        this.multipartParser = new Mime4jHybridParser(tempDir, memoryThreshold);
         this.directWriteImporter = directWriteImporter;
+        logger.info("StowRsServiceImpl initialized with multipart memory threshold: {} bytes", memoryThreshold);
+    }
+
+    /**
+     * Create temporary directory for multipart parsing
+     */
+    private static File createTempDirectory() {
+        String baseTempDir = XDAT.getSiteConfigPreferences().getCachePath();
+        File dir = new File(baseTempDir, "stow-rs-" + System.currentTimeMillis());
+        dir.mkdirs();
+        return dir;
     }
 
     @Override

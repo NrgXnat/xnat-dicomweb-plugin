@@ -3,26 +3,28 @@ package org.nrg.xnat.dicomweb.service;
 import org.dcm4che3.data.Attributes;
 import org.dcm4che3.data.Tag;
 import org.dcm4che3.data.VR;
-import org.dcm4che3.io.DicomInputStream;
-import org.dcm4che3.image.BufferedImageUtils;
 import org.dcm4che3.imageio.plugins.dcm.DicomImageReadParam;
-import org.nrg.xdat.om.XnatProjectdata;
-import org.nrg.xdat.om.XnatImagesessiondata;
+import org.dcm4che3.io.DicomInputStream;
 import org.nrg.action.ServerException;
+import org.nrg.xdat.XDAT;
 import org.nrg.xdat.model.CatEntryI;
-import org.nrg.xdat.om.XnatImagescandata;
 import org.nrg.xdat.om.XnatAbstractresource;
+import org.nrg.xdat.om.XnatImagescandata;
+import org.nrg.xdat.om.XnatImagesessiondata;
+import org.nrg.xdat.om.XnatProjectdata;
 import org.nrg.xdat.om.XnatResourcecatalog;
-import org.nrg.xft.security.UserI;
 import org.nrg.xft.XFTItem;
 import org.nrg.xft.search.CriteriaCollection;
-import org.nrg.xdat.XDAT;
-import org.nrg.xnat.utils.CatalogUtils;
+import org.nrg.xft.security.UserI;
 import org.nrg.xnat.dicomweb.utils.DicomWebUtils;
+import org.nrg.xnat.utils.CatalogUtils;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 
+import javax.imageio.ImageIO;
+import javax.imageio.ImageReader;
+import javax.imageio.stream.ImageInputStream;
 import java.awt.image.BufferedImage;
 import java.io.ByteArrayOutputStream;
 import java.io.File;
@@ -33,9 +35,6 @@ import java.util.Iterator;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Set;
-import javax.imageio.ImageIO;
-import javax.imageio.ImageReader;
-import javax.imageio.stream.ImageInputStream;
 
 /**
  * XNAT 1.9.x implementation of DICOM service

@@ -4,8 +4,11 @@ import org.dcm4che3.data.Attributes;
 import org.dcm4che3.data.BulkData;
 import org.dcm4che3.data.Tag;
 import org.dcm4che3.data.VR;
+import org.nrg.xnat.dicomweb.config.DicomWebProperties;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.stereotype.Component;
 
 import java.util.HashSet;
 import java.util.Set;
@@ -15,16 +18,25 @@ import java.util.Set;
  *
  * Per DICOM PS3.18 Section 6.5.6, large attributes should be replaced with BulkDataURI
  * references in metadata responses to reduce response size and improve performance.
+ *
+ * This is now a Spring component that uses configurable threshold values.
  */
+@Component
 public class BulkDataHandler {
 
     private static final Logger logger = LoggerFactory.getLogger(BulkDataHandler.class);
 
     /**
-     * Size threshold (in bytes) above which attributes should use BulkDataURI.
+     * Default size threshold (in bytes) above which attributes should use BulkDataURI.
+     * Used for static methods and as fallback.
      * Default: 1024 bytes (1KB)
      */
-    private static final int BULK_DATA_THRESHOLD = 1024;
+    private static final int DEFAULT_BULK_DATA_THRESHOLD = 1024;
+
+    /**
+     * Configured bulk data threshold
+     */
+    private final int bulkDataThreshold;
 
     /**
      * DICOM tags that should always use BulkDataURI regardless of size.
@@ -59,7 +71,17 @@ public class BulkDataHandler {
     }
 
     /**
+     * Constructor with configuration injection
+     */
+    @Autowired
+    public BulkDataHandler(DicomWebProperties properties) {
+        this.bulkDataThreshold = properties.getBulkData().getThreshold();
+        logger.info("BulkDataHandler initialized with threshold: {} bytes", this.bulkDataThreshold);
+    }
+
+    /**
      * Process DICOM attributes and replace bulk data with BulkDataURI references.
+     * Instance method that uses configured threshold.
      *
      * @param attrs DICOM attributes (may contain BulkData objects from URI mode)
      * @param baseUri Base URI for generating BulkDataURI (e.g., "http://localhost:8080/xapi/dicomweb/projects/TestProject")
@@ -68,15 +90,15 @@ public class BulkDataHandler {
      * @param instanceUID SOP Instance UID
      * @return New Attributes with BulkDataURI strings replacing bulk data
      */
-    public static Attributes processBulkData(Attributes attrs, String baseUri,
-                                             String studyUID, String seriesUID, String instanceUID) {
+    public Attributes processBulkData(Attributes attrs, String baseUri,
+                                      String studyUID, String seriesUID, String instanceUID) {
         Attributes processed = new Attributes(attrs.size());
 
         try {
             attrs.accept(new Attributes.Visitor() {
                 @Override
                 public boolean visit(Attributes attrs, int tag, VR vr, Object value) {
-                    if (shouldUseBulkDataURI(tag, vr, value)) {
+                    if (shouldUseBulkDataURIWithConfig(tag, vr, value)) {
                         // Generate BulkDataURI string
                         String bulkDataURI = generateBulkDataURI(baseUri, studyUID, seriesUID, instanceUID, tag);
 
@@ -104,13 +126,14 @@ public class BulkDataHandler {
 
     /**
      * Determine if an attribute should use BulkDataURI.
+     * Instance method that uses configured threshold.
      *
      * @param tag DICOM tag
      * @param vr Value Representation
      * @param value Attribute value
      * @return true if should use BulkDataURI, false otherwise
      */
-    public static boolean shouldUseBulkDataURI(int tag, VR vr, Object value) {
+    public boolean shouldUseBulkDataURIWithConfig(int tag, VR vr, Object value) {
         // 1. Known bulk data tags always use BulkDataURI
         if (BULK_DATA_TAGS.contains(tag)) {
             return true;
@@ -124,11 +147,36 @@ public class BulkDataHandler {
         // 3. Large byte arrays with bulk data VRs
         if (BULK_DATA_VRS.contains(vr) && value instanceof byte[]) {
             byte[] bytes = (byte[]) value;
-            if (bytes.length > BULK_DATA_THRESHOLD) {
+            if (bytes.length > bulkDataThreshold) {
                 return true;
             }
         }
 
+        return false;
+    }
+
+    /**
+     * Static version for backward compatibility.
+     * Uses default threshold.
+     *
+     * @param tag DICOM tag
+     * @param vr Value Representation
+     * @param value Attribute value
+     * @return true if should use BulkDataURI, false otherwise
+     */
+    public static boolean shouldUseBulkDataURI(int tag, VR vr, Object value) {
+        if (BULK_DATA_TAGS.contains(tag)) {
+            return true;
+        }
+        if (value instanceof BulkData) {
+            return true;
+        }
+        if (BULK_DATA_VRS.contains(vr) && value instanceof byte[]) {
+            byte[] bytes = (byte[]) value;
+            if (bytes.length > DEFAULT_BULK_DATA_THRESHOLD) {
+                return true;
+            }
+        }
         return false;
     }
 

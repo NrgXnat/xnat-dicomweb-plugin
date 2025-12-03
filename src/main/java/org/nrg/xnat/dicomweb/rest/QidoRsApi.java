@@ -12,6 +12,7 @@ import org.nrg.xapi.rest.XapiRequestMapping;
 import org.nrg.xdat.security.services.RoleHolder;
 import org.nrg.xdat.security.services.UserManagementServiceI;
 import org.nrg.xft.security.UserI;
+import org.nrg.xnat.dicomweb.config.DicomWebProperties;
 import org.nrg.xnat.dicomweb.service.XnatDicomService;
 import org.nrg.xnat.dicomweb.utils.DicomWebUtils;
 import org.slf4j.Logger;
@@ -38,42 +39,44 @@ public class QidoRsApi extends AbstractXapiRestController {
 
     private static final Logger logger = LoggerFactory.getLogger(QidoRsApi.class);
 
-    // Pagination constants
-    private static final int DEFAULT_PAGE_SIZE = 100;
-    private static final int MAX_PAGE_SIZE = 1000;
-
     private final XnatDicomService dicomService;
+    private final DicomWebProperties properties;
 
     @Autowired
     public QidoRsApi(final XnatDicomService dicomService,
+                     final DicomWebProperties properties,
                      final UserManagementServiceI userManagementService,
                      final RoleHolder roleHolder) {
         super(userManagementService, roleHolder);
         this.dicomService = dicomService;
+        this.properties = properties;
     }
 
     /**
      * Extract limit parameter from query params, with validation
      */
     private int getLimit(Map<String, String> queryParams) {
+        final int defaultPageSize = properties.getPagination().getDefaultPageSize();
+        final int maxPageSize = properties.getPagination().getMaxPageSize();
+
         if (queryParams == null || !queryParams.containsKey("limit")) {
-            return DEFAULT_PAGE_SIZE;
+            return defaultPageSize;
         }
 
         try {
             int limit = Integer.parseInt(queryParams.get("limit"));
             if (limit <= 0) {
-                logger.warn("Invalid limit value: {}. Using default: {}", limit, DEFAULT_PAGE_SIZE);
-                return DEFAULT_PAGE_SIZE;
+                logger.warn("Invalid limit value: {}. Using default: {}", limit, defaultPageSize);
+                return defaultPageSize;
             }
-            if (limit > MAX_PAGE_SIZE) {
-                logger.warn("Limit {} exceeds maximum {}. Using maximum.", limit, MAX_PAGE_SIZE);
-                return MAX_PAGE_SIZE;
+            if (limit > maxPageSize) {
+                logger.warn("Limit {} exceeds maximum {}. Using maximum.", limit, maxPageSize);
+                return maxPageSize;
             }
             return limit;
         } catch (NumberFormatException e) {
-            logger.warn("Invalid limit parameter: {}. Using default: {}", queryParams.get("limit"), DEFAULT_PAGE_SIZE);
-            return DEFAULT_PAGE_SIZE;
+            logger.warn("Invalid limit parameter: {}. Using default: {}", queryParams.get("limit"), defaultPageSize);
+            return defaultPageSize;
         }
     }
 

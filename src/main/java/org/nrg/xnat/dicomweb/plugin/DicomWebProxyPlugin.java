@@ -1,8 +1,12 @@
 package org.nrg.xnat.dicomweb.plugin;
 
 import org.nrg.framework.annotations.XnatPlugin;
+import org.nrg.xnat.initialization.RootConfig;
 import org.springframework.context.annotation.ComponentScan;
+import org.springframework.context.annotation.Import;
+import org.springframework.context.annotation.PropertySource;
 
+@PropertySource("classpath:/config/dicomweb/dicomweb.properties")
 @XnatPlugin(
     value = "dicomwebproxy",
     name = "DICOMweb Proxy Plugin",
@@ -11,5 +15,6 @@ import org.springframework.context.annotation.ComponentScan;
     openUrls = {"/xapi/dicomweb/test"}
 )
 @ComponentScan({"org.nrg.xnat.dicomweb"})
+@Import({RootConfig.class})
 public class DicomWebProxyPlugin {
 }

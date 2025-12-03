@@ -34,9 +34,15 @@ public class Mime4jHybridParser {
     private static final Logger logger = LoggerFactory.getLogger(Mime4jHybridParser.class);
 
     /**
-     * Memory/disk threshold: 10MB
+     * Default memory/disk threshold: 10MB
      */
-    private static final long MEMORY_THRESHOLD = 10 * 1024 * 1024;
+    private static final long DEFAULT_MEMORY_THRESHOLD = 10 * 1024 * 1024;
+
+    /**
+     * Memory/disk threshold in bytes
+     * Files larger than this will be written to disk
+     */
+    private final long memoryThreshold;
 
     /**
      * Temporary file directory
@@ -44,30 +50,46 @@ public class Mime4jHybridParser {
     private final File tempDirectory;
 
     /**
-     * Default constructor - uses system temporary directory
+     * Default constructor - uses system temporary directory and default memory threshold
      */
     public Mime4jHybridParser() {
-        this(createDefaultTempDirectory());
+        this(createDefaultTempDirectory(), DEFAULT_MEMORY_THRESHOLD);
     }
 
     /**
-     * Constructor with custom temporary directory
+     * Constructor with custom temporary directory and default memory threshold
      */
     public Mime4jHybridParser(File tempDirectory) {
+        this(tempDirectory, DEFAULT_MEMORY_THRESHOLD);
+    }
+
+    /**
+     * Constructor with custom temporary directory and memory threshold
+     * @param tempDirectory Temporary directory for large files
+     * @param memoryThreshold Memory threshold in bytes
+     */
+    public Mime4jHybridParser(File tempDirectory, long memoryThreshold) {
         this.tempDirectory = tempDirectory;
+        this.memoryThreshold = memoryThreshold;
         if (!this.tempDirectory.exists()) {
             this.tempDirectory.mkdirs();
         }
-        logger.info("Mime4jHybridParser initialized with temp directory: {}",
-            this.tempDirectory.getAbsolutePath());
+        logger.info("Mime4jHybridParser initialized with temp directory: {} and memory threshold: {} bytes",
+            this.tempDirectory.getAbsolutePath(), this.memoryThreshold);
     }
 
     /**
      * Create default temporary directory
      */
     private static File createDefaultTempDirectory() {
-        // Use XNAT's configured cache path for temporary files
-        String baseTempDir = XDAT.getSiteConfigPreferences().getCachePath();
+        String baseTempDir;
+        try {
+            // Try to use XNAT's configured cache path for temporary files
+            baseTempDir = XDAT.getSiteConfigPreferences().getCachePath();
+        } catch (Exception e) {
+            // Fallback to system temp directory (e.g., during tests)
+            baseTempDir = System.getProperty("java.io.tmpdir");
+        }
         File dir = new File(baseTempDir, "stow-rs-" + System.currentTimeMillis());
         dir.mkdirs();
         return dir;
@@ -105,7 +127,7 @@ public class Mime4jHybridParser {
             MimeStreamParser parser = new MimeStreamParser(config);
 
             // Set ContentHandler
-            HybridContentHandler handler = new HybridContentHandler(parts, tempDirectory);
+            HybridContentHandler handler = new HybridContentHandler(parts, tempDirectory, memoryThreshold);
             parser.setContentHandler(handler);
 
             // MimeStreamParser requires complete MIME message (including headers)
@@ -305,6 +327,7 @@ public class Mime4jHybridParser {
 
         private final List<MultipartPart> parts;
         private final File tempDirectory;
+        private final long memoryThreshold;
 
         // Current part state
         private String currentContentType;
@@ -315,9 +338,10 @@ public class Mime4jHybridParser {
         private File currentTempFile;
         private long currentSize;
 
-        public HybridContentHandler(List<MultipartPart> parts, File tempDirectory) {
+        public HybridContentHandler(List<MultipartPart> parts, File tempDirectory, long memoryThreshold) {
             this.parts = parts;
             this.tempDirectory = tempDirectory;
+            this.memoryThreshold = memoryThreshold;
         }
 
         @Override
@@ -398,7 +422,7 @@ public class Mime4jHybridParser {
                 currentSize += bytesRead;
 
                 // Decide storage strategy based on current size
-                if (currentSize <= MEMORY_THRESHOLD) {
+                if (currentSize <= memoryThreshold) {
                     // Small file: write to memory
                     if (memoryBuffer != null) {
                         memoryBuffer.write(buffer, 0, bytesRead);
@@ -419,7 +443,7 @@ public class Mime4jHybridParser {
                         }
 
                         logger.info("Part size exceeded threshold ({}), switching to disk: {}",
-                            formatSize(MEMORY_THRESHOLD), currentTempFile.getName());
+                            formatSize(memoryThreshold), currentTempFile.getName());
                     }
 
                     // Write to disk

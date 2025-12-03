@@ -25,6 +25,87 @@ This XNAT plugin provides a DICOMweb-compliant REST API that exposes XNAT projec
 
 3. Restart XNAT
 
+## Configuration
+
+The plugin can be configured in two ways:
+
+1. **Via XNAT Admin UI** (Recommended): Navigate to **Administer → Plugin Settings → DICOMweb Plugin Configuration**
+2. **Via Properties File**: Add properties to `{xnat-home}/config/xnat.properties` or `xnat-conf.properties`
+
+All configuration parameters have sensible defaults and are optional.
+
+### Pagination Settings
+
+Control the default and maximum page sizes for QIDO-RS query responses:
+
+**Via Admin UI:**
+- Go to Administer → Plugin Settings → DICOMweb Plugin Configuration
+- Set "Default Page Size" and "Max Page Size"
+
+**Via Properties File:**
+```properties
+# Default page size when limit parameter is not specified (default: 100)
+dicomweb.defaultPageSize=100
+
+# Maximum allowed page size - requests exceeding this are capped (default: 1000)
+dicomweb.maxPageSize=1000
+```
+
+**Recommendations:**
+- Smaller page sizes (50-100): Better for slow networks or limited client memory
+- Larger page sizes (200-500): Better for high-performance deployments
+
+### Multipart Upload Settings
+
+Configure memory usage for STOW-RS (upload) operations:
+
+**Via Properties File:**
+```properties
+# Memory threshold in bytes - files larger than this are written to disk (default: 10485760 = 10MB)
+dicomweb.memoryThreshold=10485760
+```
+
+**Recommendations:**
+- High memory systems (16GB+): `52428800` (50MB) for faster uploads
+- Low memory systems (<8GB): `5242880` (5MB) to reduce memory pressure
+- Default (10MB): Good balance for most deployments
+
+### BulkData Settings
+
+Control when DICOM attributes use BulkDataURI references instead of inline values:
+
+**Via Properties File:**
+```properties
+# Threshold in bytes - attributes larger than this use BulkDataURI (default: 1024 = 1KB)
+dicomweb.bulkDataThreshold=1024
+```
+
+**Recommendations:**
+- Smaller threshold (512-1024): More BulkDataURIs, smaller JSON responses (better for slow networks)
+- Larger threshold (4096-8192): Fewer BulkDataURIs, larger JSON responses (better for fast networks)
+
+### Example Complete Configuration
+
+**Via Properties File** (`xnat.properties` or `xnat-conf.properties`):
+
+```properties
+# High-performance configuration for fast network, high-memory deployment
+dicomweb.defaultPageSize=200
+dicomweb.maxPageSize=2000
+dicomweb.memoryThreshold=52428800
+dicomweb.bulkDataThreshold=4096
+```
+
+```properties
+# Low-resource configuration for limited memory/network
+dicomweb.defaultPageSize=50
+dicomweb.maxPageSize=500
+dicomweb.memoryThreshold=5242880
+dicomweb.bulkDataThreshold=512
+```
+
+**Note:** Changes via the Admin UI take effect immediately. Changes to properties files require an XNAT restart.
+
 ## API Endpoints
 
 All endpoints are prefixed with `/xapi/dicomweb/projects/{projectId}`

@@ -1,0 +1,105 @@
+####
+#### DICOMweb Plugin Site Settings
+####
+
+dicomwebConfigPanel:
+    kind: panel.form
+    name: dicomwebConfigPanel
+    id: dicomweb-config-form
+    label: "DICOMweb Plugin Configuration"
+    method: POST
+    contentType: json
+    action: "/xapi/dicomweb/prefs"
+    load: "/xapi/dicomweb/prefs"
+    contents:
+        description:
+            tag: div.message
+            contents: >
+                Configure the DICOMweb plugin settings. These settings control pagination for QIDO-RS queries,
+                memory usage for STOW-RS uploads, and BulkData handling for WADO-RS responses.
+
+        paginationHeader:
+            tag: h3
+            contents: "QIDO-RS Pagination Settings"
+
+        defaultPageSize:
+            kind: panel.input.text
+            name: defaultPageSize
+            label: Default Page Size
+            validation: "onblur integer greaterThan:0"
+            element:
+                title: Default number of results per page when limit is not specified
+            description: >
+                Default page size for QIDO-RS queries when the limit parameter is not specified.
+                Recommended: 50-200 for typical use cases. Default: 100
+
+        maxPageSize:
+            kind: panel.input.text
+            name: maxPageSize
+            label: Maximum Page Size
+            validation: "onblur integer greaterThan:0"
+            element:
+                title: Maximum allowed page size - requests exceeding this will be capped
+            description: >
+                Maximum allowed page size for QIDO-RS queries. Client requests exceeding this value
+                will be capped at this maximum. Recommended: 500-2000 depending on server capacity. Default: 1000
+
+        uploadHeader:
+            tag: h3
+            contents: "STOW-RS Upload Settings"
+
+        memoryThreshold:
+            kind: panel.input.text
+            name: memoryThreshold
+            label: Memory Threshold (bytes)
+            validation: "onblur integer greaterThan:0"
+            element:
+                title: Files larger than this will be written to disk
+            description: >
+                Memory threshold in bytes for STOW-RS multipart upload processing.
+                Files larger than this will be written to disk instead of kept in memory.
+                Default: 10485760 (10 MB). High memory systems: 52428800 (50 MB). Low memory systems: 5242880 (5 MB)
+
+        bulkDataHeader:
+            tag: h3
+            contents: "WADO-RS BulkData Settings"
+
+        bulkDataThreshold:
+            kind: panel.input.text
+            name: bulkDataThreshold
+            label: BulkData Threshold (bytes)
+            validation: "onblur integer greaterThan:0"
+            element:
+                title: Attributes larger than this will use BulkDataURI references
+            description: >
+                BulkData threshold in bytes for WADO-RS metadata responses. DICOM attributes with binary data
+                larger than this will use BulkDataURI references instead of inline base64 encoding.
+                Default: 1024 (1 KB). Smaller threshold (512-1024): More BulkDataURIs, smaller JSON responses.
+                Larger threshold (4096-8192): Fewer BulkDataURIs, larger JSON responses
+
+####
+#### Tab Definition
+####
+
+dicomwebConfigTab:
+    kind: tab
+    name: dicomwebConfigTab
+    label: Configuration
+    group: dicomwebTabGroup
+    contents:
+        ${dicomwebConfigPanel}
+
+####
+#### Root Site Admin Spawner Config Object
+####
+
+siteSettings:
+    kind: tabs
+    name: dicomwebAdmin
+    label: DICOMweb Plugin
+    meta:
+        tabGroups:
+            dicomwebTabGroup: DICOMweb Settings
+    contains: tabs
+    tabs:
+        ${dicomwebConfigTab}
