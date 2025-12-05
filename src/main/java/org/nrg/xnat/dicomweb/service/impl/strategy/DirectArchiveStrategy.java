@@ -107,7 +107,7 @@ public class DirectArchiveStrategy implements DicomImportStrategy {
     @Override
     public void importInstances(UserI user, List<MultipartPart> parts,
                                  Map<String, Object> params,
-                                 Set<String> prearchiveUris,
+                                 Set<String> sessionUris,
                                  List<SuccessfulInstance> successfulInstances,
                                  List<FailedInstance> failedInstances) {
         logger.info("Importing {} parts to archive via DirectArchive", parts.size());
@@ -127,7 +127,7 @@ public class DirectArchiveStrategy implements DicomImportStrategy {
 
         // Phase 2: Process each study
         processStudies(user, project, studyGroups, timestamp, params,
-                      prearchiveUris, successfulInstances, failedInstances);
+                      sessionUris, successfulInstances, failedInstances);
     }
 
     // ========================================================================
@@ -199,7 +199,7 @@ public class DirectArchiveStrategy implements DicomImportStrategy {
     private void processStudies(UserI user, XnatProjectdata project,
                                 Map<String, List<DicomInstanceInfo>> studyGroups,
                                 String timestamp, Map<String, Object> params,
-                                Set<String> prearchiveUris,
+                                Set<String> sessionUris,
                                 List<SuccessfulInstance> successfulInstances,
                                 List<FailedInstance> failedInstances) {
 
@@ -211,7 +211,7 @@ public class DirectArchiveStrategy implements DicomImportStrategy {
 
             try {
                 processStudy(user, project, studyUid, instances, timestamp, params,
-                           prearchiveUris, successfulInstances, failedInstances);
+                           sessionUris, successfulInstances, failedInstances);
             } catch (Exception e) {
                 logger.error("Error processing study {}", studyUid, e);
                 markStudyAsFailed(instances, failedInstances, e.getMessage());
@@ -224,7 +224,7 @@ public class DirectArchiveStrategy implements DicomImportStrategy {
      */
     private void processStudy(UserI user, XnatProjectdata project, String studyUid,
                              List<DicomInstanceInfo> instances, String timestamp,
-                             Map<String, Object> params, Set<String> prearchiveUris,
+                             Map<String, Object> params, Set<String> sessionUris,
                              List<SuccessfulInstance> successfulInstances,
                              List<FailedInstance> failedInstances) {
 
@@ -239,7 +239,7 @@ public class DirectArchiveStrategy implements DicomImportStrategy {
             logger.info("Wrote {} instances to archive for study {}", writtenInstances.size(), studyUid);
 
             // Build and archive immediately
-            String finalUri = buildAndArchiveSession(user, session, params, prearchiveUris);
+            String finalUri = buildAndArchiveSession(user, session, params, sessionUris);
 
             // Add successful instances with final URI
             addSuccessfulInstances(writtenInstances, finalUri, successfulInstances);
@@ -357,7 +357,7 @@ public class DirectArchiveStrategy implements DicomImportStrategy {
      */
     private String buildAndArchiveSession(UserI user, SessionData session,
                                          Map<String, Object> params,
-                                         Set<String> prearchiveUris) {
+                                         Set<String> sessionUris) {
         try {
             // Clear lock files
             clearSessionLocks(session);
@@ -372,7 +372,7 @@ public class DirectArchiveStrategy implements DicomImportStrategy {
 
             // Build final URI
             String finalUri = String.format(EXPERIMENT_URL_FORMAT, experimentId);
-            prearchiveUris.add(finalUri);
+            sessionUris.add(finalUri);
             return finalUri;
 
         } catch (Exception e) {
@@ -382,7 +382,7 @@ public class DirectArchiveStrategy implements DicomImportStrategy {
             // Return temporary DirectArchive URI
             String fallbackUri = String.format(DIRECT_ARCHIVE_URL_FORMAT,
                     session.getProject(), session.getTag(), session.getName());
-            prearchiveUris.add(fallbackUri);
+            sessionUris.add(fallbackUri);
             return fallbackUri;
         }
     }

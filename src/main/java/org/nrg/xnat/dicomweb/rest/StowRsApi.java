@@ -98,7 +98,7 @@ public class StowRsApi extends AbstractXapiRestController {
             Map<String, Object> params = new HashMap<>();
             params.put(URIManager.PROJECT_ID, projectId);
 
-            // Store instances using DirectWrite strategy
+            // Store instances using DirectArchive strategy
             StowRsResult result = stowRsService.storeInstances(user, params, request);
 
             return ResponseEntity.ok()

@@ -23,7 +23,6 @@ import org.nrg.xnat.dicomweb.service.StowRsException;
 import org.nrg.xnat.dicomweb.service.StowRsResult;
 import org.nrg.xnat.dicomweb.service.StowRsService;
 import org.nrg.xnat.dicomweb.service.SuccessfulInstance;
-import org.nrg.xnat.dicomweb.service.impl.strategy.DirectWriteImporterStrategy;
 import org.nrg.xnat.dicomweb.service.impl.strategy.DirectArchiveStrategy;
 import org.nrg.xnat.dicomweb.utils.DicomWebUtils;
 import org.nrg.xnat.helpers.prearchive.PrearcDatabase;
@@ -62,20 +61,17 @@ public class StowRsServiceImpl implements StowRsService {
     private static final String SLASH = "/";
 
     private final Mime4jHybridParser multipartParser;
-    private final DirectWriteImporterStrategy directWriteImporter;
     private final DirectArchiveStrategy directArchiveImporter;
 
     @Autowired
-    public StowRsServiceImpl(DirectWriteImporterStrategy directWriteImporter,
-                             DirectArchiveStrategy directArchiveImporter,
+    public StowRsServiceImpl(DirectArchiveStrategy directArchiveImporter,
                              DicomWebProperties properties) {
         // Create parser with configured memory threshold
         File tempDir = createTempDirectory();
         long memoryThreshold = properties.getMultipart().getMemoryThreshold();
         this.multipartParser = new Mime4jHybridParser(tempDir, memoryThreshold);
-        this.directWriteImporter = directWriteImporter;
         this.directArchiveImporter = directArchiveImporter;
-        logger.info("StowRsServiceImpl initialized with DirectArchive strategy (default) and multipart memory threshold: {} bytes",
+        logger.info("StowRsServiceImpl initialized with DirectArchive strategy and multipart memory threshold: {} bytes",
                 memoryThreshold);
     }
 
@@ -99,7 +95,7 @@ public class StowRsServiceImpl implements StowRsService {
                 request.getContentType(), request.getContentLength());
 
         List<MultipartPart> parts = null;
-        Set<String> prearchiveUris = Sets.newLinkedHashSet();
+        Set<String> sessionUris = Sets.newLinkedHashSet();
         List<SuccessfulInstance> successfulInstances = new ArrayList<>();
         List<FailedInstance> failedInstances = new ArrayList<>();
 
@@ -122,33 +118,33 @@ public class StowRsServiceImpl implements StowRsService {
                 parts.stream().filter(p -> !p.isInMemory()).count());
 
             // Import DICOM instances using DirectArchive strategy (writes directly to archive)
-            directArchiveImporter.importInstances(user, parts, mergedParams, prearchiveUris,
+            directArchiveImporter.importInstances(user, parts, mergedParams, sessionUris,
                     successfulInstances, failedInstances);
 
-            if (prearchiveUris.isEmpty()) {
+            if (sessionUris.isEmpty()) {
                 logger.warn("No instances were successfully imported");
                 throw StowRsException.serverError("Failed to import any DICOM instances");
             }
 
             logger.info("Successfully imported {} sessions to archive via DirectArchive, {} failures",
-                prearchiveUris.size(), failedInstances.size());
+                sessionUris.size(), failedInstances.size());
 
             // DirectArchive automatically builds and archives sessions
             // No need to manually call buildSessions() - XNAT will handle this automatically
             logger.info("DirectArchive sessions created. XNAT will automatically build and archive {} sessions",
-                    prearchiveUris.size());
+                    sessionUris.size());
 
             // For DirectArchive, the URIs are already the final locations
-            Set<String> archiveUrls = prearchiveUris;
+            Set<String> archiveUrls = sessionUris;
 
             // Build STOW-RS response with successful and failed instances
             String jsonResponse = buildStowRsResponse(successfulInstances, archiveUrls, failedInstances, request);
 
             return new StowRsResult(
-                prearchiveUris,
+                sessionUris,
                 archiveUrls,
                 jsonResponse,
-                prearchiveUris.size(),
+                sessionUris.size(),
                 failedInstances
             );
 
@@ -184,7 +180,7 @@ public class StowRsServiceImpl implements StowRsService {
     /**
      * Build sessions (rebuild prearchive sessions)
      */
-    private Set<String> buildSessions(UserI user, Set<String> prearchiveUris,
+    private Set<String> buildSessions(UserI user, Set<String> sessionUris,
                                       Map<String, Object> params) throws ClientException {
         Set<String> archiveUrls = new HashSet<>();
         final boolean override = getBooleanParameter(params, PrearchiveOperationRequest.PARAM_OVERRIDE_EXCEPTIONS);
@@ -193,7 +189,7 @@ public class StowRsServiceImpl implements StowRsService {
         PrearchiveOperationHandlerResolver resolver =
             XDAT.getContextService().getBean(PrearchiveOperationHandlerResolver.class);
 
-        for (String sessionUri : prearchiveUris) {
+        for (String sessionUri : sessionUris) {
             String[] elements = sessionUri.split(SLASH);
             if (elements.length < 6) {
                 logger.warn("Invalid prearchive URI format: {}", sessionUri);

@@ -33,13 +33,13 @@ public interface DicomImportStrategy {
      * @param user The authenticated user
      * @param parts The parsed multipart parts containing DICOM data
      * @param params Import parameters (projectId, etc.)
-     * @param prearchiveUris Output: collected prearchive URIs for successful imports
+     * @param sessionUris Output: collected session/experiment URIs for successful imports
      * @param successfulInstances Output: collected successful instance details (SOP UIDs, retrieve URLs)
      * @param failedInstances Output: collected failure information
      */
     void importInstances(UserI user, List<MultipartPart> parts,
                          Map<String, Object> params,
-                         Set<String> prearchiveUris,
+                         Set<String> sessionUris,
                          List<SuccessfulInstance> successfulInstances,
                          List<FailedInstance> failedInstances);
 }
