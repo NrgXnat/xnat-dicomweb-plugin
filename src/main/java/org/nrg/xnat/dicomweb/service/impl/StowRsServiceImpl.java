@@ -24,6 +24,7 @@ import org.nrg.xnat.dicomweb.service.StowRsResult;
 import org.nrg.xnat.dicomweb.service.StowRsService;
 import org.nrg.xnat.dicomweb.service.SuccessfulInstance;
 import org.nrg.xnat.dicomweb.service.impl.strategy.DirectWriteImporterStrategy;
+import org.nrg.xnat.dicomweb.service.impl.strategy.DirectArchiveStrategy;
 import org.nrg.xnat.dicomweb.utils.DicomWebUtils;
 import org.nrg.xnat.helpers.prearchive.PrearcDatabase;
 import org.nrg.xnat.helpers.prearchive.PrearcSession;
@@ -62,16 +63,20 @@ public class StowRsServiceImpl implements StowRsService {
 
     private final Mime4jHybridParser multipartParser;
     private final DirectWriteImporterStrategy directWriteImporter;
+    private final DirectArchiveStrategy directArchiveImporter;
 
     @Autowired
     public StowRsServiceImpl(DirectWriteImporterStrategy directWriteImporter,
+                             DirectArchiveStrategy directArchiveImporter,
                              DicomWebProperties properties) {
         // Create parser with configured memory threshold
         File tempDir = createTempDirectory();
         long memoryThreshold = properties.getMultipart().getMemoryThreshold();
         this.multipartParser = new Mime4jHybridParser(tempDir, memoryThreshold);
         this.directWriteImporter = directWriteImporter;
-        logger.info("StowRsServiceImpl initialized with multipart memory threshold: {} bytes", memoryThreshold);
+        this.directArchiveImporter = directArchiveImporter;
+        logger.info("StowRsServiceImpl initialized with DirectArchive strategy (default) and multipart memory threshold: {} bytes",
+                memoryThreshold);
     }
 
     /**
@@ -88,7 +93,7 @@ public class StowRsServiceImpl implements StowRsService {
     public StowRsResult storeInstances(UserI user, Map<String, Object> params, HttpServletRequest request)
             throws StowRsException {
 
-        logger.info("STOW-RS request from user {} with params {}, strategy: DirectWrite",
+        logger.info("STOW-RS request from user {} with params {}, strategy: DirectArchive (default)",
             user.getLogin(), params);
         logger.debug("Content-Type: {}, Content-Length: {}",
                 request.getContentType(), request.getContentLength());
@@ -116,20 +121,25 @@ public class StowRsServiceImpl implements StowRsService {
                 parts.stream().filter(MultipartPart::isInMemory).count(),
                 parts.stream().filter(p -> !p.isInMemory()).count());
 
-            // Import DICOM instances using DirectWrite strategy
-            directWriteImporter.importInstances(user, parts, mergedParams, prearchiveUris, successfulInstances, failedInstances);
+            // Import DICOM instances using DirectArchive strategy (writes directly to archive)
+            directArchiveImporter.importInstances(user, parts, mergedParams, prearchiveUris,
+                    successfulInstances, failedInstances);
 
             if (prearchiveUris.isEmpty()) {
                 logger.warn("No instances were successfully imported");
                 throw StowRsException.serverError("Failed to import any DICOM instances");
             }
 
-            logger.info("Successfully imported {} sessions to prearchive, {} failures",
+            logger.info("Successfully imported {} sessions to archive via DirectArchive, {} failures",
                 prearchiveUris.size(), failedInstances.size());
 
-            // Build sessions
-            logger.info("Building XML for {} DICOM sessions", prearchiveUris.size());
-            Set<String> archiveUrls = buildSessions(user, prearchiveUris, mergedParams);
+            // DirectArchive automatically builds and archives sessions
+            // No need to manually call buildSessions() - XNAT will handle this automatically
+            logger.info("DirectArchive sessions created. XNAT will automatically build and archive {} sessions",
+                    prearchiveUris.size());
+
+            // For DirectArchive, the URIs are already the final locations
+            Set<String> archiveUrls = prearchiveUris;
 
             // Build STOW-RS response with successful and failed instances
             String jsonResponse = buildStowRsResponse(successfulInstances, archiveUrls, failedInstances, request);
