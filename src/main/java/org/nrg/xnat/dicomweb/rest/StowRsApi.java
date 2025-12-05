@@ -83,6 +83,7 @@ public class StowRsApi extends AbstractXapiRestController {
     })
     public ResponseEntity<String> storeInstances(
             @PathVariable String projectId,
+            @RequestParam(required = false) Map<String, String> queryParams,
             HttpServletRequest request) throws StowRsException {
 
         UserI user = getSessionUser();
@@ -94,11 +95,17 @@ public class StowRsApi extends AbstractXapiRestController {
             throw new ForbiddenException("Project", projectId);
         }
 
-        // Build StowRsParams from path variables and query parameters
+        // Build params from path variables and query parameters
         Map<String, Object> params = new HashMap<>();
         params.put(URIManager.PROJECT_ID, projectId);
 
-        // Store instances using DirectArchive strategy
+        // Add query parameters (including strategy) to params
+        if (queryParams != null) {
+            params.putAll(queryParams);
+            logger.debug("Query parameters: {}", queryParams);
+        }
+
+        // Store instances using selected strategy
         StowRsResult result = stowRsService.storeInstances(user, params, request);
 
         return ResponseEntity.ok()

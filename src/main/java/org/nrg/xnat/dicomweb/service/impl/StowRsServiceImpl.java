@@ -23,7 +23,9 @@ import org.nrg.xnat.dicomweb.service.StowRsException;
 import org.nrg.xnat.dicomweb.service.StowRsResult;
 import org.nrg.xnat.dicomweb.service.StowRsService;
 import org.nrg.xnat.dicomweb.service.SuccessfulInstance;
+import org.nrg.xnat.dicomweb.service.impl.strategy.DicomImportStrategy;
 import org.nrg.xnat.dicomweb.service.impl.strategy.DirectArchiveStrategy;
+import org.nrg.xnat.dicomweb.service.impl.strategy.GradualDicomImporterStrategy;
 import org.nrg.xnat.dicomweb.utils.DicomWebUtils;
 import org.nrg.xnat.helpers.prearchive.PrearcDatabase;
 import org.nrg.xnat.helpers.prearchive.PrearcSession;
@@ -61,18 +63,21 @@ public class StowRsServiceImpl implements StowRsService {
     private static final String SLASH = "/";
 
     private final Mime4jHybridParser multipartParser;
-    private final DirectArchiveStrategy directArchiveImporter;
+    private final DirectArchiveStrategy directArchiveStrategy;
+    private final GradualDicomImporterStrategy gradualDicomImporterStrategy;
 
     @Autowired
-    public StowRsServiceImpl(DirectArchiveStrategy directArchiveImporter,
+    public StowRsServiceImpl(DirectArchiveStrategy directArchiveStrategy,
+                             GradualDicomImporterStrategy gradualDicomImporterStrategy,
                              DicomWebProperties properties) {
         // Create parser with configured memory threshold
         File tempDir = createTempDirectory();
         long memoryThreshold = properties.getMultipart().getMemoryThreshold();
         this.multipartParser = new Mime4jHybridParser(tempDir, memoryThreshold);
-        this.directArchiveImporter = directArchiveImporter;
-        logger.info("StowRsServiceImpl initialized with DirectArchive strategy and multipart memory threshold: {} bytes",
-                memoryThreshold);
+        this.directArchiveStrategy = directArchiveStrategy;
+        this.gradualDicomImporterStrategy = gradualDicomImporterStrategy;
+        logger.info("StowRsServiceImpl initialized with {} strategies and multipart memory threshold: {} bytes",
+                2, memoryThreshold);
     }
 
     /**
@@ -85,12 +90,42 @@ public class StowRsServiceImpl implements StowRsService {
         return dir;
     }
 
+    /**
+     * Select import strategy based on params.
+     * Supports query parameter: ?strategy=GradualDicomImporter or ?strategy=DirectArchive
+     * Default: GradualDicomImporter
+     */
+    private DicomImportStrategy selectStrategy(Map<String, Object> params) {
+        String strategyName = (String) params.get("strategy");
+
+        if (strategyName == null) {
+            strategyName = "GradualDicomImporter";  // Default
+        }
+
+        switch (strategyName) {
+            case "DirectArchive":
+                logger.info("Using DirectArchive strategy");
+                return directArchiveStrategy;
+            case "GradualDicomImporter":
+            default:
+                logger.info("Using GradualDicomImporter strategy");
+                return gradualDicomImporterStrategy;
+        }
+    }
+
     @Override
     public StowRsResult storeInstances(UserI user, Map<String, Object> params, HttpServletRequest request)
             throws StowRsException {
 
-        logger.info("STOW-RS request from user {} with params {}, strategy: DirectArchive (default)",
-            user.getLogin(), params);
+        // Add default params
+        Map<String, Object> mergedParams = new HashMap<>(getDefaultParams());
+        mergedParams.putAll(params);
+
+        // Select import strategy based on params
+        DicomImportStrategy strategy = selectStrategy(mergedParams);
+
+        logger.info("STOW-RS request from user {} with params {}, strategy: {}",
+            user.getLogin(), params, strategy.getName());
         logger.debug("Content-Type: {}, Content-Length: {}",
                 request.getContentType(), request.getContentLength());
 
@@ -98,10 +133,6 @@ public class StowRsServiceImpl implements StowRsService {
         Set<String> sessionUris = Sets.newLinkedHashSet();
         List<SuccessfulInstance> successfulInstances = new ArrayList<>();
         List<FailedInstance> failedInstances = new ArrayList<>();
-
-        // Add default params
-        Map<String, Object> mergedParams = new HashMap<>(getDefaultParams());
-        mergedParams.putAll(params);
 
         try {
             // Parse multipart/related request directly from InputStream
@@ -117,8 +148,8 @@ public class StowRsServiceImpl implements StowRsService {
                 parts.stream().filter(MultipartPart::isInMemory).count(),
                 parts.stream().filter(p -> !p.isInMemory()).count());
 
-            // Import DICOM instances using DirectArchive strategy (writes directly to archive)
-            directArchiveImporter.importInstances(user, parts, mergedParams, sessionUris,
+            // Import DICOM instances using selected strategy
+            strategy.importInstances(user, parts, mergedParams, sessionUris,
                     successfulInstances, failedInstances);
 
             if (sessionUris.isEmpty()) {
@@ -126,16 +157,28 @@ public class StowRsServiceImpl implements StowRsService {
                 throw StowRsException.serverError("Failed to import any DICOM instances");
             }
 
-            logger.info("Successfully imported {} sessions to archive via DirectArchive, {} failures",
-                sessionUris.size(), failedInstances.size());
+            logger.info("Successfully imported {} sessions via {}, {} failures",
+                sessionUris.size(), strategy.getName(), failedInstances.size());
 
-            // DirectArchive automatically builds and archives sessions
-            // No need to manually call buildSessions() - XNAT will handle this automatically
-            logger.info("DirectArchive sessions created. XNAT will automatically build and archive {} sessions",
-                    sessionUris.size());
-
-            // For DirectArchive, the URIs are already the final locations
-            Set<String> archiveUrls = sessionUris;
+            // Handle post-import based on strategy
+            Set<String> archiveUrls;
+            if (strategy instanceof DirectArchiveStrategy) {
+                // DirectArchive automatically builds and archives sessions
+                // URIs are already the final archive locations
+                logger.info("DirectArchive sessions created. URIs are final locations: {} sessions",
+                        sessionUris.size());
+                archiveUrls = sessionUris;
+            } else if (strategy instanceof GradualDicomImporterStrategy) {
+                // GradualDicomImporter puts files in prearchive
+                // Need to build/archive sessions to move them to final location
+                logger.info("Building and archiving {} prearchive sessions", sessionUris.size());
+                archiveUrls = buildSessions(user, sessionUris, mergedParams);
+                logger.info("Successfully built/archived {} sessions", archiveUrls.size());
+            } else {
+                // Unknown strategy - return sessionUris as-is
+                logger.warn("Unknown strategy type: {}, returning session URIs as-is", strategy.getClass().getName());
+                archiveUrls = sessionUris;
+            }
 
             // Build STOW-RS response with successful and failed instances
             String jsonResponse = buildStowRsResponse(successfulInstances, archiveUrls, failedInstances, request);
