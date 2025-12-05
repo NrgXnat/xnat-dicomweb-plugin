@@ -5,10 +5,15 @@ import org.dcm4che3.data.BulkData;
 import org.dcm4che3.data.Tag;
 import org.dcm4che3.data.VR;
 import org.dcm4che3.io.DicomInputStream;
+import org.dcm4che3.io.SAXWriter;
 import org.dcm4che3.json.JSONWriter;
 
 import javax.json.Json;
 import javax.json.stream.JsonGenerator;
+import javax.xml.transform.TransformerConfigurationException;
+import javax.xml.transform.sax.SAXTransformerFactory;
+import javax.xml.transform.sax.TransformerHandler;
+import javax.xml.transform.stream.StreamResult;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.StringWriter;
@@ -153,10 +158,78 @@ public class DicomWebUtils {
     }
 
     /**
+     * Convert DICOM Attributes to XML string (Native DICOM Model format per PS3.19)
+     */
+    public static String toXml(Attributes attrs) throws Exception {
+        StringWriter sw = new StringWriter();
+        SAXTransformerFactory tf = (SAXTransformerFactory) SAXTransformerFactory.newInstance();
+        TransformerHandler th = tf.newTransformerHandler();
+        th.setResult(new StreamResult(sw));
+
+        SAXWriter writer = new SAXWriter(th);
+        writer.setIncludeNamespaceDeclaration(true);
+        writer.write(attrs);
+
+        return sw.toString();
+    }
+
+    /**
+     * Convert DICOM Attributes to XML string with BulkDataURI substitution.
+     *
+     * Large attributes (PixelData, etc.) will be replaced with BulkDataURI references
+     * per DICOM PS3.18 Section 6.5.6.
+     *
+     * @param attrs DICOM attributes
+     * @param baseUri Base URI for BulkDataURI generation
+     * @param studyUID Study Instance UID
+     * @param seriesUID Series Instance UID
+     * @param instanceUID SOP Instance UID
+     * @return XML string with BulkDataURI references
+     * @throws Exception if conversion fails
+     */
+    public static String toXmlWithBulkDataURI(Attributes attrs, String baseUri,
+                                               String studyUID, String seriesUID, String instanceUID) throws Exception {
+        // For XML, we need to clone the attributes and replace bulk data with BulkDataURI
+        Attributes modified = new Attributes(attrs);
+
+        // Replace PixelData with BulkDataURI
+        if (modified.contains(Tag.PixelData)) {
+            VR vr = modified.getVR(Tag.PixelData);
+            Object value = modified.getValue(Tag.PixelData);
+
+            if (vr != null && BulkDataHandler.shouldUseBulkDataURI(Tag.PixelData, vr, value)) {
+                String bulkDataURI = BulkDataHandler.generateBulkDataURI(baseUri, studyUID, seriesUID, instanceUID, Tag.PixelData);
+                // Replace with BulkData object containing URI
+                modified.setValue(Tag.PixelData, vr, new BulkData(null, bulkDataURI, false));
+            }
+        }
+
+        // Replace FloatPixelData with BulkDataURI
+        if (modified.contains(Tag.FloatPixelData)) {
+            VR vr = modified.getVR(Tag.FloatPixelData);
+            Object value = modified.getValue(Tag.FloatPixelData);
+
+            if (vr != null && BulkDataHandler.shouldUseBulkDataURI(Tag.FloatPixelData, vr, value)) {
+                String bulkDataURI = BulkDataHandler.generateBulkDataURI(baseUri, studyUID, seriesUID, instanceUID, Tag.FloatPixelData);
+                modified.setValue(Tag.FloatPixelData, vr, new BulkData(null, bulkDataURI, false));
+            }
+        }
+
+        return toXml(modified);
+    }
+
+    /**
      * Get content type for DICOM JSON
      */
     public static String getDicomJsonContentType() {
         return "application/dicom+json";
+    }
+
+    /**
+     * Get content type for DICOM XML
+     */
+    public static String getDicomXmlContentType() {
+        return "application/dicom+xml";
     }
 
     /**

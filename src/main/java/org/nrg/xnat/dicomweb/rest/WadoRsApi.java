@@ -98,7 +98,7 @@ public class WadoRsApi extends AbstractXapiRestController {
     @XapiRequestMapping(
             value = "/dicomweb/projects/{projectId}/studies/{studyUID}/series/{seriesUID}/instances/{instanceUID}/metadata",
             method = RequestMethod.GET,
-            produces = "application/dicom+json"
+            produces = {"application/dicom+json", "application/dicom+xml"}
     )
     @ApiOperation(value = "Retrieve instance metadata (WADO-RS)", response = String.class)
     @ApiResponses({
@@ -123,12 +123,28 @@ public class WadoRsApi extends AbstractXapiRestController {
         String requestUrl = request.getRequestURL().toString();
         String baseUri = BulkDataHandler.extractBaseUri(requestUrl, projectId);
 
-        // Convert to JSON with BulkDataURI substitution
-        String json = "[" + DicomWebUtils.toJsonWithBulkDataURI(attrs, baseUri, studyUID, seriesUID, instanceUID) + "]";
+        // Determine output format from Accept header
+        String acceptHeader = request.getHeader("Accept");
+        boolean wantsXml = acceptHeader != null && acceptHeader.contains("application/dicom+xml");
+
+        String responseBody;
+        String contentType;
+
+        if (wantsXml) {
+            // Convert to XML with BulkDataURI substitution
+            String xml = DicomWebUtils.toXmlWithBulkDataURI(attrs, baseUri, studyUID, seriesUID, instanceUID);
+            responseBody = xml;
+            contentType = DicomWebUtils.getDicomXmlContentType();
+        } else {
+            // Convert to JSON with BulkDataURI substitution (default)
+            String json = "[" + DicomWebUtils.toJsonWithBulkDataURI(attrs, baseUri, studyUID, seriesUID, instanceUID) + "]";
+            responseBody = json;
+            contentType = DicomWebUtils.getDicomJsonContentType();
+        }
 
         return ResponseEntity.ok()
-                .contentType(MediaType.parseMediaType(DicomWebUtils.getDicomJsonContentType()))
-                .body(json);
+                .contentType(MediaType.parseMediaType(contentType))
+                .body(responseBody);
     }
 
     /**
@@ -178,7 +194,7 @@ public class WadoRsApi extends AbstractXapiRestController {
     @XapiRequestMapping(
             value = "/dicomweb/projects/{projectId}/studies/{studyUID}/metadata",
             method = RequestMethod.GET,
-            produces = "application/dicom+json"
+            produces = {"application/dicom+json", "application/dicom+xml"}
     )
     @ApiOperation(value = "Retrieve study metadata (WADO-RS)", response = String.class)
     @ApiResponses({
@@ -189,7 +205,7 @@ public class WadoRsApi extends AbstractXapiRestController {
     })
     public ResponseEntity<String> retrieveStudyMetadata(@PathVariable String projectId,
                                                          @PathVariable String studyUID,
-                                                         HttpServletRequest request) {
+                                                         HttpServletRequest request) throws Exception {
         logger.info("=== retrieveStudyMetadata called ===");
         logger.info("Project ID: {}", projectId);
         logger.info("Study UID: {}", studyUID);
@@ -211,26 +227,45 @@ public class WadoRsApi extends AbstractXapiRestController {
         String requestUrl = request.getRequestURL().toString();
         String baseUri = BulkDataHandler.extractBaseUri(requestUrl, projectId);
 
-        String json = "[" + instances.stream()
-                .map(attrs -> {
-                    try {
-                        // Extract SeriesInstanceUID and SOPInstanceUID from attributes
-                        String seriesUID = attrs.getString(org.dcm4che3.data.Tag.SeriesInstanceUID);
-                        String instanceUID = attrs.getString(org.dcm4che3.data.Tag.SOPInstanceUID);
+        // Determine output format from Accept header
+        String acceptHeader = request.getHeader("Accept");
+        boolean wantsXml = acceptHeader != null && acceptHeader.contains("application/dicom+xml");
 
-                        // Convert with BulkDataURI substitution
-                        return DicomWebUtils.toJsonWithBulkDataURI(attrs, baseUri, studyUID, seriesUID, instanceUID);
-                    } catch (Exception e) {
-                        logger.error("Error converting instance metadata to JSON", e);
-                        return "{}";
-                    }
-                })
-                .collect(Collectors.joining(",")) + "]";
+        String responseBody;
+        String contentType;
 
-        logger.info("Returning JSON response with {} characters", json.length());
+        if (wantsXml) {
+            // Convert to XML
+            StringBuilder xmlBuilder = new StringBuilder();
+            for (Attributes attrs : instances) {
+                String seriesUID = attrs.getString(org.dcm4che3.data.Tag.SeriesInstanceUID);
+                String instanceUID = attrs.getString(org.dcm4che3.data.Tag.SOPInstanceUID);
+                xmlBuilder.append(DicomWebUtils.toXmlWithBulkDataURI(attrs, baseUri, studyUID, seriesUID, instanceUID));
+            }
+            responseBody = xmlBuilder.toString();
+            contentType = DicomWebUtils.getDicomXmlContentType();
+        } else {
+            // Convert to JSON (default)
+            String json = "[" + instances.stream()
+                    .map(attrs -> {
+                        try {
+                            String seriesUID = attrs.getString(org.dcm4che3.data.Tag.SeriesInstanceUID);
+                            String instanceUID = attrs.getString(org.dcm4che3.data.Tag.SOPInstanceUID);
+                            return DicomWebUtils.toJsonWithBulkDataURI(attrs, baseUri, studyUID, seriesUID, instanceUID);
+                        } catch (Exception e) {
+                            logger.error("Error converting instance metadata to JSON", e);
+                            return "{}";
+                        }
+                    })
+                    .collect(Collectors.joining(",")) + "]";
+            responseBody = json;
+            contentType = DicomWebUtils.getDicomJsonContentType();
+        }
+
+        logger.info("Returning {} response with {} characters", wantsXml ? "XML" : "JSON", responseBody.length());
         return ResponseEntity.ok()
-                .contentType(MediaType.parseMediaType(DicomWebUtils.getDicomJsonContentType()))
-                .body(json);
+                .contentType(MediaType.parseMediaType(contentType))
+                .body(responseBody);
     }
 
     /**
@@ -478,7 +513,7 @@ public class WadoRsApi extends AbstractXapiRestController {
     @XapiRequestMapping(
             value = "/dicomweb/projects/{projectId}/studies/{studyUID}/series/{seriesUID}/metadata",
             method = RequestMethod.GET,
-            produces = "application/dicom+json"
+            produces = {"application/dicom+json", "application/dicom+xml"}
     )
     @ApiOperation(value = "Retrieve metadata for all instances in a series (WADO-RS)", response = String.class)
     @ApiResponses({
@@ -490,7 +525,7 @@ public class WadoRsApi extends AbstractXapiRestController {
     public ResponseEntity<String> retrieveSeriesMetadata(@PathVariable String projectId,
                                                          @PathVariable String studyUID,
                                                          @PathVariable String seriesUID,
-                                                         HttpServletRequest request) {
+                                                         HttpServletRequest request) throws Exception {
         UserI user = getSessionUser();
         List<Attributes> instances = dicomService.searchInstances(user, projectId, studyUID, seriesUID, null);
 
@@ -502,24 +537,42 @@ public class WadoRsApi extends AbstractXapiRestController {
         String requestUrl = request.getRequestURL().toString();
         String baseUri = BulkDataHandler.extractBaseUri(requestUrl, projectId);
 
-        String json = "[" + instances.stream()
-                .map(attrs -> {
-                    try {
-                        // Extract SOPInstanceUID from attributes
-                        String instanceUID = attrs.getString(org.dcm4che3.data.Tag.SOPInstanceUID);
+        // Determine output format from Accept header
+        String acceptHeader = request.getHeader("Accept");
+        boolean wantsXml = acceptHeader != null && acceptHeader.contains("application/dicom+xml");
 
-                        // Convert with BulkDataURI substitution
-                        return DicomWebUtils.toJsonWithBulkDataURI(attrs, baseUri, studyUID, seriesUID, instanceUID);
-                    } catch (Exception e) {
-                        logger.error("Error converting metadata to JSON", e);
-                        return "{}";
-                    }
-                })
-                .collect(Collectors.joining(",")) + "]";
+        String responseBody;
+        String contentType;
+
+        if (wantsXml) {
+            // Convert to XML
+            StringBuilder xmlBuilder = new StringBuilder();
+            for (Attributes attrs : instances) {
+                String instanceUID = attrs.getString(org.dcm4che3.data.Tag.SOPInstanceUID);
+                xmlBuilder.append(DicomWebUtils.toXmlWithBulkDataURI(attrs, baseUri, studyUID, seriesUID, instanceUID));
+            }
+            responseBody = xmlBuilder.toString();
+            contentType = DicomWebUtils.getDicomXmlContentType();
+        } else {
+            // Convert to JSON (default)
+            String json = "[" + instances.stream()
+                    .map(attrs -> {
+                        try {
+                            String instanceUID = attrs.getString(org.dcm4che3.data.Tag.SOPInstanceUID);
+                            return DicomWebUtils.toJsonWithBulkDataURI(attrs, baseUri, studyUID, seriesUID, instanceUID);
+                        } catch (Exception e) {
+                            logger.error("Error converting metadata to JSON", e);
+                            return "{}";
+                        }
+                    })
+                    .collect(Collectors.joining(",")) + "]";
+            responseBody = json;
+            contentType = DicomWebUtils.getDicomJsonContentType();
+        }
 
         return ResponseEntity.ok()
-                .contentType(MediaType.parseMediaType(DicomWebUtils.getDicomJsonContentType()))
-                .body(json);
+                .contentType(MediaType.parseMediaType(contentType))
+                .body(responseBody);
     }
 
     /**
