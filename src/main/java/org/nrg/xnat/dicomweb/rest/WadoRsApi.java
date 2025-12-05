@@ -316,7 +316,7 @@ public class WadoRsApi extends AbstractXapiRestController {
     @XapiRequestMapping(
             value = "/dicomweb/projects/{projectId}/studies/{studyUID}/series/{seriesUID}/instances/{instanceUID}/rendered",
             method = RequestMethod.GET,
-            produces = {"image/jpeg", "image/png"}
+            produces = {"image/jpeg", "image/png", "image/gif"}
     )
     @ApiOperation(value = "Retrieve rendered instance as JPEG (WADO-RS)", response = byte[].class)
     @ApiResponses({
@@ -329,18 +329,27 @@ public class WadoRsApi extends AbstractXapiRestController {
                                                            @PathVariable String studyUID,
                                                            @PathVariable String seriesUID,
                                                            @PathVariable String instanceUID,
-                                                           @RequestParam(required = false) Integer frame) {
+                                                           @RequestParam(required = false) Integer frame,
+                                                           HttpServletRequest request) {
         try {
             UserI user = getSessionUser();
+
+            // Determine output format from Accept header
+            String acceptHeader = request.getHeader("Accept");
+            org.nrg.xnat.dicomweb.service.ImageFormat format =
+                    org.nrg.xnat.dicomweb.service.ImageFormat.fromMimeType(acceptHeader);
+
+            logger.debug("Accept header: {}, selected format: {}", acceptHeader, format);
+
             org.nrg.xnat.dicomweb.service.RenderedInstanceResult result =
-                    dicomService.retrieveRenderedInstance(user, projectId, studyUID, seriesUID, instanceUID, frame);
+                    dicomService.retrieveRenderedInstance(user, projectId, studyUID, seriesUID, instanceUID, frame, format);
 
             if (result == null || result.getImageData() == null) {
                 return ResponseEntity.notFound().build();
             }
 
             HttpHeaders headers = new HttpHeaders();
-            headers.setContentType(MediaType.IMAGE_JPEG);
+            headers.setContentType(MediaType.parseMediaType(result.getMimeType()));
 
             // Add frame metadata to response headers
             headers.add("X-Frame-Count", String.valueOf(result.getTotalFrames()));

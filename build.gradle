@@ -103,6 +103,9 @@ dependencies {
     implementAndInclude 'org.apache.commons:commons-compress:1.21'
     compileOnly 'commons-fileupload:commons-fileupload:1.4'
 
+    // AnimatedGifEncoder for animated GIF generation (packaged in plugin)
+    implementAndInclude 'com.madgag:animated-gif-lib:1.4'
+
     testImplementation group: 'junit', name: 'junit'
     testImplementation "org.springframework:spring-test"
     testImplementation "org.mockito:mockito-core:4.8.0"

@@ -21,6 +21,7 @@ import org.nrg.xnat.utils.CatalogUtils;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
+import com.madgag.gif.fmsware.AnimatedGifEncoder;
 
 import javax.imageio.ImageIO;
 import javax.imageio.ImageReader;
@@ -361,7 +362,8 @@ public class XnatDicomServiceImpl implements XnatDicomService {
 
     @Override
     public RenderedInstanceResult retrieveRenderedInstance(UserI user, String projectId, String studyInstanceUID,
-                                          String seriesInstanceUID, String sopInstanceUID, Integer frameNumber) {
+                                          String seriesInstanceUID, String sopInstanceUID,
+                                          Integer frameNumber, ImageFormat format) {
         try {
             XnatProjectdata project = XnatProjectdata.getXnatProjectdatasById(projectId, user, false);
             if (project == null) {
@@ -393,9 +395,15 @@ public class XnatDicomServiceImpl implements XnatDicomService {
             File dicomFile = findDicomFileInScan(targetScan, sopInstanceUID);
 
             if (dicomFile != null) {
-                logger.info("Rendering instance: {} (frame: {})", sopInstanceUID,
-                        frameNumber != null ? frameNumber : "default");
-                return renderDicomToJpeg(dicomFile, frameNumber);
+                logger.info("Rendering instance: {} (frame: {}, format: {})", sopInstanceUID,
+                        frameNumber != null ? frameNumber : "default", format);
+
+                // For GIF format with multi-frame, render as animated GIF
+                if (format == ImageFormat.GIF) {
+                    return renderDicomToGif(dicomFile, frameNumber);
+                } else {
+                    return renderDicomToJpeg(dicomFile, frameNumber);
+                }
             }
 
         } catch (Exception e) {
@@ -963,6 +971,152 @@ public class XnatDicomServiceImpl implements XnatDicomService {
         }
 
         return null;
+    }
+
+    /**
+     * Render a DICOM file to GIF format (animated for multi-frame)
+     * @param dicomFile DICOM file to render
+     * @param requestedFrame optional frame number (1-based) - if specified, renders single frame as static GIF
+     * @return RenderedInstanceResult with GIF data and metadata
+     */
+    private RenderedInstanceResult renderDicomToGif(File dicomFile, Integer requestedFrame) {
+        try {
+            // First, read DICOM metadata to determine frame count and frame rate
+            int totalFrames = 1;
+            Double frameRate = null;
+
+            try (DicomInputStream dis = new DicomInputStream(dicomFile)) {
+                Attributes attrs = dis.readDataset(-1, -1);
+                totalFrames = attrs.getInt(Tag.NumberOfFrames, 1);
+                frameRate = extractFrameRate(attrs);
+            }
+
+            // If single frame or specific frame requested, render as static GIF
+            if (totalFrames == 1 || requestedFrame != null) {
+                return renderSingleFrameAsGif(dicomFile, requestedFrame, totalFrames, frameRate);
+            }
+
+            // Multi-frame: render as animated GIF
+            return renderAnimatedGif(dicomFile, totalFrames, frameRate);
+
+        } catch (Exception e) {
+            logger.error("Error rendering DICOM to GIF", e);
+            return null;
+        }
+    }
+
+    /**
+     * Render a single frame as static GIF
+     */
+    private RenderedInstanceResult renderSingleFrameAsGif(File dicomFile, Integer requestedFrame,
+                                                          int totalFrames, Double frameRate) throws Exception {
+        ImageInputStream iis = ImageIO.createImageInputStream(dicomFile);
+        if (iis == null) {
+            logger.error("Could not create ImageInputStream for DICOM file");
+            return null;
+        }
+
+        Iterator<ImageReader> readers = ImageIO.getImageReadersByFormatName("DICOM");
+        if (!readers.hasNext()) {
+            logger.error("No DICOM ImageReader found");
+            iis.close();
+            return null;
+        }
+
+        ImageReader reader = readers.next();
+        reader.setInput(iis, false);
+        DicomImageReadParam param = (DicomImageReadParam) reader.getDefaultReadParam();
+
+        // Determine which frame to render
+        int frameIndex = 0;
+        if (requestedFrame != null) {
+            frameIndex = requestedFrame - 1;
+            if (frameIndex < 0 || frameIndex >= totalFrames) {
+                frameIndex = totalFrames / 2;
+            }
+        } else {
+            frameIndex = totalFrames > 1 ? totalFrames / 2 : 0;
+        }
+
+        BufferedImage image = reader.read(frameIndex, param);
+        reader.dispose();
+        iis.close();
+
+        if (image == null) {
+            return null;
+        }
+
+        // Encode as GIF
+        ByteArrayOutputStream baos = new ByteArrayOutputStream();
+        ImageIO.write(image, "GIF", baos);
+
+        logger.debug("Rendered single frame {} as static GIF, size: {} bytes", frameIndex + 1, baos.size());
+
+        return new RenderedInstanceResult(baos.toByteArray(), totalFrames, frameIndex + 1,
+                frameRate, ImageFormat.GIF);
+    }
+
+    /**
+     * Render all frames as animated GIF
+     */
+    private RenderedInstanceResult renderAnimatedGif(File dicomFile, int totalFrames,
+                                                     Double frameRate) throws Exception {
+        ImageInputStream iis = ImageIO.createImageInputStream(dicomFile);
+        if (iis == null) {
+            logger.error("Could not create ImageInputStream for DICOM file");
+            return null;
+        }
+
+        Iterator<ImageReader> readers = ImageIO.getImageReadersByFormatName("DICOM");
+        if (!readers.hasNext()) {
+            logger.error("No DICOM ImageReader found");
+            iis.close();
+            return null;
+        }
+
+        ImageReader reader = readers.next();
+        reader.setInput(iis, false);
+        DicomImageReadParam param = (DicomImageReadParam) reader.getDefaultReadParam();
+
+        // Calculate frame delay in centiseconds (1/100 second)
+        // Default to 10 fps (100ms = 10 centiseconds) if no frame rate available
+        int delayInCentiseconds = 10;  // Default
+        if (frameRate != null && frameRate > 0) {
+            // Convert FPS to delay in centiseconds
+            delayInCentiseconds = (int) Math.round(100.0 / frameRate);
+            if (delayInCentiseconds < 1) delayInCentiseconds = 1;  // Minimum 1 centisecond
+        }
+
+        logger.debug("Rendering {} frames as animated GIF, delay: {} centiseconds (frameRate: {})",
+                totalFrames, delayInCentiseconds, frameRate);
+
+        // Create animated GIF encoder
+        ByteArrayOutputStream baos = new ByteArrayOutputStream();
+        AnimatedGifEncoder encoder = new AnimatedGifEncoder();
+        encoder.start(baos);
+        encoder.setDelay(delayInCentiseconds * 10);  // setDelay expects milliseconds
+        encoder.setRepeat(0);  // 0 = loop forever
+
+        // Read and encode all frames
+        for (int frameIndex = 0; frameIndex < totalFrames; frameIndex++) {
+            BufferedImage image = reader.read(frameIndex, param);
+            if (image != null) {
+                encoder.addFrame(image);
+                logger.trace("Added frame {} to animated GIF", frameIndex + 1);
+            } else {
+                logger.warn("Failed to read frame {}", frameIndex + 1);
+            }
+        }
+
+        encoder.finish();
+        reader.dispose();
+        iis.close();
+
+        logger.info("Successfully rendered {} frames as animated GIF, size: {} bytes",
+                totalFrames, baos.size());
+
+        return new RenderedInstanceResult(baos.toByteArray(), totalFrames, totalFrames,
+                frameRate, ImageFormat.GIF);
     }
 
     @Override

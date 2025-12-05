@@ -16,12 +16,18 @@ public class RenderedInstanceResult {
     private final int totalFrames;
     private final int renderedFrame;
     private final Double frameRate;  // frames per second, may be null
+    private final ImageFormat format;  // output format (JPEG or GIF)
 
     public RenderedInstanceResult(byte[] imageData, int totalFrames, int renderedFrame, Double frameRate) {
+        this(imageData, totalFrames, renderedFrame, frameRate, ImageFormat.JPEG);
+    }
+
+    public RenderedInstanceResult(byte[] imageData, int totalFrames, int renderedFrame, Double frameRate, ImageFormat format) {
         this.imageData = imageData;
         this.totalFrames = totalFrames;
         this.renderedFrame = renderedFrame;
         this.frameRate = frameRate;
+        this.format = format;
     }
 
     /**
@@ -57,5 +63,19 @@ public class RenderedInstanceResult {
      */
     public boolean isMultiFrame() {
         return totalFrames > 1;
+    }
+
+    /**
+     * Get the image format (JPEG or GIF)
+     */
+    public ImageFormat getFormat() {
+        return format;
+    }
+
+    /**
+     * Get the MIME type for the image format
+     */
+    public String getMimeType() {
+        return format.getMimeType();
     }
 }

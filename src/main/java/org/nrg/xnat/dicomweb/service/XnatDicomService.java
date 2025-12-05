@@ -58,13 +58,14 @@ public interface XnatDicomService {
     List<InputStream> retrieveSeries(UserI user, String projectId, String studyInstanceUID, String seriesInstanceUID);
 
     /**
-     * Retrieve a rendered instance as JPEG
-     * @param frameNumber optional frame number (1-based), null for default (middle frame)
+     * Retrieve a rendered instance as image (JPEG or GIF)
+     * @param frameNumber optional frame number (1-based), null for default (middle frame for JPEG, all frames for GIF)
+     * @param format desired output format (JPEG or GIF)
      * @return RenderedInstanceResult containing image data and metadata
      */
     RenderedInstanceResult retrieveRenderedInstance(UserI user, String projectId, String studyInstanceUID,
                                                    String seriesInstanceUID, String sopInstanceUID,
-                                                   Integer frameNumber);
+                                                   Integer frameNumber, ImageFormat format);
 
     /**
      * Retrieve specific frame(s) from a DICOM instance
