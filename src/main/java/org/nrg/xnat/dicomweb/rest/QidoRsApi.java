@@ -13,6 +13,9 @@ import org.nrg.xdat.security.services.RoleHolder;
 import org.nrg.xdat.security.services.UserManagementServiceI;
 import org.nrg.xft.security.UserI;
 import org.nrg.xnat.dicomweb.config.DicomWebProperties;
+import org.nrg.xnat.dicomweb.exceptions.BadRequestException;
+import org.nrg.xnat.dicomweb.exceptions.ForbiddenException;
+import org.nrg.xnat.dicomweb.exceptions.ResourceNotFoundException;
 import org.nrg.xnat.dicomweb.service.XnatDicomService;
 import org.nrg.xnat.dicomweb.utils.DicomWebUtils;
 import org.slf4j.Logger;
@@ -134,44 +137,38 @@ public class QidoRsApi extends AbstractXapiRestController {
     })
     public ResponseEntity<String> searchStudies(@PathVariable String projectId,
                                                 @RequestParam(required = false) Map<String, String> queryParams) {
-        try {
-            UserI user = getSessionUser();
+        UserI user = getSessionUser();
 
-            // Convert query parameters to DICOM Attributes for filtering
-            Attributes queryAttributes = parseQueryParameters(queryParams);
+        // Convert query parameters to DICOM Attributes for filtering
+        Attributes queryAttributes = parseQueryParameters(queryParams);
 
-            // Get all studies matching the query
-            List<Attributes> allStudies = dicomService.searchStudies(user, projectId, queryAttributes);
+        // Get all studies matching the query
+        List<Attributes> allStudies = dicomService.searchStudies(user, projectId, queryAttributes);
 
-            // Get pagination parameters
-            int offset = getOffset(queryParams);
-            int limit = getLimit(queryParams);
+        // Get pagination parameters
+        int offset = getOffset(queryParams);
+        int limit = getLimit(queryParams);
 
-            // Apply pagination
-            List<Attributes> paginatedStudies = applyPagination(allStudies, offset, limit);
+        // Apply pagination
+        List<Attributes> paginatedStudies = applyPagination(allStudies, offset, limit);
 
-            // Convert to JSON array
-            String json = "[" + paginatedStudies.stream()
-                    .map(attrs -> {
-                        try {
-                            return DicomWebUtils.toJson(attrs);
-                        } catch (Exception e) {
-                            logger.error("Error converting study to JSON", e);
-                            return "{}";
-                        }
-                    })
-                    .collect(Collectors.joining(",")) + "]";
+        // Convert to JSON array
+        String json = "[" + paginatedStudies.stream()
+                .map(attrs -> {
+                    try {
+                        return DicomWebUtils.toJson(attrs);
+                    } catch (Exception e) {
+                        logger.error("Error converting study to JSON", e);
+                        return "{}";
+                    }
+                })
+                .collect(Collectors.joining(",")) + "]";
 
-            // Return with X-Total-Count header
-            return ResponseEntity.ok()
-                    .header("X-Total-Count", String.valueOf(allStudies.size()))
-                    .contentType(MediaType.parseMediaType(DicomWebUtils.getDicomJsonContentType()))
-                    .body(json);
-
-        } catch (Exception e) {
-            logger.error("Error searching studies in project: " + projectId, e);
-            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).build();
-        }
+        // Return with X-Total-Count header
+        return ResponseEntity.ok()
+                .header("X-Total-Count", String.valueOf(allStudies.size()))
+                .contentType(MediaType.parseMediaType(DicomWebUtils.getDicomJsonContentType()))
+                .body(json);
     }
 
     /**
@@ -193,43 +190,37 @@ public class QidoRsApi extends AbstractXapiRestController {
     public ResponseEntity<String> searchSeries(@PathVariable String projectId,
                                                @PathVariable String studyUID,
                                                @RequestParam(required = false) Map<String, String> queryParams) {
-        try {
-            UserI user = getSessionUser();
+        UserI user = getSessionUser();
 
-            // Convert query parameters to DICOM Attributes for filtering
-            Attributes queryAttributes = parseQueryParameters(queryParams);
+        // Convert query parameters to DICOM Attributes for filtering
+        Attributes queryAttributes = parseQueryParameters(queryParams);
 
-            // Get all series matching the query
-            List<Attributes> allSeries = dicomService.searchSeries(user, projectId, studyUID, queryAttributes);
+        // Get all series matching the query
+        List<Attributes> allSeries = dicomService.searchSeries(user, projectId, studyUID, queryAttributes);
 
-            // Get pagination parameters
-            int offset = getOffset(queryParams);
-            int limit = getLimit(queryParams);
+        // Get pagination parameters
+        int offset = getOffset(queryParams);
+        int limit = getLimit(queryParams);
 
-            // Apply pagination
-            List<Attributes> paginatedSeries = applyPagination(allSeries, offset, limit);
+        // Apply pagination
+        List<Attributes> paginatedSeries = applyPagination(allSeries, offset, limit);
 
-            String json = "[" + paginatedSeries.stream()
-                    .map(attrs -> {
-                        try {
-                            return DicomWebUtils.toJson(attrs);
-                        } catch (Exception e) {
-                            logger.error("Error converting series to JSON", e);
-                            return "{}";
-                        }
-                    })
-                    .collect(Collectors.joining(",")) + "]";
+        String json = "[" + paginatedSeries.stream()
+                .map(attrs -> {
+                    try {
+                        return DicomWebUtils.toJson(attrs);
+                    } catch (Exception e) {
+                        logger.error("Error converting series to JSON", e);
+                        return "{}";
+                    }
+                })
+                .collect(Collectors.joining(",")) + "]";
 
-            // Return with X-Total-Count header
-            return ResponseEntity.ok()
-                    .header("X-Total-Count", String.valueOf(allSeries.size()))
-                    .contentType(MediaType.parseMediaType(DicomWebUtils.getDicomJsonContentType()))
-                    .body(json);
-
-        } catch (Exception e) {
-            logger.error("Error searching series in study: " + studyUID, e);
-            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).build();
-        }
+        // Return with X-Total-Count header
+        return ResponseEntity.ok()
+                .header("X-Total-Count", String.valueOf(allSeries.size()))
+                .contentType(MediaType.parseMediaType(DicomWebUtils.getDicomJsonContentType()))
+                .body(json);
     }
 
     /**
@@ -252,43 +243,37 @@ public class QidoRsApi extends AbstractXapiRestController {
                                                   @PathVariable String studyUID,
                                                   @PathVariable String seriesUID,
                                                   @RequestParam(required = false) Map<String, String> queryParams) {
-        try {
-            UserI user = getSessionUser();
+        UserI user = getSessionUser();
 
-            // Convert query parameters to DICOM Attributes for filtering
-            Attributes queryAttributes = parseQueryParameters(queryParams);
+        // Convert query parameters to DICOM Attributes for filtering
+        Attributes queryAttributes = parseQueryParameters(queryParams);
 
-            // Get all instances matching the query
-            List<Attributes> allInstances = dicomService.searchInstances(user, projectId, studyUID, seriesUID, queryAttributes);
+        // Get all instances matching the query
+        List<Attributes> allInstances = dicomService.searchInstances(user, projectId, studyUID, seriesUID, queryAttributes);
 
-            // Get pagination parameters
-            int offset = getOffset(queryParams);
-            int limit = getLimit(queryParams);
+        // Get pagination parameters
+        int offset = getOffset(queryParams);
+        int limit = getLimit(queryParams);
 
-            // Apply pagination
-            List<Attributes> paginatedInstances = applyPagination(allInstances, offset, limit);
+        // Apply pagination
+        List<Attributes> paginatedInstances = applyPagination(allInstances, offset, limit);
 
-            String json = "[" + paginatedInstances.stream()
-                    .map(attrs -> {
-                        try {
-                            return DicomWebUtils.toJson(attrs);
-                        } catch (Exception e) {
-                            logger.error("Error converting instance to JSON", e);
-                            return "{}";
-                        }
-                    })
-                    .collect(Collectors.joining(",")) + "]";
+        String json = "[" + paginatedInstances.stream()
+                .map(attrs -> {
+                    try {
+                        return DicomWebUtils.toJson(attrs);
+                    } catch (Exception e) {
+                        logger.error("Error converting instance to JSON", e);
+                        return "{}";
+                    }
+                })
+                .collect(Collectors.joining(",")) + "]";
 
-            // Return with X-Total-Count header
-            return ResponseEntity.ok()
-                    .header("X-Total-Count", String.valueOf(allInstances.size()))
-                    .contentType(MediaType.parseMediaType(DicomWebUtils.getDicomJsonContentType()))
-                    .body(json);
-
-        } catch (Exception e) {
-            logger.error("Error searching instances in series: " + seriesUID, e);
-            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).build();
-        }
+        // Return with X-Total-Count header
+        return ResponseEntity.ok()
+                .header("X-Total-Count", String.valueOf(allInstances.size()))
+                .contentType(MediaType.parseMediaType(DicomWebUtils.getDicomJsonContentType()))
+                .body(json);
     }
 
     /**

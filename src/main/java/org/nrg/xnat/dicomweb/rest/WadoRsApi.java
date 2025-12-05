@@ -11,6 +11,8 @@ import org.nrg.xapi.rest.XapiRequestMapping;
 import org.nrg.xdat.security.services.RoleHolder;
 import org.nrg.xdat.security.services.UserManagementServiceI;
 import org.nrg.xft.security.UserI;
+import org.nrg.xnat.dicomweb.exceptions.BadRequestException;
+import org.nrg.xnat.dicomweb.exceptions.ResourceNotFoundException;
 import org.nrg.xnat.dicomweb.service.XnatDicomService;
 import org.nrg.xnat.dicomweb.utils.BulkDataHandler;
 import org.nrg.xnat.dicomweb.utils.DicomWebUtils;
@@ -74,25 +76,19 @@ public class WadoRsApi extends AbstractXapiRestController {
                                                                 @PathVariable String studyUID,
                                                                 @PathVariable String seriesUID,
                                                                 @PathVariable String instanceUID) {
-        try {
-            UserI user = getSessionUser();
-            InputStream stream = dicomService.retrieveInstance(user, projectId, studyUID, seriesUID, instanceUID);
+        UserI user = getSessionUser();
+        InputStream stream = dicomService.retrieveInstance(user, projectId, studyUID, seriesUID, instanceUID);
 
-            if (stream == null) {
-                return ResponseEntity.notFound().build();
-            }
-
-            HttpHeaders headers = new HttpHeaders();
-            headers.setContentType(MediaType.parseMediaType("application/dicom"));
-
-            return ResponseEntity.ok()
-                    .headers(headers)
-                    .body(new InputStreamResource(stream));
-
-        } catch (Exception e) {
-            logger.error("Error retrieving instance: " + instanceUID, e);
-            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).build();
+        if (stream == null) {
+            throw new ResourceNotFoundException("Instance", instanceUID);
         }
+
+        HttpHeaders headers = new HttpHeaders();
+        headers.setContentType(MediaType.parseMediaType("application/dicom"));
+
+        return ResponseEntity.ok()
+                .headers(headers)
+                .body(new InputStreamResource(stream));
     }
 
     /**
@@ -115,30 +111,24 @@ public class WadoRsApi extends AbstractXapiRestController {
                                                            @PathVariable String studyUID,
                                                            @PathVariable String seriesUID,
                                                            @PathVariable String instanceUID,
-                                                           HttpServletRequest request) {
-        try {
-            UserI user = getSessionUser();
-            Attributes attrs = dicomService.retrieveMetadata(user, projectId, studyUID, seriesUID, instanceUID);
+                                                           HttpServletRequest request) throws Exception {
+        UserI user = getSessionUser();
+        Attributes attrs = dicomService.retrieveMetadata(user, projectId, studyUID, seriesUID, instanceUID);
 
-            if (attrs == null) {
-                return ResponseEntity.notFound().build();
-            }
-
-            // Extract base URI for BulkDataURI generation
-            String requestUrl = request.getRequestURL().toString();
-            String baseUri = BulkDataHandler.extractBaseUri(requestUrl, projectId);
-
-            // Convert to JSON with BulkDataURI substitution
-            String json = "[" + DicomWebUtils.toJsonWithBulkDataURI(attrs, baseUri, studyUID, seriesUID, instanceUID) + "]";
-
-            return ResponseEntity.ok()
-                    .contentType(MediaType.parseMediaType(DicomWebUtils.getDicomJsonContentType()))
-                    .body(json);
-
-        } catch (Exception e) {
-            logger.error("Error retrieving metadata for instance: " + instanceUID, e);
-            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).build();
+        if (attrs == null) {
+            throw new ResourceNotFoundException("Instance metadata", instanceUID);
         }
+
+        // Extract base URI for BulkDataURI generation
+        String requestUrl = request.getRequestURL().toString();
+        String baseUri = BulkDataHandler.extractBaseUri(requestUrl, projectId);
+
+        // Convert to JSON with BulkDataURI substitution
+        String json = "[" + DicomWebUtils.toJsonWithBulkDataURI(attrs, baseUri, studyUID, seriesUID, instanceUID) + "]";
+
+        return ResponseEntity.ok()
+                .contentType(MediaType.parseMediaType(DicomWebUtils.getDicomJsonContentType()))
+                .body(json);
     }
 
     /**
@@ -159,30 +149,24 @@ public class WadoRsApi extends AbstractXapiRestController {
     })
     public ResponseEntity<InputStreamResource> retrieveSeries(@PathVariable String projectId,
                                                               @PathVariable String studyUID,
-                                                              @PathVariable String seriesUID) {
-        try {
-            UserI user = getSessionUser();
-            List<InputStream> streams = dicomService.retrieveSeries(user, projectId, studyUID, seriesUID);
+                                                              @PathVariable String seriesUID) throws Exception {
+        UserI user = getSessionUser();
+        List<InputStream> streams = dicomService.retrieveSeries(user, projectId, studyUID, seriesUID);
 
-            if (streams == null || streams.isEmpty()) {
-                return ResponseEntity.notFound().build();
-            }
-
-            // Create multipart response
-            String boundary = UUID.randomUUID().toString();
-            ByteArrayOutputStream multipart = createMultipartResponse(streams, boundary);
-
-            HttpHeaders headers = new HttpHeaders();
-            headers.setContentType(MediaType.parseMediaType(DicomWebUtils.getMultipartContentType(boundary)));
-
-            return ResponseEntity.ok()
-                    .headers(headers)
-                    .body(new InputStreamResource(new ByteArrayInputStream(multipart.toByteArray())));
-
-        } catch (Exception e) {
-            logger.error("Error retrieving series: " + seriesUID, e);
-            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).build();
+        if (streams == null || streams.isEmpty()) {
+            throw new ResourceNotFoundException("Series", seriesUID);
         }
+
+        // Create multipart response
+        String boundary = UUID.randomUUID().toString();
+        ByteArrayOutputStream multipart = createMultipartResponse(streams, boundary);
+
+        HttpHeaders headers = new HttpHeaders();
+        headers.setContentType(MediaType.parseMediaType(DicomWebUtils.getMultipartContentType(boundary)));
+
+        return ResponseEntity.ok()
+                .headers(headers)
+                .body(new InputStreamResource(new ByteArrayInputStream(multipart.toByteArray())));
     }
 
     /**
@@ -210,49 +194,43 @@ public class WadoRsApi extends AbstractXapiRestController {
         logger.info("Project ID: {}", projectId);
         logger.info("Study UID: {}", studyUID);
 
-        try {
-            UserI user = getSessionUser();
-            logger.info("Processing study metadata request");
+        UserI user = getSessionUser();
+        logger.info("Processing study metadata request");
 
-            // Return metadata for all instances in the study
-            List<Attributes> instances = dicomService.retrieveAllStudyInstanceMetadata(user, projectId, studyUID);
+        // Return metadata for all instances in the study
+        List<Attributes> instances = dicomService.retrieveAllStudyInstanceMetadata(user, projectId, studyUID);
 
-            logger.info("Retrieved {} instances", instances != null ? instances.size() : 0);
+        logger.info("Retrieved {} instances", instances != null ? instances.size() : 0);
 
-            if (instances == null || instances.isEmpty()) {
-                logger.warn("No instances found for study {}", studyUID);
-                return ResponseEntity.notFound().build();
-            }
-
-            // Extract base URI for BulkDataURI generation
-            String requestUrl = request.getRequestURL().toString();
-            String baseUri = BulkDataHandler.extractBaseUri(requestUrl, projectId);
-
-            String json = "[" + instances.stream()
-                    .map(attrs -> {
-                        try {
-                            // Extract SeriesInstanceUID and SOPInstanceUID from attributes
-                            String seriesUID = attrs.getString(org.dcm4che3.data.Tag.SeriesInstanceUID);
-                            String instanceUID = attrs.getString(org.dcm4che3.data.Tag.SOPInstanceUID);
-
-                            // Convert with BulkDataURI substitution
-                            return DicomWebUtils.toJsonWithBulkDataURI(attrs, baseUri, studyUID, seriesUID, instanceUID);
-                        } catch (Exception e) {
-                            logger.error("Error converting instance metadata to JSON", e);
-                            return "{}";
-                        }
-                    })
-                    .collect(Collectors.joining(",")) + "]";
-
-            logger.info("Returning JSON response with {} characters", json.length());
-            return ResponseEntity.ok()
-                    .contentType(MediaType.parseMediaType(DicomWebUtils.getDicomJsonContentType()))
-                    .body(json);
-
-        } catch (Exception e) {
-            logger.error("Error retrieving study metadata: " + studyUID, e);
-            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).build();
+        if (instances == null || instances.isEmpty()) {
+            logger.warn("No instances found for study {}", studyUID);
+            throw new ResourceNotFoundException("Study", studyUID);
         }
+
+        // Extract base URI for BulkDataURI generation
+        String requestUrl = request.getRequestURL().toString();
+        String baseUri = BulkDataHandler.extractBaseUri(requestUrl, projectId);
+
+        String json = "[" + instances.stream()
+                .map(attrs -> {
+                    try {
+                        // Extract SeriesInstanceUID and SOPInstanceUID from attributes
+                        String seriesUID = attrs.getString(org.dcm4che3.data.Tag.SeriesInstanceUID);
+                        String instanceUID = attrs.getString(org.dcm4che3.data.Tag.SOPInstanceUID);
+
+                        // Convert with BulkDataURI substitution
+                        return DicomWebUtils.toJsonWithBulkDataURI(attrs, baseUri, studyUID, seriesUID, instanceUID);
+                    } catch (Exception e) {
+                        logger.error("Error converting instance metadata to JSON", e);
+                        return "{}";
+                    }
+                })
+                .collect(Collectors.joining(",")) + "]";
+
+        logger.info("Returning JSON response with {} characters", json.length());
+        return ResponseEntity.ok()
+                .contentType(MediaType.parseMediaType(DicomWebUtils.getDicomJsonContentType()))
+                .body(json);
     }
 
     /**
@@ -272,41 +250,35 @@ public class WadoRsApi extends AbstractXapiRestController {
             @ApiResponse(code = 500, message = "Internal error")
     })
     public ResponseEntity<InputStreamResource> retrieveStudy(@PathVariable String projectId,
-                                                             @PathVariable String studyUID) {
+                                                             @PathVariable String studyUID) throws Exception {
         logger.info("=== retrieveStudy called ===");
         logger.info("Project ID: {}", projectId);
         logger.info("Study UID: {}", studyUID);
 
-        try {
-            UserI user = getSessionUser();
-            logger.info("Processing study retrieval request");
+        UserI user = getSessionUser();
+        logger.info("Processing study retrieval request");
 
-            // Return DICOM instances as multipart
-            List<InputStream> streams = dicomService.retrieveStudy(user, projectId, studyUID);
+        // Return DICOM instances as multipart
+        List<InputStream> streams = dicomService.retrieveStudy(user, projectId, studyUID);
 
-            logger.info("Retrieved {} streams", streams != null ? streams.size() : 0);
+        logger.info("Retrieved {} streams", streams != null ? streams.size() : 0);
 
-            if (streams == null || streams.isEmpty()) {
-                logger.warn("No streams found for study {}", studyUID);
-                return ResponseEntity.notFound().build();
-            }
-
-            // Create multipart response
-            String boundary = UUID.randomUUID().toString();
-            ByteArrayOutputStream multipart = createMultipartResponse(streams, boundary);
-
-            HttpHeaders headers = new HttpHeaders();
-            headers.setContentType(MediaType.parseMediaType(DicomWebUtils.getMultipartContentType(boundary)));
-
-            logger.info("Returning multipart response with {} bytes", multipart.size());
-            return ResponseEntity.ok()
-                    .headers(headers)
-                    .body(new InputStreamResource(new ByteArrayInputStream(multipart.toByteArray())));
-
-        } catch (Exception e) {
-            logger.error("Error retrieving study: " + studyUID, e);
-            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).build();
+        if (streams == null || streams.isEmpty()) {
+            logger.warn("No streams found for study {}", studyUID);
+            throw new ResourceNotFoundException("Study", studyUID);
         }
+
+        // Create multipart response
+        String boundary = UUID.randomUUID().toString();
+        ByteArrayOutputStream multipart = createMultipartResponse(streams, boundary);
+
+        HttpHeaders headers = new HttpHeaders();
+        headers.setContentType(MediaType.parseMediaType(DicomWebUtils.getMultipartContentType(boundary)));
+
+        logger.info("Returning multipart response with {} bytes", multipart.size());
+        return ResponseEntity.ok()
+                .headers(headers)
+                .body(new InputStreamResource(new ByteArrayInputStream(multipart.toByteArray())));
     }
 
     /**
@@ -331,46 +303,40 @@ public class WadoRsApi extends AbstractXapiRestController {
                                                            @PathVariable String instanceUID,
                                                            @RequestParam(required = false) Integer frame,
                                                            HttpServletRequest request) {
-        try {
-            UserI user = getSessionUser();
+        UserI user = getSessionUser();
 
-            // Determine output format from Accept header
-            String acceptHeader = request.getHeader("Accept");
-            org.nrg.xnat.dicomweb.service.ImageFormat format =
-                    org.nrg.xnat.dicomweb.service.ImageFormat.fromMimeType(acceptHeader);
+        // Determine output format from Accept header
+        String acceptHeader = request.getHeader("Accept");
+        org.nrg.xnat.dicomweb.service.ImageFormat format =
+                org.nrg.xnat.dicomweb.service.ImageFormat.fromMimeType(acceptHeader);
 
-            logger.debug("Accept header: {}, selected format: {}", acceptHeader, format);
+        logger.debug("Accept header: {}, selected format: {}", acceptHeader, format);
 
-            org.nrg.xnat.dicomweb.service.RenderedInstanceResult result =
-                    dicomService.retrieveRenderedInstance(user, projectId, studyUID, seriesUID, instanceUID, frame, format);
+        org.nrg.xnat.dicomweb.service.RenderedInstanceResult result =
+                dicomService.retrieveRenderedInstance(user, projectId, studyUID, seriesUID, instanceUID, frame, format);
 
-            if (result == null || result.getImageData() == null) {
-                return ResponseEntity.notFound().build();
-            }
-
-            HttpHeaders headers = new HttpHeaders();
-            headers.setContentType(MediaType.parseMediaType(result.getMimeType()));
-
-            // Add frame metadata to response headers
-            headers.add("X-Frame-Count", String.valueOf(result.getTotalFrames()));
-            headers.add("X-Frame-Number", String.valueOf(result.getRenderedFrame()));
-            if (result.getFrameRate() != null) {
-                headers.add("X-Frame-Rate", String.format("%.2f", result.getFrameRate()));
-            }
-
-            // Add info to help clients understand multi-frame content
-            if (result.isMultiFrame()) {
-                headers.add("X-Multi-Frame", "true");
-            }
-
-            return ResponseEntity.ok()
-                    .headers(headers)
-                    .body(result.getImageData());
-
-        } catch (Exception e) {
-            logger.error("Error retrieving rendered instance: " + instanceUID, e);
-            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).build();
+        if (result == null || result.getImageData() == null) {
+            throw new ResourceNotFoundException("Rendered instance", instanceUID);
         }
+
+        HttpHeaders headers = new HttpHeaders();
+        headers.setContentType(MediaType.parseMediaType(result.getMimeType()));
+
+        // Add frame metadata to response headers
+        headers.add("X-Frame-Count", String.valueOf(result.getTotalFrames()));
+        headers.add("X-Frame-Number", String.valueOf(result.getRenderedFrame()));
+        if (result.getFrameRate() != null) {
+            headers.add("X-Frame-Rate", String.format("%.2f", result.getFrameRate()));
+        }
+
+        // Add info to help clients understand multi-frame content
+        if (result.isMultiFrame()) {
+            headers.add("X-Multi-Frame", "true");
+        }
+
+        return ResponseEntity.ok()
+                .headers(headers)
+                .body(result.getImageData());
     }
 
     /**
@@ -394,42 +360,36 @@ public class WadoRsApi extends AbstractXapiRestController {
                                                               @PathVariable String seriesUID,
                                                               @PathVariable String instanceUID,
                                                               @PathVariable String frameList,
-                                                              HttpServletRequest request) {
-        try {
-            UserI user = getSessionUser();
-            List<byte[]> frames = dicomService.retrieveFrames(user, projectId, studyUID, seriesUID, instanceUID, frameList);
+                                                              HttpServletRequest request) throws Exception {
+        UserI user = getSessionUser();
+        List<byte[]> frames = dicomService.retrieveFrames(user, projectId, studyUID, seriesUID, instanceUID, frameList);
 
-            if (frames == null || frames.isEmpty()) {
-                return ResponseEntity.notFound().build();
-            }
+        if (frames == null || frames.isEmpty()) {
+            throw new ResourceNotFoundException("Frames", frameList + " in instance " + instanceUID);
+        }
 
-            // Single frame - return as application/octet-stream
-            if (frames.size() == 1) {
-                HttpHeaders headers = new HttpHeaders();
-                headers.setContentType(MediaType.APPLICATION_OCTET_STREAM);
-
-                ByteArrayInputStream stream = new ByteArrayInputStream(frames.get(0));
-                return ResponseEntity.ok()
-                        .headers(headers)
-                        .body(new InputStreamResource(stream));
-            }
-
-            // Multiple frames - return as multipart/related
-            String boundary = UUID.randomUUID().toString();
-            ByteArrayOutputStream multipart = createMultipartFrameResponse(frames, boundary);
-
+        // Single frame - return as application/octet-stream
+        if (frames.size() == 1) {
             HttpHeaders headers = new HttpHeaders();
-            headers.setContentType(MediaType.parseMediaType(
-                    "multipart/related; type=\"application/octet-stream\"; boundary=" + boundary));
+            headers.setContentType(MediaType.APPLICATION_OCTET_STREAM);
 
+            ByteArrayInputStream stream = new ByteArrayInputStream(frames.get(0));
             return ResponseEntity.ok()
                     .headers(headers)
-                    .body(new InputStreamResource(new ByteArrayInputStream(multipart.toByteArray())));
-
-        } catch (Exception e) {
-            logger.error("Error retrieving frames from instance: " + instanceUID, e);
-            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).build();
+                    .body(new InputStreamResource(stream));
         }
+
+        // Multiple frames - return as multipart/related
+        String boundary = UUID.randomUUID().toString();
+        ByteArrayOutputStream multipart = createMultipartFrameResponse(frames, boundary);
+
+        HttpHeaders headers = new HttpHeaders();
+        headers.setContentType(MediaType.parseMediaType(
+                "multipart/related; type=\"application/octet-stream\"; boundary=" + boundary));
+
+        return ResponseEntity.ok()
+                .headers(headers)
+                .body(new InputStreamResource(new ByteArrayInputStream(multipart.toByteArray())));
     }
 
     /**
@@ -456,66 +416,59 @@ public class WadoRsApi extends AbstractXapiRestController {
                                                     @PathVariable String studyUID,
                                                     @PathVariable String seriesUID,
                                                     @PathVariable String instanceUID,
-                                                    @PathVariable String tag) {
+                                                    @PathVariable String tag) throws Exception {
+        UserI user = getSessionUser();
+
+        // Parse tag from hex string (e.g., "7FE00010" for PixelData)
+        int tagInt;
         try {
-            UserI user = getSessionUser();
-
-            // Parse tag from hex string (e.g., "7FE00010" for PixelData)
-            int tagInt;
-            try {
-                tagInt = Integer.parseUnsignedInt(tag, 16);
-            } catch (NumberFormatException e) {
-                logger.warn("Invalid tag format: {}", tag);
-                return ResponseEntity.badRequest().build();
-            }
-
-            logger.debug("Retrieving bulk data for instance {} tag {}", instanceUID, tag);
-
-            // Retrieve the full DICOM instance
-            InputStream stream = dicomService.retrieveInstance(user, projectId, studyUID, seriesUID, instanceUID);
-
-            if (stream == null) {
-                logger.warn("Instance not found: {}", instanceUID);
-                return ResponseEntity.notFound().build();
-            }
-
-            // Read DICOM and extract the specified attribute's value
-            byte[] bulkData;
-            try (org.dcm4che3.io.DicomInputStream dis = new org.dcm4che3.io.DicomInputStream(stream)) {
-                // Read with all bulk data included
-                dis.setIncludeBulkData(org.dcm4che3.io.DicomInputStream.IncludeBulkData.YES);
-
-                Attributes attrs = dis.readDataset();
-
-                if (!attrs.contains(tagInt)) {
-                    logger.warn("Tag {} not found in instance {}", tag, instanceUID);
-                    return ResponseEntity.notFound().build();
-                }
-
-                bulkData = attrs.getBytes(tagInt);
-
-                if (bulkData == null || bulkData.length == 0) {
-                    logger.warn("Tag {} has no data in instance {}", tag, instanceUID);
-                    return ResponseEntity.notFound().build();
-                }
-
-                logger.info("Retrieved bulk data for tag {}: {} bytes", tag, bulkData.length);
-            }
-
-            // Return raw bytes
-            HttpHeaders headers = new HttpHeaders();
-            headers.setContentType(MediaType.APPLICATION_OCTET_STREAM);
-            headers.setContentLength(bulkData.length);
-
-            return ResponseEntity.ok()
-                    .headers(headers)
-                    .body(bulkData);
-
-        } catch (Exception e) {
-            logger.error("Error retrieving bulk data for instance {} tag {}: {}",
-                    instanceUID, tag, e.getMessage(), e);
-            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).build();
+            tagInt = Integer.parseUnsignedInt(tag, 16);
+        } catch (NumberFormatException e) {
+            logger.warn("Invalid tag format: {}", tag);
+            throw new BadRequestException("tag", "must be a valid hexadecimal DICOM tag");
         }
+
+        logger.debug("Retrieving bulk data for instance {} tag {}", instanceUID, tag);
+
+        // Retrieve the full DICOM instance
+        InputStream stream = dicomService.retrieveInstance(user, projectId, studyUID, seriesUID, instanceUID);
+
+        if (stream == null) {
+            logger.warn("Instance not found: {}", instanceUID);
+            throw new ResourceNotFoundException("Instance", instanceUID);
+        }
+
+        // Read DICOM and extract the specified attribute's value
+        byte[] bulkData;
+        try (org.dcm4che3.io.DicomInputStream dis = new org.dcm4che3.io.DicomInputStream(stream)) {
+            // Read with all bulk data included
+            dis.setIncludeBulkData(org.dcm4che3.io.DicomInputStream.IncludeBulkData.YES);
+
+            Attributes attrs = dis.readDataset();
+
+            if (!attrs.contains(tagInt)) {
+                logger.warn("Tag {} not found in instance {}", tag, instanceUID);
+                throw new ResourceNotFoundException("Bulk data tag", tag);
+            }
+
+            bulkData = attrs.getBytes(tagInt);
+
+            if (bulkData == null || bulkData.length == 0) {
+                logger.warn("Tag {} has no data in instance {}", tag, instanceUID);
+                throw new ResourceNotFoundException("Bulk data tag", tag);
+            }
+
+            logger.info("Retrieved bulk data for tag {}: {} bytes", tag, bulkData.length);
+        }
+
+        // Return raw bytes
+        HttpHeaders headers = new HttpHeaders();
+        headers.setContentType(MediaType.APPLICATION_OCTET_STREAM);
+        headers.setContentLength(bulkData.length);
+
+        return ResponseEntity.ok()
+                .headers(headers)
+                .body(bulkData);
     }
 
     /**
@@ -538,41 +491,35 @@ public class WadoRsApi extends AbstractXapiRestController {
                                                          @PathVariable String studyUID,
                                                          @PathVariable String seriesUID,
                                                          HttpServletRequest request) {
-        try {
-            UserI user = getSessionUser();
-            List<Attributes> instances = dicomService.searchInstances(user, projectId, studyUID, seriesUID, null);
+        UserI user = getSessionUser();
+        List<Attributes> instances = dicomService.searchInstances(user, projectId, studyUID, seriesUID, null);
 
-            if (instances == null || instances.isEmpty()) {
-                return ResponseEntity.notFound().build();
-            }
-
-            // Extract base URI for BulkDataURI generation
-            String requestUrl = request.getRequestURL().toString();
-            String baseUri = BulkDataHandler.extractBaseUri(requestUrl, projectId);
-
-            String json = "[" + instances.stream()
-                    .map(attrs -> {
-                        try {
-                            // Extract SOPInstanceUID from attributes
-                            String instanceUID = attrs.getString(org.dcm4che3.data.Tag.SOPInstanceUID);
-
-                            // Convert with BulkDataURI substitution
-                            return DicomWebUtils.toJsonWithBulkDataURI(attrs, baseUri, studyUID, seriesUID, instanceUID);
-                        } catch (Exception e) {
-                            logger.error("Error converting metadata to JSON", e);
-                            return "{}";
-                        }
-                    })
-                    .collect(Collectors.joining(",")) + "]";
-
-            return ResponseEntity.ok()
-                    .contentType(MediaType.parseMediaType(DicomWebUtils.getDicomJsonContentType()))
-                    .body(json);
-
-        } catch (Exception e) {
-            logger.error("Error retrieving metadata for series: " + seriesUID, e);
-            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).build();
+        if (instances == null || instances.isEmpty()) {
+            throw new ResourceNotFoundException("Series metadata", seriesUID);
         }
+
+        // Extract base URI for BulkDataURI generation
+        String requestUrl = request.getRequestURL().toString();
+        String baseUri = BulkDataHandler.extractBaseUri(requestUrl, projectId);
+
+        String json = "[" + instances.stream()
+                .map(attrs -> {
+                    try {
+                        // Extract SOPInstanceUID from attributes
+                        String instanceUID = attrs.getString(org.dcm4che3.data.Tag.SOPInstanceUID);
+
+                        // Convert with BulkDataURI substitution
+                        return DicomWebUtils.toJsonWithBulkDataURI(attrs, baseUri, studyUID, seriesUID, instanceUID);
+                    } catch (Exception e) {
+                        logger.error("Error converting metadata to JSON", e);
+                        return "{}";
+                    }
+                })
+                .collect(Collectors.joining(",")) + "]";
+
+        return ResponseEntity.ok()
+                .contentType(MediaType.parseMediaType(DicomWebUtils.getDicomJsonContentType()))
+                .body(json);
     }
 
     /**

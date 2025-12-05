@@ -17,6 +17,7 @@ import org.nrg.xdat.om.XnatProjectdata;
 import org.nrg.xdat.security.services.RoleHolder;
 import org.nrg.xdat.security.services.UserManagementServiceI;
 import org.nrg.xft.security.UserI;
+import org.nrg.xnat.dicomweb.exceptions.ForbiddenException;
 import org.nrg.xnat.dicomweb.service.StowRsException;
 import org.nrg.xnat.dicomweb.service.StowRsResult;
 import org.nrg.xnat.dicomweb.service.StowRsService;
@@ -82,44 +83,26 @@ public class StowRsApi extends AbstractXapiRestController {
     })
     public ResponseEntity<String> storeInstances(
             @PathVariable String projectId,
-            HttpServletRequest request) {
+            HttpServletRequest request) throws StowRsException {
 
-        try {
-            UserI user = getSessionUser();
+        UserI user = getSessionUser();
 
-            // Verify project exists and user has access
-            XnatProjectdata project = XnatProjectdata.getXnatProjectdatasById(projectId, user, false);
-            if (project == null) {
-                logger.error("Project '{}' not found or user '{}' does not have access", projectId, user.getLogin());
-                throw StowRsException.forbidden("Project '" + projectId + "' not found or access denied");
-            }
-
-            // Build StowRsParams from path variables and query parameters
-            Map<String, Object> params = new HashMap<>();
-            params.put(URIManager.PROJECT_ID, projectId);
-
-            // Store instances using DirectArchive strategy
-            StowRsResult result = stowRsService.storeInstances(user, params, request);
-
-            return ResponseEntity.ok()
-                .contentType(MediaType.parseMediaType(DicomWebUtils.getDicomJsonContentType()))
-                .body(result.getJsonResponse());
-
-        } catch (StowRsException e) {
-            logger.error("STOW-RS error: {}", e.getMessage(), e);
-            return ResponseEntity.status(e.getHttpStatus())
-                .body(createErrorResponse(e.getMessage()));
-        } catch (Exception e) {
-            logger.error("Unexpected error during STOW-RS", e);
-            return ResponseEntity.internalServerError()
-                .body(createErrorResponse("Internal server error: " + e.getMessage()));
+        // Verify project exists and user has access
+        XnatProjectdata project = XnatProjectdata.getXnatProjectdatasById(projectId, user, false);
+        if (project == null) {
+            logger.error("Project '{}' not found or user '{}' does not have access", projectId, user.getLogin());
+            throw new ForbiddenException("Project", projectId);
         }
-    }
 
-    /**
-     * Create error response in JSON format
-     */
-    private String createErrorResponse(String message) {
-        return String.format("{\"error\": \"%s\"}", message.replace("\"", "\\\""));
+        // Build StowRsParams from path variables and query parameters
+        Map<String, Object> params = new HashMap<>();
+        params.put(URIManager.PROJECT_ID, projectId);
+
+        // Store instances using DirectArchive strategy
+        StowRsResult result = stowRsService.storeInstances(user, params, request);
+
+        return ResponseEntity.ok()
+            .contentType(MediaType.parseMediaType(DicomWebUtils.getDicomJsonContentType()))
+            .body(result.getJsonResponse());
     }
 }
