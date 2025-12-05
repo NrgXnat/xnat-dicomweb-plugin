@@ -59,8 +59,12 @@ public interface XnatDicomService {
 
     /**
      * Retrieve a rendered instance as JPEG
+     * @param frameNumber optional frame number (1-based), null for default (middle frame)
+     * @return RenderedInstanceResult containing image data and metadata
      */
-    byte[] retrieveRenderedInstance(UserI user, String projectId, String studyInstanceUID, String seriesInstanceUID, String sopInstanceUID);
+    RenderedInstanceResult retrieveRenderedInstance(UserI user, String projectId, String studyInstanceUID,
+                                                   String seriesInstanceUID, String sopInstanceUID,
+                                                   Integer frameNumber);
 
     /**
      * Retrieve specific frame(s) from a DICOM instance

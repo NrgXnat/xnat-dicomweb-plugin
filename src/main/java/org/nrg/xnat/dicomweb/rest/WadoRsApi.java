@@ -24,6 +24,7 @@ import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.RequestMethod;
+import org.springframework.web.bind.annotation.RequestParam;
 
 import javax.servlet.http.HttpServletRequest;
 import java.io.ByteArrayInputStream;
@@ -327,21 +328,35 @@ public class WadoRsApi extends AbstractXapiRestController {
     public ResponseEntity<byte[]> retrieveInstanceRendered(@PathVariable String projectId,
                                                            @PathVariable String studyUID,
                                                            @PathVariable String seriesUID,
-                                                           @PathVariable String instanceUID) {
+                                                           @PathVariable String instanceUID,
+                                                           @RequestParam(required = false) Integer frame) {
         try {
             UserI user = getSessionUser();
-            byte[] renderedImage = dicomService.retrieveRenderedInstance(user, projectId, studyUID, seriesUID, instanceUID);
+            org.nrg.xnat.dicomweb.service.RenderedInstanceResult result =
+                    dicomService.retrieveRenderedInstance(user, projectId, studyUID, seriesUID, instanceUID, frame);
 
-            if (renderedImage == null) {
+            if (result == null || result.getImageData() == null) {
                 return ResponseEntity.notFound().build();
             }
 
             HttpHeaders headers = new HttpHeaders();
             headers.setContentType(MediaType.IMAGE_JPEG);
 
+            // Add frame metadata to response headers
+            headers.add("X-Frame-Count", String.valueOf(result.getTotalFrames()));
+            headers.add("X-Frame-Number", String.valueOf(result.getRenderedFrame()));
+            if (result.getFrameRate() != null) {
+                headers.add("X-Frame-Rate", String.format("%.2f", result.getFrameRate()));
+            }
+
+            // Add info to help clients understand multi-frame content
+            if (result.isMultiFrame()) {
+                headers.add("X-Multi-Frame", "true");
+            }
+
             return ResponseEntity.ok()
                     .headers(headers)
-                    .body(renderedImage);
+                    .body(result.getImageData());
 
         } catch (Exception e) {
             logger.error("Error retrieving rendered instance: " + instanceUID, e);

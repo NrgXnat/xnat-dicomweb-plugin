@@ -360,8 +360,8 @@ public class XnatDicomServiceImpl implements XnatDicomService {
     }
 
     @Override
-    public byte[] retrieveRenderedInstance(UserI user, String projectId, String studyInstanceUID,
-                                          String seriesInstanceUID, String sopInstanceUID) {
+    public RenderedInstanceResult retrieveRenderedInstance(UserI user, String projectId, String studyInstanceUID,
+                                          String seriesInstanceUID, String sopInstanceUID, Integer frameNumber) {
         try {
             XnatProjectdata project = XnatProjectdata.getXnatProjectdatasById(projectId, user, false);
             if (project == null) {
@@ -393,8 +393,9 @@ public class XnatDicomServiceImpl implements XnatDicomService {
             File dicomFile = findDicomFileInScan(targetScan, sopInstanceUID);
 
             if (dicomFile != null) {
-                logger.info("Rendering instance: {}", sopInstanceUID);
-                return renderDicomToJpeg(dicomFile);
+                logger.info("Rendering instance: {} (frame: {})", sopInstanceUID,
+                        frameNumber != null ? frameNumber : "default");
+                return renderDicomToJpeg(dicomFile, frameNumber);
             }
 
         } catch (Exception e) {
@@ -853,10 +854,42 @@ public class XnatDicomServiceImpl implements XnatDicomService {
     }
 
     /**
-     * Render a DICOM file to JPEG format
+     * Render a DICOM file to JPEG format with frame selection support
+     * @param dicomFile DICOM file to render
+     * @param requestedFrame requested frame number (1-based), null for default (middle frame)
+     * @return RenderedInstanceResult with image data and metadata
      */
-    private byte[] renderDicomToJpeg(File dicomFile) {
+    private RenderedInstanceResult renderDicomToJpeg(File dicomFile, Integer requestedFrame) {
         try {
+            // First, read DICOM metadata to determine frame count and frame rate
+            int totalFrames = 1;
+            Double frameRate = null;
+
+            try (DicomInputStream dis = new DicomInputStream(dicomFile)) {
+                Attributes attrs = dis.readDataset(-1, -1);
+                totalFrames = attrs.getInt(Tag.NumberOfFrames, 1);
+
+                // Try to extract frame rate from various DICOM tags
+                frameRate = extractFrameRate(attrs);
+            }
+
+            // Determine which frame to render (0-based index)
+            int frameIndex;
+            if (requestedFrame != null) {
+                // User specified a frame (convert from 1-based to 0-based)
+                frameIndex = requestedFrame - 1;
+                if (frameIndex < 0 || frameIndex >= totalFrames) {
+                    logger.warn("Requested frame {} out of range [1-{}], using middle frame",
+                            requestedFrame, totalFrames);
+                    frameIndex = totalFrames / 2;
+                }
+            } else {
+                // Default to middle frame for multi-frame, first frame for single-frame
+                frameIndex = totalFrames > 1 ? totalFrames / 2 : 0;
+            }
+
+            logger.debug("Rendering frame {} of {} (frameRate: {})", frameIndex + 1, totalFrames, frameRate);
+
             // Use ImageIO with DICOM plugin to read the image
             ImageInputStream iis = ImageIO.createImageInputStream(dicomFile);
             if (iis == null) {
@@ -876,8 +909,8 @@ public class XnatDicomServiceImpl implements XnatDicomService {
 
             DicomImageReadParam param = (DicomImageReadParam) reader.getDefaultReadParam();
 
-            // Read the first frame (middle frame would be better but requires more logic)
-            BufferedImage bufferedImage = reader.read(0, param);
+            // Read the selected frame
+            BufferedImage bufferedImage = reader.read(frameIndex, param);
 
             reader.dispose();
             iis.close();
@@ -893,12 +926,43 @@ public class XnatDicomServiceImpl implements XnatDicomService {
 
             logger.debug("Successfully rendered DICOM to JPEG, size: {} bytes", baos.size());
 
-            return baos.toByteArray();
+            return new RenderedInstanceResult(baos.toByteArray(), totalFrames, frameIndex + 1, frameRate);
 
         } catch (Exception e) {
             logger.error("Error rendering DICOM to JPEG", e);
             return null;
         }
+    }
+
+    /**
+     * Extract frame rate from DICOM attributes.
+     * Tries multiple tags in order of preference:
+     * 1. Frame Time (0018,1063) - time per frame in milliseconds
+     * 2. Cine Rate (0018,0040) - frames per second
+     * 3. Recommended Display Frame Rate (0008,2144)
+     *
+     * @return frame rate in frames per second, or null if not available
+     */
+    private Double extractFrameRate(Attributes attrs) {
+        // Try Frame Time (milliseconds per frame)
+        double frameTime = attrs.getDouble(Tag.FrameTime, 0.0);
+        if (frameTime > 0) {
+            return 1000.0 / frameTime;  // Convert to FPS
+        }
+
+        // Try Cine Rate (frames per second)
+        double cineRate = attrs.getDouble(Tag.CineRate, 0.0);
+        if (cineRate > 0) {
+            return cineRate;
+        }
+
+        // Try Recommended Display Frame Rate
+        int recommendedRate = attrs.getInt(Tag.RecommendedDisplayFrameRate, 0);
+        if (recommendedRate > 0) {
+            return (double) recommendedRate;
+        }
+
+        return null;
     }
 
     @Override
