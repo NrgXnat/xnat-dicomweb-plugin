@@ -49,6 +49,14 @@ import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ExecutionException;
+import java.util.concurrent.Executors;
+import java.util.concurrent.ScheduledExecutorService;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
+import java.util.concurrent.atomic.AtomicInteger;
 
 /**
  * Implementation of STOW-RS service.
@@ -61,10 +69,20 @@ public class StowRsServiceImpl implements StowRsService {
     private static final Logger logger = LoggerFactory.getLogger(StowRsServiceImpl.class);
 
     private static final String SLASH = "/";
+    private static final long BUILD_DELAY_MS = 500;  // 500ms delay before building
 
     private final Mime4jHybridParser multipartParser;
     private final DirectArchiveStrategy directArchiveStrategy;
     private final GradualDicomImporterStrategy gradualDicomImporterStrategy;
+
+    // Concurrent build management
+    private final ConcurrentHashMap<String, AtomicInteger> activeCounts = new ConcurrentHashMap<>();
+    private final ConcurrentHashMap<String, CompletableFuture<Set<String>>> buildFutures = new ConcurrentHashMap<>();
+    private final ScheduledExecutorService buildScheduler = Executors.newScheduledThreadPool(2, r -> {
+        Thread t = new Thread(r, "stowrs-build-scheduler");
+        t.setDaemon(true);
+        return t;
+    });
 
     @Autowired
     public StowRsServiceImpl(DirectArchiveStrategy directArchiveStrategy,
@@ -134,6 +152,11 @@ public class StowRsServiceImpl implements StowRsService {
         List<SuccessfulInstance> successfulInstances = new ArrayList<>();
         List<FailedInstance> failedInstances = new ArrayList<>();
 
+        // Extract session key for concurrent build management
+        String sessionKey = null;
+        AtomicInteger activeCount = null;
+        CompletableFuture<Set<String>> buildFuture = null;
+
         try {
             // Parse multipart/related request directly from InputStream
             parts = multipartParser.parse(request.getContentType(), request.getInputStream());
@@ -147,6 +170,21 @@ public class StowRsServiceImpl implements StowRsService {
                 parts.size(),
                 parts.stream().filter(MultipartPart::isInMemory).count(),
                 parts.stream().filter(p -> !p.isInMemory()).count());
+
+            // For GradualDicomImporter, set up concurrent build management
+            if (strategy instanceof GradualDicomImporterStrategy) {
+                // Extract session key from params (we'll refine this after import)
+                String projectId = (String) mergedParams.get("PROJECT_ID");
+                sessionKey = projectId; // Temporary key, will be refined after import
+
+                // Increment active count (I'm starting upload)
+                activeCount = activeCounts.computeIfAbsent(sessionKey, k -> new AtomicInteger(0));
+                activeCount.incrementAndGet();
+                logger.debug("Session {} active uploads: {}", sessionKey, activeCount.get());
+
+                // Get or create build future
+                buildFuture = buildFutures.computeIfAbsent(sessionKey, k -> new CompletableFuture<>());
+            }
 
             // Import DICOM instances using selected strategy
             strategy.importInstances(user, parts, mergedParams, sessionUris,
@@ -169,11 +207,16 @@ public class StowRsServiceImpl implements StowRsService {
                         sessionUris.size());
                 archiveUrls = sessionUris;
             } else if (strategy instanceof GradualDicomImporterStrategy) {
-                // GradualDicomImporter puts files in prearchive
-                // Need to build/archive sessions to move them to final location
-                logger.info("Building and archiving {} prearchive sessions", sessionUris.size());
-                archiveUrls = buildSessions(user, sessionUris, mergedParams);
-                logger.info("Successfully built/archived {} sessions", archiveUrls.size());
+                // GradualDicomImporter: use concurrent build with decrement counter
+                // Refine session key from actual session URI
+                if (!sessionUris.isEmpty()) {
+                    sessionKey = extractSessionKey(sessionUris.iterator().next());
+                    logger.debug("Refined session key: {}", sessionKey);
+                }
+
+                // Build with delay and return archive URLs
+                archiveUrls = buildSessionsWithDelay(user, sessionUris, mergedParams,
+                                                    sessionKey, activeCount, buildFuture);
             } else {
                 // Unknown strategy - return sessionUris as-is
                 logger.warn("Unknown strategy type: {}, returning session URIs as-is", strategy.getClass().getName());
@@ -333,6 +376,104 @@ public class StowRsServiceImpl implements StowRsService {
         } else {
             throw new org.nrg.action.ServerException("Unable to lock session for archiving.");
         }
+    }
+
+    /**
+     * Build sessions with delay using decrement counter approach.
+     * Waits for all concurrent uploads to complete before building.
+     */
+    private Set<String> buildSessionsWithDelay(UserI user, Set<String> sessionUris,
+                                               Map<String, Object> params,
+                                               String sessionKey,
+                                               AtomicInteger activeCount,
+                                               CompletableFuture<Set<String>> buildFuture)
+            throws ClientException {
+
+        try {
+            // Decrement active count (I finished uploading)
+            int remaining = activeCount.decrementAndGet();
+            logger.debug("Session {} active uploads remaining: {}", sessionKey, remaining);
+
+            if (remaining == 0) {
+                // I'm the last one! Schedule build after short delay
+                logger.info("Last upload for session {}, scheduling build after {}ms",
+                           sessionKey, BUILD_DELAY_MS);
+                scheduleBuildAfterCheck(sessionKey, user, sessionUris, params,
+                                       buildFuture, activeCount);
+            }
+
+            // Wait for build to complete (all threads wait on same Future)
+            logger.debug("Waiting for build to complete for session: {}", sessionKey);
+            Set<String> archiveUrls = buildFuture.get(15, TimeUnit.SECONDS);
+            logger.info("Got archive URLs for session {}: {}", sessionKey, archiveUrls);
+
+            return archiveUrls;
+
+        } catch (TimeoutException e) {
+            logger.error("Timeout waiting for build to complete for session: {}", sessionKey);
+            throw new ClientException("Build timeout: session may still be processing", e);
+        } catch (ExecutionException e) {
+            logger.error("Build failed for session: {}", sessionKey, e.getCause());
+            throw new ClientException("Build failed: " + e.getCause().getMessage(), e.getCause());
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            logger.error("Build interrupted for session: {}", sessionKey);
+            throw new ClientException("Build interrupted", e);
+        }
+    }
+
+    /**
+     * Schedule build task after checking no new uploads arrived
+     */
+    private void scheduleBuildAfterCheck(String sessionKey, UserI user,
+                                         Set<String> sessionUris, Map<String, Object> params,
+                                         CompletableFuture<Set<String>> buildFuture,
+                                         AtomicInteger activeCount) {
+
+        buildScheduler.schedule(() -> {
+            // Check if new threads arrived during delay
+            int current = activeCount.get();
+
+            if (current > 0) {
+                // New threads arrived, let them handle the build
+                logger.debug("New uploads detected for session {} (count={}), skipping build",
+                           sessionKey, current);
+                return;
+            }
+
+            // No new threads, proceed with build
+            logger.info("Building session {} (no active uploads)", sessionKey);
+
+            try {
+                Set<String> archiveUrls = buildSessions(user, sessionUris, params);
+                logger.info("Successfully built and archived session {} to: {}",
+                           sessionKey, archiveUrls);
+
+                // Complete Future, notify all waiting threads
+                buildFuture.complete(archiveUrls);
+
+            } catch (Exception e) {
+                logger.error("Failed to build session: {}", sessionKey, e);
+                buildFuture.completeExceptionally(e);
+            } finally {
+                // Cleanup
+                buildFutures.remove(sessionKey);
+                activeCounts.remove(sessionKey);
+            }
+        }, BUILD_DELAY_MS, TimeUnit.MILLISECONDS);
+    }
+
+    /**
+     * Extract session key from prearchive URI for concurrent build management
+     */
+    private String extractSessionKey(String sessionUri) {
+        // /prearchive/projects/TestProject/20251208_085152/STS_045
+        // → TestProject/20251208_085152/STS_045
+        String[] elements = sessionUri.split(SLASH);
+        if (elements.length >= 6) {
+            return elements[3] + "/" + elements[4] + "/" + elements[5];
+        }
+        return sessionUri;
     }
 
     /**
