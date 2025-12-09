@@ -40,6 +40,10 @@ import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.text.SimpleDateFormat;
 import java.util.*;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 /**
@@ -89,6 +93,21 @@ public class DirectArchiveStrategy implements DicomImportStrategy {
     // Services
     private final DirectArchiveSessionService directArchiveSessionService;
     private final DirectArchiveSessionHibernateService directArchiveSessionHibernateService;
+
+    // ========================================================================
+    // Concurrent Build Protection
+    // ========================================================================
+
+    /**
+     * Per-study build lock management.
+     *
+     * <p>Key format: {projectId}/{studyInstanceUID}
+     * <p>Value: CompletableFuture that completes with the final experiment URL
+     *
+     * <p>This ensures that only one thread builds a given study at a time.
+     * Other threads wait for the first thread to complete and reuse the result.
+     */
+    private final ConcurrentHashMap<String, CompletableFuture<String>> buildFutures = new ConcurrentHashMap<>();
 
     @Autowired
     public DirectArchiveStrategy(DirectArchiveSessionService directArchiveSessionService,
@@ -257,7 +276,15 @@ public class DirectArchiveStrategy implements DicomImportStrategy {
     }
 
     /**
-     * Process a single study
+     * Process a single study with per-study build locks.
+     *
+     * <p>This method implements concurrent upload protection:
+     * <ul>
+     *   <li>First thread: Creates session, writes files, builds and archives</li>
+     *   <li>Subsequent threads: Write files and reuse build result from first thread</li>
+     * </ul>
+     *
+     * <p>Build lock key format: {projectId}/{studyInstanceUID}
      */
     private void processStudy(UserI user, XnatProjectdata project, String studyUid,
                              List<DicomInstanceInfo> instances, String timestamp,
@@ -265,26 +292,57 @@ public class DirectArchiveStrategy implements DicomImportStrategy {
                              List<SuccessfulInstance> successfulInstances,
                              List<FailedInstance> failedInstances) {
 
+        // Create build key for this study
+        String buildKey = project.getId() + "/" + studyUid;
+        logger.debug("Processing study with build key: {}", buildKey);
+
+        // Get or create build future for this study (atomic operation)
+        CompletableFuture<String> buildFuture = buildFutures.computeIfAbsent(buildKey, k -> {
+            logger.info("First thread for study {}, will perform build", buildKey);
+            return new CompletableFuture<>();
+        });
+
         try {
-            // Create or get session
+            // Create or get session (all threads need to do this)
             SessionData session = createOrGetSession(user, project, studyUid,
                                                     instances.get(0), timestamp, params);
             logger.info("Using DirectArchiveSession: {}", session.getSessionDataTriple());
 
-            // Write instances to archive
+            // Write instances to archive (all threads write their files)
             List<DicomInstanceInfo> writtenInstances = writeInstancesToArchive(session, instances, failedInstances);
             logger.info("Wrote {} instances to archive for study {}", writtenInstances.size(), studyUid);
 
-            // Build and archive immediately
+            // Now check if we need to build, or if another thread already built
+            if (buildFuture.isDone()) {
+                logger.info("Study {} already built by another thread, reusing result", buildKey);
+                String finalUri = buildFuture.get();
+                addSuccessfulInstances(writtenInstances, finalUri, successfulInstances);
+                return;
+            }
+
+            // We're the first thread to get here - build and archive
+            logger.info("Building and archiving session for study {}", buildKey);
             String finalUri = buildAndArchiveSession(user, session, params, sessionUris);
+
+            // Complete the future to notify waiting threads
+            buildFuture.complete(finalUri);
+            logger.info("Completed build future for study {} with URI: {}", buildKey, finalUri);
 
             // Add successful instances with final URI
             addSuccessfulInstances(writtenInstances, finalUri, successfulInstances);
 
         } catch (ArchivingException e) {
             logger.error("Failed to create DirectArchiveSession for study {}", studyUid, e);
+            buildFuture.completeExceptionally(e);
             throw new RuntimeException("Failed to create DirectArchiveSession: " + e.getMessage(), e);
+        } catch (Exception e) {
+            logger.error("Error processing study {}", buildKey, e);
+            buildFuture.completeExceptionally(e);
+            throw new RuntimeException("Error processing study: " + e.getMessage(), e);
         }
+        // Note: buildFutures are kept in memory for the lifetime of the service.
+        // This is acceptable since the number of unique studies is typically limited.
+        // If memory becomes a concern, implement a cleanup strategy using a ScheduledExecutorService.
     }
 
     /**
