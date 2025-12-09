@@ -16,6 +16,7 @@ import org.nrg.xnat.archive.services.DirectArchiveSessionService;
 import org.nrg.xnat.archive.services.DirectArchiveSessionHibernateService;
 import org.nrg.xnat.dicomweb.parser.Mime4jHybridParser.MultipartPart;
 import org.nrg.xnat.dicomweb.service.FailedInstance;
+import org.nrg.xnat.dicomweb.service.StowRsImportResult;
 import org.nrg.xnat.dicomweb.service.SuccessfulInstance;
 import org.nrg.xnat.dicomweb.utils.DicomValidationUtils;
 import org.nrg.xnat.dicomweb.utils.DicomWebUtils;
@@ -27,6 +28,7 @@ import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
 
+import javax.servlet.http.HttpServletRequest;
 import javax.sql.DataSource;
 import java.io.BufferedOutputStream;
 import java.io.File;
@@ -102,6 +104,41 @@ public class DirectArchiveStrategy implements DicomImportStrategy {
     @Override
     public String getName() {
         return STRATEGY_NAME;
+    }
+
+    /**
+     * Import DICOM instances and return complete results.
+     *
+     * <p>This implementation:
+     * <ol>
+     *   <li>Writes files directly to archive directory</li>
+     *   <li>Builds session XML and archives to database immediately</li>
+     *   <li>Returns final experiment URLs</li>
+     * </ol>
+     *
+     * <p><b>Note</b>: Future enhancement will add per-study build locks
+     * to handle concurrent uploads safely.
+     *
+     * @param user The authenticated user
+     * @param parts The parsed multipart parts
+     * @param params Import parameters
+     * @param request HTTP request (currently unused, for future DICOMweb URL building)
+     * @return Import result with final experiment URLs and instance status
+     */
+    @Override
+    public StowRsImportResult importInstances(UserI user,
+                                             List<MultipartPart> parts,
+                                             Map<String, Object> params,
+                                             HttpServletRequest request) {
+        Set<String> sessionUris = new HashSet<>();
+        List<SuccessfulInstance> successfulInstances = new ArrayList<>();
+        List<FailedInstance> failedInstances = new ArrayList<>();
+
+        // Call legacy method to do actual import
+        importInstances(user, parts, params, sessionUris, successfulInstances, failedInstances);
+
+        // Return final experiment URLs (already built and archived)
+        return new StowRsImportResult(sessionUris, successfulInstances, failedInstances);
     }
 
     @Override
