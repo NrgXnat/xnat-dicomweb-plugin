@@ -16,6 +16,7 @@ import java.io.File;
 import java.io.FileOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
+import java.util.UUID;
 
 /**
  * FileWriterWrapper implementation for STOW-RS MultipartPart
@@ -35,8 +36,9 @@ public class InputStreamFileWriterWrapper implements FileWriterWrapperI {
     public InputStreamFileWriterWrapper(final MultipartPart part, final int index) {
         this.part = part;
         this.index = index;
-        // Generate a name for this DICOM instance
-        this.name = "instance-" + index + ".dcm";
+        // Generate a globally unique name to avoid file lock conflicts in concurrent uploads
+        // Using UUID ensures different concurrent requests won't clash on the same filename
+        this.name = UUID.randomUUID().toString() + ".dcm";
     }
 
     @Override
