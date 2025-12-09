@@ -44,6 +44,7 @@ import org.springframework.stereotype.Service;
 import javax.servlet.http.HttpServletRequest;
 import java.io.File;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
@@ -171,21 +172,6 @@ public class StowRsServiceImpl implements StowRsService {
                 parts.stream().filter(MultipartPart::isInMemory).count(),
                 parts.stream().filter(p -> !p.isInMemory()).count());
 
-            // For GradualDicomImporter, set up concurrent build management
-            if (strategy instanceof GradualDicomImporterStrategy) {
-                // Extract session key from params (we'll refine this after import)
-                String projectId = (String) mergedParams.get("PROJECT_ID");
-                sessionKey = projectId; // Temporary key, will be refined after import
-
-                // Increment active count (I'm starting upload)
-                activeCount = activeCounts.computeIfAbsent(sessionKey, k -> new AtomicInteger(0));
-                activeCount.incrementAndGet();
-                logger.debug("Session {} active uploads: {}", sessionKey, activeCount.get());
-
-                // Get or create build future
-                buildFuture = buildFutures.computeIfAbsent(sessionKey, k -> new CompletableFuture<>());
-            }
-
             // Import DICOM instances using selected strategy
             strategy.importInstances(user, parts, mergedParams, sessionUris,
                     successfulInstances, failedInstances);
@@ -200,6 +186,8 @@ public class StowRsServiceImpl implements StowRsService {
 
             // Handle post-import based on strategy
             Set<String> archiveUrls;
+            Map<String, String> prearchiveToArchiveMap = new HashMap<>();
+
             if (strategy instanceof DirectArchiveStrategy) {
                 // DirectArchive automatically builds and archives sessions
                 // URIs are already the final archive locations
@@ -207,16 +195,9 @@ public class StowRsServiceImpl implements StowRsService {
                         sessionUris.size());
                 archiveUrls = sessionUris;
             } else if (strategy instanceof GradualDicomImporterStrategy) {
-                // GradualDicomImporter: use concurrent build with decrement counter
-                // Refine session key from actual session URI
-                if (!sessionUris.isEmpty()) {
-                    sessionKey = extractSessionKey(sessionUris.iterator().next());
-                    logger.debug("Refined session key: {}", sessionKey);
-                }
-
-                // Build with delay and return archive URLs
-                archiveUrls = buildSessionsWithDelay(user, sessionUris, mergedParams,
-                                                    sessionKey, activeCount, buildFuture);
+                // GradualDicomImporter: per-session concurrent build management
+                archiveUrls = buildSessionsWithPerSessionConcurrency(user, sessionUris, mergedParams,
+                                                                     prearchiveToArchiveMap);
             } else {
                 // Unknown strategy - return sessionUris as-is
                 logger.warn("Unknown strategy type: {}, returning session URIs as-is", strategy.getClass().getName());
@@ -224,7 +205,9 @@ public class StowRsServiceImpl implements StowRsService {
             }
 
             // Build STOW-RS response with successful and failed instances
-            String jsonResponse = buildStowRsResponse(successfulInstances, archiveUrls, failedInstances, request);
+            // Pass prearchive→archive mapping for correct per-instance URLs
+            String jsonResponse = buildStowRsResponse(successfulInstances, archiveUrls, failedInstances,
+                                                     request, prearchiveToArchiveMap);
 
             return new StowRsResult(
                 sessionUris,
@@ -379,56 +362,93 @@ public class StowRsServiceImpl implements StowRsService {
     }
 
     /**
-     * Build sessions with delay using decrement counter approach.
-     * Waits for all concurrent uploads to complete before building.
+     * Build sessions with per-session concurrent management.
+     * Each session has its own counter and Future to properly handle:
+     * - Multiple threads uploading to the same session
+     * - Single request uploading to multiple sessions
+     *
+     * @param user User performing the operation
+     * @param sessionUris Prearchive session URIs to build
+     * @param params Build parameters
+     * @param prearchiveToArchiveMap Output map for prearchive URI → archive URI mapping
+     * @return Set of all archive URLs
      */
-    private Set<String> buildSessionsWithDelay(UserI user, Set<String> sessionUris,
-                                               Map<String, Object> params,
-                                               String sessionKey,
-                                               AtomicInteger activeCount,
-                                               CompletableFuture<Set<String>> buildFuture)
+    private Set<String> buildSessionsWithPerSessionConcurrency(UserI user,
+                                                                Set<String> sessionUris,
+                                                                Map<String, Object> params,
+                                                                Map<String, String> prearchiveToArchiveMap)
             throws ClientException {
 
-        try {
-            // Decrement active count (I finished uploading)
+        Set<String> allArchiveUrls = new HashSet<>();
+
+        // Process each session independently
+        for (String prearchiveUri : sessionUris) {
+            String sessionKey = extractSessionKey(prearchiveUri);
+
+            // 1. Get or create counter and future for this session
+            AtomicInteger activeCount = activeCounts.computeIfAbsent(sessionKey,
+                k -> new AtomicInteger(0));
+            CompletableFuture<Set<String>> buildFuture = buildFutures.computeIfAbsent(sessionKey,
+                k -> new CompletableFuture<>());
+
+            // 2. Increment active count for this session (I'm uploading to this session)
+            activeCount.incrementAndGet();
+            logger.debug("Session {} active uploads: {}", sessionKey, activeCount.get());
+
+            // 3. Decrement and check if need to schedule build
             int remaining = activeCount.decrementAndGet();
             logger.debug("Session {} active uploads remaining: {}", sessionKey, remaining);
 
             if (remaining == 0) {
-                // I'm the last one! Schedule build after short delay
+                // I'm the last one! Schedule build after delay
                 logger.info("Last upload for session {}, scheduling build after {}ms",
                            sessionKey, BUILD_DELAY_MS);
-                scheduleBuildAfterCheck(sessionKey, user, sessionUris, params,
-                                       buildFuture, activeCount);
+
+                // Build only this specific session
+                Set<String> singleSessionUri = Collections.singleton(prearchiveUri);
+                scheduleBuildForSingleSession(sessionKey, user, singleSessionUri, params,
+                                             buildFuture, activeCount);
             }
 
-            // Wait for build to complete (all threads wait on same Future)
-            logger.debug("Waiting for build to complete for session: {}", sessionKey);
-            Set<String> archiveUrls = buildFuture.get(15, TimeUnit.SECONDS);
-            logger.info("Got archive URLs for session {}: {}", sessionKey, archiveUrls);
+            // 4. Wait for this session's build to complete
+            try {
+                logger.debug("Waiting for build to complete for session: {}", sessionKey);
+                Set<String> archiveUrlsForSession = buildFuture.get(15, TimeUnit.SECONDS);
+                logger.info("Got archive URLs for session {}: {}", sessionKey, archiveUrlsForSession);
 
-            return archiveUrls;
+                // 5. Build mapping: prearchive URI → archive URL
+                if (!archiveUrlsForSession.isEmpty()) {
+                    String archiveUrl = archiveUrlsForSession.iterator().next();
+                    prearchiveToArchiveMap.put(prearchiveUri, archiveUrl);
+                    allArchiveUrls.addAll(archiveUrlsForSession);
+                    logger.info("Built mapping: {} → {}", prearchiveUri, archiveUrl);
+                } else {
+                    logger.warn("No archive URLs returned for session: {}", prearchiveUri);
+                }
 
-        } catch (TimeoutException e) {
-            logger.error("Timeout waiting for build to complete for session: {}", sessionKey);
-            throw new ClientException("Build timeout: session may still be processing", e);
-        } catch (ExecutionException e) {
-            logger.error("Build failed for session: {}", sessionKey, e.getCause());
-            throw new ClientException("Build failed: " + e.getCause().getMessage(), e.getCause());
-        } catch (InterruptedException e) {
-            Thread.currentThread().interrupt();
-            logger.error("Build interrupted for session: {}", sessionKey);
-            throw new ClientException("Build interrupted", e);
+            } catch (TimeoutException e) {
+                logger.error("Timeout waiting for build of session: {}", sessionKey);
+                throw new ClientException("Build timeout: session may still be processing", e);
+            } catch (ExecutionException e) {
+                logger.error("Build failed for session: {}", sessionKey, e.getCause());
+                throw new ClientException("Build failed: " + e.getCause().getMessage(), e.getCause());
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                logger.error("Build interrupted for session: {}", sessionKey);
+                throw new ClientException("Build interrupted", e);
+            }
         }
+
+        return allArchiveUrls;
     }
 
     /**
-     * Schedule build task after checking no new uploads arrived
+     * Schedule build task for a single session after checking no new uploads arrived
      */
-    private void scheduleBuildAfterCheck(String sessionKey, UserI user,
-                                         Set<String> sessionUris, Map<String, Object> params,
-                                         CompletableFuture<Set<String>> buildFuture,
-                                         AtomicInteger activeCount) {
+    private void scheduleBuildForSingleSession(String sessionKey, UserI user,
+                                               Set<String> sessionUris, Map<String, Object> params,
+                                               CompletableFuture<Set<String>> buildFuture,
+                                               AtomicInteger activeCount) {
 
         buildScheduler.schedule(() -> {
             // Check if new threads arrived during delay
@@ -506,7 +526,8 @@ public class StowRsServiceImpl implements StowRsService {
      */
     private String buildStowRsResponse(List<SuccessfulInstance> successfulInstances, Set<String> archiveUrls,
                                        List<FailedInstance> failedInstances,
-                                       HttpServletRequest request) {
+                                       HttpServletRequest request,
+                                       Map<String, String> prearchiveToArchiveMap) {
         try {
             Attributes attrs = new Attributes();
             int successCount = successfulInstances.size();
@@ -530,17 +551,26 @@ public class StowRsServiceImpl implements StowRsService {
                 // ReferencedSOPInstanceUID (0008,1155)
                 refItem.setString(Tag.ReferencedSOPInstanceUID, VR.UI, success.getSopInstanceUid());
 
-                // RetrieveURL (0008,1190) - Use archive URL if available, otherwise prearchive URL
-                String retrieveUrl = success.getRetrieveUrl();
-                if (!archiveUrls.isEmpty()) {
-                    // If we have archive URLs, prefer those over prearchive URLs
+                // RetrieveURL (0008,1190) - Use correct archive URL for this instance's session
+                String retrieveUrl = success.getRetrieveUrl();  // prearchive URI
+                String originalUrl = retrieveUrl;
+
+                // Map prearchive URI to archive URI if available
+                if (prearchiveToArchiveMap != null && prearchiveToArchiveMap.containsKey(retrieveUrl)) {
+                    retrieveUrl = prearchiveToArchiveMap.get(retrieveUrl);
+                    logger.debug("Mapped URL for {}: {} → {}", success.getSopInstanceUid(), originalUrl, retrieveUrl);
+                } else if (!archiveUrls.isEmpty()) {
+                    // Fallback: use first archive URL if mapping not available
                     retrieveUrl = archiveUrls.iterator().next();
+                    logger.warn("No mapping found for {}, using fallback: {} → {}",
+                               success.getSopInstanceUid(), originalUrl, retrieveUrl);
                 }
+
                 refItem.setString(Tag.RetrieveURL, VR.UR, retrieveUrl);
 
                 referencedSeq.add(refItem);
-                logger.debug("Added successful instance to response: SOP={}, Class={}",
-                    success.getSopInstanceUid(), success.getSopClassUid());
+                logger.debug("Added successful instance to response: SOP={}, Class={}, URL={}",
+                    success.getSopInstanceUid(), success.getSopClassUid(), retrieveUrl);
             }
 
             // Create FailedSOPSequence (0008,1198)
