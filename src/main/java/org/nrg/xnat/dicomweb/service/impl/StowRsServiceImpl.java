@@ -82,6 +82,13 @@ public class StowRsServiceImpl implements StowRsService {
     private final ConcurrentHashMap<String, AtomicLong> lastActivityTime = new ConcurrentHashMap<>();
     private final ConcurrentHashMap<String, CompletableFuture<Set<String>>> buildFutures = new ConcurrentHashMap<>();
     private final ConcurrentHashMap<String, Set<String>> sessionUrisByKey = new ConcurrentHashMap<>();
+
+    // Import tracking - ensures build waits for all imports to complete
+    private final ConcurrentHashMap<String, Set<CompletableFuture<Void>>> importFutures = new ConcurrentHashMap<>();
+
+    // Thread-local storage for import futures (before session key is known)
+    private final ThreadLocal<CompletableFuture<Void>> threadImportFuture = new ThreadLocal<>();
+
     private final ScheduledExecutorService buildScheduler = Executors.newScheduledThreadPool(2, r -> {
         Thread t = new Thread(r, "stowrs-build-scheduler");
         t.setDaemon(true);
@@ -175,7 +182,16 @@ public class StowRsServiceImpl implements StowRsService {
                 parts.stream().filter(MultipartPart::isInMemory).count(),
                 parts.stream().filter(p -> !p.isInMemory()).count());
 
+            // For GradualDicomImporter: Register import future BEFORE import starts
+            // (session key is not known yet, will be moved to correct key after import)
+            if (strategy instanceof GradualDicomImporterStrategy) {
+                CompletableFuture<Void> myImportFuture = new CompletableFuture<>();
+                threadImportFuture.set(myImportFuture);
+                logger.debug("Registered import future for thread: {}", Thread.currentThread().getName());
+            }
+
             // Import DICOM instances using selected strategy
+            // THIS IS THE LONG-RUNNING OPERATION we need to wait for
             strategy.importInstances(user, parts, mergedParams, sessionUris,
                     successfulInstances, failedInstances);
 
@@ -236,6 +252,8 @@ public class StowRsServiceImpl implements StowRsService {
             if (parts != null) {
                 multipartParser.cleanup(parts);
             }
+            // Clean up thread-local import future (in case of exception)
+            threadImportFuture.remove();
         }
     }
 
@@ -396,19 +414,37 @@ public class StowRsServiceImpl implements StowRsService {
 
             logger.debug("Processing session {} with {} URIs", sessionKey, urisForSession.size());
 
-            // 1. Add URIs to shared collection (thread-safe)
+            // 1. Move this thread's import future to the correct session key
+            //    (import has completed, now we know the session key)
+            CompletableFuture<Void> myImportFuture = threadImportFuture.get();
+            if (myImportFuture != null) {
+                Set<CompletableFuture<Void>> futures = importFutures.computeIfAbsent(
+                    sessionKey, k -> ConcurrentHashMap.newKeySet());
+                futures.add(myImportFuture);
+                logger.debug("Moved import future to session key: {} (total: {})",
+                            sessionKey, futures.size());
+
+                // Mark import as complete for this thread
+                myImportFuture.complete(null);
+                logger.debug("Import completed for session key: {}", sessionKey);
+
+                // Clean up thread-local
+                threadImportFuture.remove();
+            }
+
+            // 2. Add URIs to shared collection (thread-safe)
             Set<String> allUrisForKey = sessionUrisByKey.computeIfAbsent(sessionKey,
                 k -> ConcurrentHashMap.newKeySet());
             allUrisForKey.addAll(urisForSession);
             logger.debug("Session {} now has {} total URIs", sessionKey, allUrisForKey.size());
 
-            // 2. Update last activity time for this session
+            // 3. Update last activity time for this session
             long currentTime = System.currentTimeMillis();
             AtomicLong lastActivity = lastActivityTime.computeIfAbsent(sessionKey,
                 k -> new AtomicLong(currentTime));
             long previousActivity = lastActivity.getAndSet(currentTime);
 
-            // 3. Get or create future for this session
+            // 4. Get or create future for this session
             CompletableFuture<Set<String>> buildFuture = buildFutures.computeIfAbsent(sessionKey,
                 k -> {
                     // First time seeing this session, schedule build check
@@ -417,7 +453,11 @@ public class StowRsServiceImpl implements StowRsService {
                     return new CompletableFuture<>();
                 });
 
-            // 3. Wait for this session's build to complete
+            // 5. Mark import as complete for this thread
+            myImportFuture.complete(null);
+            logger.debug("Import completed for session key: {}", sessionKey);
+
+            // 6. Wait for this session's build to complete
             try {
                 logger.debug("Waiting for build to complete for session: {}", sessionKey);
                 Set<String> archiveUrlsForSession = buildFuture.get(30, TimeUnit.SECONDS);
@@ -466,9 +506,18 @@ public class StowRsServiceImpl implements StowRsService {
 
             long timeSinceLastActivity = System.currentTimeMillis() - lastActivity.get();
 
-            if (timeSinceLastActivity >= BUILD_DELAY_MS) {
-                // No new activity for BUILD_DELAY_MS, start build
-                logger.info("No new uploads for {}ms, building session {}", timeSinceLastActivity, sessionKey);
+            // Check 1: Time condition - has enough time passed since last activity?
+            boolean timeConditionMet = timeSinceLastActivity >= BUILD_DELAY_MS;
+
+            // Check 2: Import condition - are all imports complete?
+            Set<CompletableFuture<Void>> futures = importFutures.get(sessionKey);
+            boolean allImportsComplete = futures == null ||
+                futures.stream().allMatch(CompletableFuture::isDone);
+
+            if (timeConditionMet && allImportsComplete) {
+                // Both conditions met: time passed AND all imports complete → start build
+                logger.info("Build conditions met for session {} (time: {}ms, imports: complete), starting build",
+                           sessionKey, timeSinceLastActivity);
 
                 CompletableFuture<Set<String>> buildFuture = buildFutures.get(sessionKey);
                 if (buildFuture == null) {
@@ -500,12 +549,17 @@ public class StowRsServiceImpl implements StowRsService {
                     buildFutures.remove(sessionKey);
                     lastActivityTime.remove(sessionKey);
                     sessionUrisByKey.remove(sessionKey);
+                    importFutures.remove(sessionKey);  // Clean up import futures
                 }
             } else {
-                // Still receiving uploads, reschedule check
-                long remainingTime = BUILD_DELAY_MS - timeSinceLastActivity;
-                logger.debug("Session {} still active (last upload {}ms ago), rescheduling check in {}ms",
-                           sessionKey, timeSinceLastActivity, remainingTime);
+                // Conditions not met: either time not ready OR imports still running → reschedule
+                String reason = !timeConditionMet ?
+                    String.format("time not ready (only %dms passed)", timeSinceLastActivity) :
+                    String.format("imports still running (%d pending)",
+                        futures.stream().filter(f -> !f.isDone()).count());
+
+                logger.debug("Session {} not ready to build ({}), rescheduling check",
+                           sessionKey, reason);
                 scheduleBuildCheck(sessionKey, user, params);
             }
         }, BUILD_DELAY_MS, TimeUnit.MILLISECONDS);
