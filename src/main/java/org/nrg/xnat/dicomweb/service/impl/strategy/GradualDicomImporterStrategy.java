@@ -76,6 +76,8 @@ public class GradualDicomImporterStrategy implements DicomImportStrategy {
                     successfulInstances.add(new SuccessfulInstance(
                             instanceInfo.sopClassUid,
                             instanceInfo.sopInstanceUid,
+                            instanceInfo.studyInstanceUid,
+                            instanceInfo.seriesInstanceUid,
                             importedUris.get(0)
                     ));
                 }
@@ -144,6 +146,8 @@ public class GradualDicomImporterStrategy implements DicomImportStrategy {
 
         String sopInstanceUid = attrs.getString(Tag.SOPInstanceUID);
         String sopClassUid = attrs.getString(Tag.SOPClassUID);
+        String studyInstanceUid = attrs.getString(Tag.StudyInstanceUID);
+        String seriesInstanceUid = attrs.getString(Tag.SeriesInstanceUID);
 
         if (sopInstanceUid == null) {
             throw new IOException("Missing SOPInstanceUID in DICOM file");
@@ -152,10 +156,10 @@ public class GradualDicomImporterStrategy implements DicomImportStrategy {
             throw new IOException("Missing SOPClassUID in DICOM file");
         }
 
-        logger.debug("Extracted DICOM info: SOP Instance UID={}, SOP Class UID={}",
-                    sopInstanceUid, sopClassUid);
+        logger.debug("Extracted DICOM info: SOP Instance UID={}, SOP Class UID={}, Study UID={}, Series UID={}",
+                    sopInstanceUid, sopClassUid, studyInstanceUid, seriesInstanceUid);
 
-        return new DicomInstanceInfo(sopInstanceUid, sopClassUid);
+        return new DicomInstanceInfo(sopInstanceUid, sopClassUid, studyInstanceUid, seriesInstanceUid);
     }
 
     /**
@@ -188,10 +192,15 @@ public class GradualDicomImporterStrategy implements DicomImportStrategy {
     private static class DicomInstanceInfo {
         final String sopInstanceUid;
         final String sopClassUid;
+        final String studyInstanceUid;
+        final String seriesInstanceUid;
 
-        DicomInstanceInfo(String sopInstanceUid, String sopClassUid) {
+        DicomInstanceInfo(String sopInstanceUid, String sopClassUid,
+                         String studyInstanceUid, String seriesInstanceUid) {
             this.sopInstanceUid = sopInstanceUid;
             this.sopClassUid = sopClassUid;
+            this.studyInstanceUid = studyInstanceUid;
+            this.seriesInstanceUid = seriesInstanceUid;
         }
     }
 }

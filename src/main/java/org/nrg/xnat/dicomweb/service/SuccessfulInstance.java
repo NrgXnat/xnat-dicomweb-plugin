@@ -13,11 +13,21 @@ package org.nrg.xnat.dicomweb.service;
 public class SuccessfulInstance {
     private final String sopClassUid;
     private final String sopInstanceUid;
+    private final String studyInstanceUid;
+    private final String seriesInstanceUid;
     private final String retrieveUrl;
 
     public SuccessfulInstance(String sopClassUid, String sopInstanceUid, String retrieveUrl) {
+        this(sopClassUid, sopInstanceUid, null, null, retrieveUrl);
+    }
+
+    public SuccessfulInstance(String sopClassUid, String sopInstanceUid,
+                             String studyInstanceUid, String seriesInstanceUid,
+                             String retrieveUrl) {
         this.sopClassUid = sopClassUid;
         this.sopInstanceUid = sopInstanceUid;
+        this.studyInstanceUid = studyInstanceUid;
+        this.seriesInstanceUid = seriesInstanceUid;
         this.retrieveUrl = retrieveUrl;
     }
 
@@ -29,6 +39,14 @@ public class SuccessfulInstance {
         return sopInstanceUid;
     }
 
+    public String getStudyInstanceUid() {
+        return studyInstanceUid;
+    }
+
+    public String getSeriesInstanceUid() {
+        return seriesInstanceUid;
+    }
+
     public String getRetrieveUrl() {
         return retrieveUrl;
     }
@@ -38,6 +56,8 @@ public class SuccessfulInstance {
         return "SuccessfulInstance{" +
                 "sopClassUid='" + sopClassUid + '\'' +
                 ", sopInstanceUid='" + sopInstanceUid + '\'' +
+                ", studyInstanceUid='" + studyInstanceUid + '\'' +
+                ", seriesInstanceUid='" + seriesInstanceUid + '\'' +
                 ", retrieveUrl='" + retrieveUrl + '\'' +
                 '}';
     }

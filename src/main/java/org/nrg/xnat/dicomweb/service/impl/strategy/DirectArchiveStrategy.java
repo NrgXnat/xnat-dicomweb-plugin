@@ -576,8 +576,10 @@ public class DirectArchiveStrategy implements DicomImportStrategy {
                                        List<SuccessfulInstance> successfulInstances) {
         for (DicomInstanceInfo info : instances) {
             successfulInstances.add(new SuccessfulInstance(
-                    info.sopClassUid,      // ✓ Class UID first
-                    info.sopInstanceUid,   // ✓ Instance UID second
+                    info.sopClassUid,        // SOP Class UID
+                    info.sopInstanceUid,     // SOP Instance UID
+                    info.studyInstanceUid,   // Study Instance UID
+                    info.seriesInstanceUid,  // Series Instance UID
                     uri
             ));
         }

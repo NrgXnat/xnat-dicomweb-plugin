@@ -34,6 +34,7 @@ import org.nrg.xnat.helpers.prearchive.SessionData;
 import org.nrg.xnat.helpers.prearchive.handlers.PrearchiveOperationHandlerResolver;
 import org.nrg.xnat.helpers.prearchive.handlers.PrearchiveRebuildHandler;
 import org.nrg.xnat.helpers.prearchive.handlers.PrearchiveSeparatePetMrHandler;
+import org.nrg.xnat.helpers.uri.URIManager;
 import org.nrg.xnat.restlet.util.RequestUtil;
 import org.nrg.xnat.services.messaging.prearchive.PrearchiveOperationRequest;
 import org.slf4j.Logger;
@@ -209,7 +210,7 @@ public class StowRsServiceImpl implements StowRsService {
             // Build STOW-RS response with successful and failed instances
             // Pass prearchive→archive mapping for correct per-instance URLs
             String jsonResponse = buildStowRsResponse(successfulInstances, archiveUrls, failedInstances,
-                                                     request, prearchiveToArchiveMap);
+                                                     request, prearchiveToArchiveMap, mergedParams);
 
             return new StowRsResult(
                 sessionUris,
@@ -556,15 +557,26 @@ public class StowRsServiceImpl implements StowRsService {
     private String buildStowRsResponse(List<SuccessfulInstance> successfulInstances, Set<String> archiveUrls,
                                        List<FailedInstance> failedInstances,
                                        HttpServletRequest request,
-                                       Map<String, String> prearchiveToArchiveMap) {
+                                       Map<String, String> prearchiveToArchiveMap,
+                                       Map<String, Object> params) {
         try {
             Attributes attrs = new Attributes();
             int successCount = successfulInstances.size();
 
-            // Set top-level RetrieveURL (0008,1190) - use first archive URL if available
-            if (successCount > 0 && !archiveUrls.isEmpty()) {
-                String firstArchiveUrl = archiveUrls.iterator().next();
-                attrs.setString(Tag.RetrieveURL, VR.UR, firstArchiveUrl);
+            // Build base DICOMweb URL from request
+            String projectId = (String) params.get(URIManager.PROJECT_ID);
+            String baseUrl = buildBaseUrl(request, projectId);
+            logger.debug("Base DICOMweb URL: {}", baseUrl);
+
+            // Set top-level RetrieveURL (0008,1190) - DICOMweb study-level URL
+            if (successCount > 0) {
+                // Get Study Instance UID from first successful instance
+                String studyUid = successfulInstances.get(0).getStudyInstanceUid();
+                if (studyUid != null) {
+                    String studyUrl = baseUrl + "/studies/" + studyUid;
+                    attrs.setString(Tag.RetrieveURL, VR.UR, studyUrl);
+                    logger.debug("Top-level RetrieveURL: {}", studyUrl);
+                }
             }
 
             // Create ReferencedSOPSequence (0008,1199) - POPULATE with successful instances
@@ -580,20 +592,8 @@ public class StowRsServiceImpl implements StowRsService {
                 // ReferencedSOPInstanceUID (0008,1155)
                 refItem.setString(Tag.ReferencedSOPInstanceUID, VR.UI, success.getSopInstanceUid());
 
-                // RetrieveURL (0008,1190) - Use correct archive URL for this instance's session
-                String retrieveUrl = success.getRetrieveUrl();  // prearchive URI
-                String originalUrl = retrieveUrl;
-
-                // Map prearchive URI to archive URI if available
-                if (prearchiveToArchiveMap != null && prearchiveToArchiveMap.containsKey(retrieveUrl)) {
-                    retrieveUrl = prearchiveToArchiveMap.get(retrieveUrl);
-                    logger.debug("Mapped URL for {}: {} → {}", success.getSopInstanceUid(), originalUrl, retrieveUrl);
-                } else if (!archiveUrls.isEmpty()) {
-                    // Fallback: use first archive URL if mapping not available
-                    retrieveUrl = archiveUrls.iterator().next();
-                    logger.warn("No mapping found for {}, using fallback: {} → {}",
-                               success.getSopInstanceUid(), originalUrl, retrieveUrl);
-                }
+                // RetrieveURL (0008,1190) - DICOMweb WADO-RS instance URL
+                String retrieveUrl = buildInstanceUrl(baseUrl, success);
 
                 refItem.setString(Tag.RetrieveURL, VR.UR, retrieveUrl);
 
@@ -624,5 +624,54 @@ public class StowRsServiceImpl implements StowRsService {
             logger.error("Error building STOW-RS response", e);
             return "{\"error\": \"Failed to build response\"}";
         }
+    }
+
+    /**
+     * Build base DICOMweb URL from HTTP request
+     * Example: http://localhost:8080/xapi/dicomweb/projects/ProjectID
+     */
+    private String buildBaseUrl(HttpServletRequest request, String projectId) {
+        String scheme = request.getScheme();
+        String serverName = request.getServerName();
+        int serverPort = request.getServerPort();
+
+        StringBuilder baseUrl = new StringBuilder();
+        baseUrl.append(scheme).append("://").append(serverName);
+
+        // Only add port if it's not the default for the scheme
+        if ((scheme.equals("http") && serverPort != 80) ||
+            (scheme.equals("https") && serverPort != 443)) {
+            baseUrl.append(":").append(serverPort);
+        }
+
+        baseUrl.append("/xapi/dicomweb/projects/").append(projectId);
+        return baseUrl.toString();
+    }
+
+    /**
+     * Build DICOMweb WADO-RS instance URL per PS3.18 specification
+     * Format: {base}/studies/{studyUID}/series/{seriesUID}/instances/{sopUID}
+     */
+    private String buildInstanceUrl(String baseUrl, SuccessfulInstance instance) {
+        String studyUid = instance.getStudyInstanceUid();
+        String seriesUid = instance.getSeriesInstanceUid();
+        String sopUid = instance.getSopInstanceUid();
+
+        // Build full WADO-RS instance URL
+        if (studyUid != null && seriesUid != null && sopUid != null) {
+            return baseUrl + "/studies/" + studyUid +
+                   "/series/" + seriesUid +
+                   "/instances/" + sopUid;
+        }
+
+        // Fallback to study-level URL if series/instance UIDs missing
+        if (studyUid != null) {
+            logger.warn("Missing series/instance UID for {}, using study-level URL", sopUid);
+            return baseUrl + "/studies/" + studyUid;
+        }
+
+        // Final fallback - just base URL (shouldn't happen)
+        logger.error("Missing study UID for instance {}, using base URL", sopUid);
+        return baseUrl;
     }
 }
