@@ -52,6 +52,7 @@ import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
@@ -76,9 +77,10 @@ public class StowRsServiceImpl implements StowRsService {
     private final DirectArchiveStrategy directArchiveStrategy;
     private final GradualDicomImporterStrategy gradualDicomImporterStrategy;
 
-    // Concurrent build management
-    private final ConcurrentHashMap<String, AtomicInteger> activeCounts = new ConcurrentHashMap<>();
+    // Concurrent build management - using last activity time approach
+    private final ConcurrentHashMap<String, AtomicLong> lastActivityTime = new ConcurrentHashMap<>();
     private final ConcurrentHashMap<String, CompletableFuture<Set<String>>> buildFutures = new ConcurrentHashMap<>();
+    private final ConcurrentHashMap<String, Set<String>> sessionUrisByKey = new ConcurrentHashMap<>();
     private final ScheduledExecutorService buildScheduler = Executors.newScheduledThreadPool(2, r -> {
         Thread t = new Thread(r, "stowrs-build-scheduler");
         t.setDaemon(true);
@@ -362,10 +364,8 @@ public class StowRsServiceImpl implements StowRsService {
     }
 
     /**
-     * Build sessions with per-session concurrent management.
-     * Each session has its own counter and Future to properly handle:
-     * - Multiple threads uploading to the same session
-     * - Single request uploading to multiple sessions
+     * Build sessions with per-session concurrent management using last activity time.
+     * Each session tracks when the last upload completed to handle concurrent uploads properly.
      *
      * @param user User performing the operation
      * @param sessionUris Prearchive session URIs to build
@@ -380,50 +380,58 @@ public class StowRsServiceImpl implements StowRsService {
             throws ClientException {
 
         Set<String> allArchiveUrls = new HashSet<>();
+        Map<String, Set<String>> localSessionUrisByKey = new HashMap<>();
 
-        // Process each session independently
+        // Group sessionUris by sessionKey (multiple timestamps may exist for same patient/study)
         for (String prearchiveUri : sessionUris) {
             String sessionKey = extractSessionKey(prearchiveUri);
+            localSessionUrisByKey.computeIfAbsent(sessionKey, k -> new HashSet<>()).add(prearchiveUri);
+        }
 
-            // 1. Get or create counter and future for this session
-            AtomicInteger activeCount = activeCounts.computeIfAbsent(sessionKey,
-                k -> new AtomicInteger(0));
+        // Process each unique session
+        for (Map.Entry<String, Set<String>> entry : localSessionUrisByKey.entrySet()) {
+            String sessionKey = entry.getKey();
+            Set<String> urisForSession = entry.getValue();
+
+            logger.debug("Processing session {} with {} URIs", sessionKey, urisForSession.size());
+
+            // 1. Add URIs to shared collection (thread-safe)
+            Set<String> allUrisForKey = sessionUrisByKey.computeIfAbsent(sessionKey,
+                k -> ConcurrentHashMap.newKeySet());
+            allUrisForKey.addAll(urisForSession);
+            logger.debug("Session {} now has {} total URIs", sessionKey, allUrisForKey.size());
+
+            // 2. Update last activity time for this session
+            long currentTime = System.currentTimeMillis();
+            AtomicLong lastActivity = lastActivityTime.computeIfAbsent(sessionKey,
+                k -> new AtomicLong(currentTime));
+            long previousActivity = lastActivity.getAndSet(currentTime);
+
+            // 3. Get or create future for this session
             CompletableFuture<Set<String>> buildFuture = buildFutures.computeIfAbsent(sessionKey,
-                k -> new CompletableFuture<>());
+                k -> {
+                    // First time seeing this session, schedule build check
+                    logger.info("First upload for session {}, scheduling build check", sessionKey);
+                    scheduleBuildCheck(sessionKey, user, params);
+                    return new CompletableFuture<>();
+                });
 
-            // 2. Increment active count for this session (I'm uploading to this session)
-            activeCount.incrementAndGet();
-            logger.debug("Session {} active uploads: {}", sessionKey, activeCount.get());
-
-            // 3. Decrement and check if need to schedule build
-            int remaining = activeCount.decrementAndGet();
-            logger.debug("Session {} active uploads remaining: {}", sessionKey, remaining);
-
-            if (remaining == 0) {
-                // I'm the last one! Schedule build after delay
-                logger.info("Last upload for session {}, scheduling build after {}ms",
-                           sessionKey, BUILD_DELAY_MS);
-
-                // Build only this specific session
-                Set<String> singleSessionUri = Collections.singleton(prearchiveUri);
-                scheduleBuildForSingleSession(sessionKey, user, singleSessionUri, params,
-                                             buildFuture, activeCount);
-            }
-
-            // 4. Wait for this session's build to complete
+            // 3. Wait for this session's build to complete
             try {
                 logger.debug("Waiting for build to complete for session: {}", sessionKey);
-                Set<String> archiveUrlsForSession = buildFuture.get(15, TimeUnit.SECONDS);
+                Set<String> archiveUrlsForSession = buildFuture.get(30, TimeUnit.SECONDS);
                 logger.info("Got archive URLs for session {}: {}", sessionKey, archiveUrlsForSession);
 
-                // 5. Build mapping: prearchive URI → archive URL
+                // 4. Build mapping for all URIs in this session
                 if (!archiveUrlsForSession.isEmpty()) {
                     String archiveUrl = archiveUrlsForSession.iterator().next();
-                    prearchiveToArchiveMap.put(prearchiveUri, archiveUrl);
+                    for (String prearchiveUri : urisForSession) {
+                        prearchiveToArchiveMap.put(prearchiveUri, archiveUrl);
+                        logger.info("Built mapping: {} → {}", prearchiveUri, archiveUrl);
+                    }
                     allArchiveUrls.addAll(archiveUrlsForSession);
-                    logger.info("Built mapping: {} → {}", prearchiveUri, archiveUrl);
                 } else {
-                    logger.warn("No archive URLs returned for session: {}", prearchiveUri);
+                    logger.warn("No archive URLs returned for session: {}", sessionKey);
                 }
 
             } catch (TimeoutException e) {
@@ -443,55 +451,76 @@ public class StowRsServiceImpl implements StowRsService {
     }
 
     /**
-     * Schedule build task for a single session after checking no new uploads arrived
+     * Schedule periodic build check for a session using last activity time approach.
+     * If no new uploads arrive within BUILD_DELAY_MS, the session will be built.
+     * Otherwise, reschedule the check.
      */
-    private void scheduleBuildForSingleSession(String sessionKey, UserI user,
-                                               Set<String> sessionUris, Map<String, Object> params,
-                                               CompletableFuture<Set<String>> buildFuture,
-                                               AtomicInteger activeCount) {
-
+    private void scheduleBuildCheck(String sessionKey, UserI user, Map<String, Object> params) {
         buildScheduler.schedule(() -> {
-            // Check if new threads arrived during delay
-            int current = activeCount.get();
-
-            if (current > 0) {
-                // New threads arrived, let them handle the build
-                logger.debug("New uploads detected for session {} (count={}), skipping build",
-                           sessionKey, current);
+            AtomicLong lastActivity = lastActivityTime.get(sessionKey);
+            if (lastActivity == null) {
+                logger.warn("No last activity time found for session {}, skipping build", sessionKey);
                 return;
             }
 
-            // No new threads, proceed with build
-            logger.info("Building session {} (no active uploads)", sessionKey);
+            long timeSinceLastActivity = System.currentTimeMillis() - lastActivity.get();
 
-            try {
-                Set<String> archiveUrls = buildSessions(user, sessionUris, params);
-                logger.info("Successfully built and archived session {} to: {}",
-                           sessionKey, archiveUrls);
+            if (timeSinceLastActivity >= BUILD_DELAY_MS) {
+                // No new activity for BUILD_DELAY_MS, start build
+                logger.info("No new uploads for {}ms, building session {}", timeSinceLastActivity, sessionKey);
 
-                // Complete Future, notify all waiting threads
-                buildFuture.complete(archiveUrls);
+                CompletableFuture<Set<String>> buildFuture = buildFutures.get(sessionKey);
+                if (buildFuture == null) {
+                    logger.warn("No build future found for session {}", sessionKey);
+                    return;
+                }
 
-            } catch (Exception e) {
-                logger.error("Failed to build session: {}", sessionKey, e);
-                buildFuture.completeExceptionally(e);
-            } finally {
-                // Cleanup
-                buildFutures.remove(sessionKey);
-                activeCounts.remove(sessionKey);
+                try {
+                    // Get all URIs collected for this sessionKey
+                    Set<String> urisForSession = sessionUrisByKey.get(sessionKey);
+
+                    if (urisForSession == null || urisForSession.isEmpty()) {
+                        logger.warn("No session URIs found for key: {}", sessionKey);
+                        buildFuture.completeExceptionally(new ClientException("No sessions found to build"));
+                        return;
+                    }
+
+                    logger.info("Building {} prearchive sessions for {}: {}",
+                              urisForSession.size(), sessionKey, urisForSession);
+
+                    Set<String> archiveUrls = buildSessions(user, urisForSession, params);
+                    buildFuture.complete(archiveUrls);
+                    logger.info("Build completed successfully for session {}: {}", sessionKey, archiveUrls);
+                } catch (Exception e) {
+                    logger.error("Failed to build session: {}", sessionKey, e);
+                    buildFuture.completeExceptionally(e);
+                } finally {
+                    // Clean up maps
+                    buildFutures.remove(sessionKey);
+                    lastActivityTime.remove(sessionKey);
+                    sessionUrisByKey.remove(sessionKey);
+                }
+            } else {
+                // Still receiving uploads, reschedule check
+                long remainingTime = BUILD_DELAY_MS - timeSinceLastActivity;
+                logger.debug("Session {} still active (last upload {}ms ago), rescheduling check in {}ms",
+                           sessionKey, timeSinceLastActivity, remainingTime);
+                scheduleBuildCheck(sessionKey, user, params);
             }
         }, BUILD_DELAY_MS, TimeUnit.MILLISECONDS);
     }
 
     /**
-     * Extract session key from prearchive URI for concurrent build management
+     * Extract session key from prearchive URI for concurrent build management.
+     * NOTE: Excludes timestamp because GradualDicomImporter creates different timestamps
+     * for concurrent uploads of the same patient/study. We want to group them together.
      */
     private String extractSessionKey(String sessionUri) {
         // /prearchive/projects/TestProject/20251208_085152/STS_045
-        // → TestProject/20251208_085152/STS_045
+        // → TestProject/STS_045 (without timestamp)
         String[] elements = sessionUri.split(SLASH);
         if (elements.length >= 6) {
-            return elements[3] + "/" + elements[4] + "/" + elements[5];
+            return elements[3] + "/" + elements[5];  // project + sessionName
         }
         return sessionUri;
     }
