@@ -453,11 +453,7 @@ public class StowRsServiceImpl implements StowRsService {
                     return new CompletableFuture<>();
                 });
 
-            // 5. Mark import as complete for this thread
-            myImportFuture.complete(null);
-            logger.debug("Import completed for session key: {}", sessionKey);
-
-            // 6. Wait for this session's build to complete
+            // 5. Wait for this session's build to complete
             try {
                 logger.debug("Waiting for build to complete for session: {}", sessionKey);
                 Set<String> archiveUrlsForSession = buildFuture.get(30, TimeUnit.SECONDS);
@@ -607,6 +603,10 @@ public class StowRsServiceImpl implements StowRsService {
 
     /**
      * Build DICOM JSON response per STOW-RS specification (PS3.18)
+     * Returns an array of response objects, one per study, each containing:
+     * - 00081190 (RetrieveURL): Study-level URL
+     * - 00081198 (FailedSOPSequence): Failed instances for this study
+     * - 00081199 (ReferencedSOPSequence): Successful instances for this study
      */
     private String buildStowRsResponse(List<SuccessfulInstance> successfulInstances, Set<String> archiveUrls,
                                        List<FailedInstance> failedInstances,
@@ -614,69 +614,112 @@ public class StowRsServiceImpl implements StowRsService {
                                        Map<String, String> prearchiveToArchiveMap,
                                        Map<String, Object> params) {
         try {
-            Attributes attrs = new Attributes();
-            int successCount = successfulInstances.size();
-
             // Build base DICOMweb URL from request
             String projectId = (String) params.get(URIManager.PROJECT_ID);
             String baseUrl = buildBaseUrl(request, projectId);
             logger.debug("Base DICOMweb URL: {}", baseUrl);
 
-            // Set top-level RetrieveURL (0008,1190) - DICOMweb study-level URL
-            if (successCount > 0) {
-                // Get Study Instance UID from first successful instance
-                String studyUid = successfulInstances.get(0).getStudyInstanceUid();
+            // Group successful instances by StudyInstanceUID
+            Map<String, List<SuccessfulInstance>> successByStudy = new HashMap<>();
+            for (SuccessfulInstance instance : successfulInstances) {
+                String studyUid = instance.getStudyInstanceUid();
                 if (studyUid != null) {
-                    String studyUrl = baseUrl + "/studies/" + studyUid;
-                    attrs.setString(Tag.RetrieveURL, VR.UR, studyUrl);
-                    logger.debug("Top-level RetrieveURL: {}", studyUrl);
+                    successByStudy.computeIfAbsent(studyUid, k -> new ArrayList<>()).add(instance);
                 }
             }
 
-            // Create ReferencedSOPSequence (0008,1199) - POPULATE with successful instances
-            Sequence referencedSeq = attrs.newSequence(Tag.ReferencedSOPSequence, successCount);
-            for (SuccessfulInstance success : successfulInstances) {
-                Attributes refItem = new Attributes();
-
-                // ReferencedSOPClassUID (0008,1150)
-                if (success.getSopClassUid() != null) {
-                    refItem.setString(Tag.ReferencedSOPClassUID, VR.UI, success.getSopClassUid());
-                }
-
-                // ReferencedSOPInstanceUID (0008,1155)
-                refItem.setString(Tag.ReferencedSOPInstanceUID, VR.UI, success.getSopInstanceUid());
-
-                // RetrieveURL (0008,1190) - DICOMweb WADO-RS instance URL
-                String retrieveUrl = buildInstanceUrl(baseUrl, success);
-
-                refItem.setString(Tag.RetrieveURL, VR.UR, retrieveUrl);
-
-                referencedSeq.add(refItem);
-                logger.debug("Added successful instance to response: SOP={}, Class={}, URL={}",
-                    success.getSopInstanceUid(), success.getSopClassUid(), retrieveUrl);
-            }
-
-            // Create FailedSOPSequence (0008,1198)
-            Sequence failedSeq = attrs.newSequence(Tag.FailedSOPSequence, failedInstances.size());
+            // Group failed instances by StudyInstanceUID (if available)
+            Map<String, List<FailedInstance>> failedByStudy = new HashMap<>();
+            List<FailedInstance> failedWithoutStudy = new ArrayList<>();
             for (FailedInstance failure : failedInstances) {
-                Attributes failedItem = new Attributes();
-                failedItem.setInt(Tag.FailureReason, VR.US, failure.getFailureReason());
-
-                if (failure.hasSopUids()) {
-                    failedItem.setString(Tag.ReferencedSOPClassUID, VR.UI, failure.getSopClassUid());
-                    failedItem.setString(Tag.ReferencedSOPInstanceUID, VR.UI, failure.getSopInstanceUid());
+                String studyUid = failure.getStudyInstanceUid();
+                if (studyUid != null) {
+                    failedByStudy.computeIfAbsent(studyUid, k -> new ArrayList<>()).add(failure);
+                } else {
+                    failedWithoutStudy.add(failure);
                 }
-
-                failedSeq.add(failedItem);
-                logger.debug("Added failed instance to response: {}", failure);
             }
 
-            logger.info("Built STOW-RS response: {} successful, {} failed", successCount, failedInstances.size());
-            return DicomWebUtils.toJson(attrs);
+            // Build JSON array of study responses
+            StringBuilder jsonArray = new StringBuilder("[");
+            boolean first = true;
+
+            // Process each study
+            for (Map.Entry<String, List<SuccessfulInstance>> entry : successByStudy.entrySet()) {
+                String studyUid = entry.getKey();
+                List<SuccessfulInstance> studyInstances = entry.getValue();
+                List<FailedInstance> studyFailures = failedByStudy.getOrDefault(studyUid, Collections.emptyList());
+
+                if (!first) {
+                    jsonArray.append(",");
+                }
+                first = false;
+
+                // Build Attributes for this study
+                Attributes studyAttrs = new Attributes();
+
+                // RetrieveURL (0008,1190) - Study-level URL
+                String studyUrl = baseUrl + "/studies/" + studyUid;
+                studyAttrs.setString(Tag.RetrieveURL, VR.UR, studyUrl);
+
+                // FailedSOPSequence (0008,1198)
+                Sequence failedSeq = studyAttrs.newSequence(Tag.FailedSOPSequence, studyFailures.size());
+                for (FailedInstance failure : studyFailures) {
+                    Attributes failedItem = new Attributes();
+                    failedItem.setInt(Tag.FailureReason, VR.US, failure.getFailureReason());
+                    if (failure.hasSopUids()) {
+                        failedItem.setString(Tag.ReferencedSOPClassUID, VR.UI, failure.getSopClassUid());
+                        failedItem.setString(Tag.ReferencedSOPInstanceUID, VR.UI, failure.getSopInstanceUid());
+                    }
+                    failedSeq.add(failedItem);
+                }
+
+                // ReferencedSOPSequence (0008,1199)
+                Sequence referencedSeq = studyAttrs.newSequence(Tag.ReferencedSOPSequence, studyInstances.size());
+                for (SuccessfulInstance success : studyInstances) {
+                    Attributes refItem = new Attributes();
+                    if (success.getSopClassUid() != null) {
+                        refItem.setString(Tag.ReferencedSOPClassUID, VR.UI, success.getSopClassUid());
+                    }
+                    refItem.setString(Tag.ReferencedSOPInstanceUID, VR.UI, success.getSopInstanceUid());
+                    refItem.setString(Tag.RetrieveURL, VR.UR, buildInstanceUrl(baseUrl, success));
+                    referencedSeq.add(refItem);
+                }
+
+                jsonArray.append(DicomWebUtils.toJson(studyAttrs));
+                logger.debug("Added study {} to response: {} successful, {} failed",
+                    studyUid, studyInstances.size(), studyFailures.size());
+            }
+
+            // Add any failed instances without study UID as a separate entry
+            if (!failedWithoutStudy.isEmpty()) {
+                if (!first) {
+                    jsonArray.append(",");
+                }
+                Attributes unknownStudyAttrs = new Attributes();
+                unknownStudyAttrs.newSequence(Tag.ReferencedSOPSequence, 0);
+                Sequence failedSeq = unknownStudyAttrs.newSequence(Tag.FailedSOPSequence, failedWithoutStudy.size());
+                for (FailedInstance failure : failedWithoutStudy) {
+                    Attributes failedItem = new Attributes();
+                    failedItem.setInt(Tag.FailureReason, VR.US, failure.getFailureReason());
+                    if (failure.hasSopUids()) {
+                        failedItem.setString(Tag.ReferencedSOPClassUID, VR.UI, failure.getSopClassUid());
+                        failedItem.setString(Tag.ReferencedSOPInstanceUID, VR.UI, failure.getSopInstanceUid());
+                    }
+                    failedSeq.add(failedItem);
+                }
+                jsonArray.append(DicomWebUtils.toJson(unknownStudyAttrs));
+            }
+
+            jsonArray.append("]");
+
+            logger.info("Built STOW-RS response: {} studies, {} successful instances, {} failed instances",
+                successByStudy.size(), successfulInstances.size(), failedInstances.size());
+            return jsonArray.toString();
 
         } catch (Exception e) {
             logger.error("Error building STOW-RS response", e);
-            return "{\"error\": \"Failed to build response\"}";
+            return "[{\"error\": \"Failed to build response\"}]";
         }
     }
 

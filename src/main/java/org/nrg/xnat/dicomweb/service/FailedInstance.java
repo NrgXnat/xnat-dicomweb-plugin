@@ -26,26 +26,36 @@ public class FailedInstance {
     private final int instanceIndex;
     private final String sopClassUid;
     private final String sopInstanceUid;
+    private final String studyInstanceUid;
     private final int failureReason;
     private final String errorMessage;
 
     /**
-     * Create a failed instance with full details
+     * Create a failed instance with full details including study UID
      */
     public FailedInstance(int instanceIndex, String sopClassUid, String sopInstanceUid,
-                          int failureReason, String errorMessage) {
+                          String studyInstanceUid, int failureReason, String errorMessage) {
         this.instanceIndex = instanceIndex;
         this.sopClassUid = sopClassUid;
         this.sopInstanceUid = sopInstanceUid;
+        this.studyInstanceUid = studyInstanceUid;
         this.failureReason = failureReason;
         this.errorMessage = errorMessage;
+    }
+
+    /**
+     * Create a failed instance with full details (without study UID - for backward compatibility)
+     */
+    public FailedInstance(int instanceIndex, String sopClassUid, String sopInstanceUid,
+                          int failureReason, String errorMessage) {
+        this(instanceIndex, sopClassUid, sopInstanceUid, null, failureReason, errorMessage);
     }
 
     /**
      * Create a failed instance when SOP UIDs are not available (e.g., non-DICOM file)
      */
     public FailedInstance(int instanceIndex, int failureReason, String errorMessage) {
-        this(instanceIndex, null, null, failureReason, errorMessage);
+        this(instanceIndex, null, null, null, failureReason, errorMessage);
     }
 
     /**
@@ -72,6 +82,10 @@ public class FailedInstance {
 
     public String getSopInstanceUid() {
         return sopInstanceUid;
+    }
+
+    public String getStudyInstanceUid() {
+        return studyInstanceUid;
     }
 
     public int getFailureReason() {
