@@ -54,7 +54,7 @@ public class WadoRsApiTest {
     }
 
     @Test
-    public void testRetrieveStudyMetadata_ReturnsArrayOfInstances() {
+    public void testRetrieveStudyMetadata_ReturnsArrayOfInstances() throws Exception {
         // Arrange
         String projectId = "TestProject";
         String studyUID = "1.2.3.4.5";
@@ -85,8 +85,8 @@ public class WadoRsApiTest {
         assertEquals("Should contain 3 SOP Instance UIDs", 3, sopInstanceUIDCount);
     }
 
-    @Test
-    public void testRetrieveStudyMetadata_NotFound() {
+    @Test(expected = org.nrg.xnat.dicomweb.exceptions.ResourceNotFoundException.class)
+    public void testRetrieveStudyMetadata_NotFound() throws Exception {
         // Arrange
         String projectId = "TestProject";
         String studyUID = "1.2.3.4.5";
@@ -98,15 +98,12 @@ public class WadoRsApiTest {
         HttpServletRequest mockRequest = mock(HttpServletRequest.class);
         when(mockRequest.getRequestURL()).thenReturn(new StringBuffer("http://localhost:8080/xapi/dicomweb/projects/TestProject/studies/" + studyUID + "/metadata"));
 
-        // Act
-        ResponseEntity<String> response = wadoRsApi.retrieveStudyMetadata(projectId, studyUID, mockRequest);
-
-        // Assert
-        assertEquals("Should return 404 Not Found for empty result", HttpStatus.NOT_FOUND, response.getStatusCode());
+        // Act - should throw ResourceNotFoundException
+        wadoRsApi.retrieveStudyMetadata(projectId, studyUID, mockRequest);
     }
 
     @Test
-    public void testRetrieveStudyMetadata_EachInstanceHasSOPInstanceUID() {
+    public void testRetrieveStudyMetadata_EachInstanceHasSOPInstanceUID() throws Exception {
         // Arrange
         String projectId = "TestProject";
         String studyUID = "1.2.3.4.5";
@@ -133,7 +130,7 @@ public class WadoRsApiTest {
     }
 
     @Test
-    public void testRetrieveAllStudyInstanceMetadata_NoNullPointerException() {
+    public void testRetrieveAllStudyInstanceMetadata_NoNullPointerException() throws Exception {
         // Regression test: verify that retrieveAllStudyInstanceMetadata doesn't throw NPE
         // when called with valid parameters (unlike searchInstances which required non-null seriesUID)
         String projectId = "TestProject";
@@ -190,7 +187,7 @@ public class WadoRsApiTest {
     // Frame retrieval tests
 
     @Test
-    public void testRetrieveFrames_SingleFrame_ReturnsOctetStream() {
+    public void testRetrieveFrames_SingleFrame_ReturnsOctetStream() throws Exception {
         // Arrange
         String projectId = "TestProject";
         String studyUID = "1.2.3.4.5";
@@ -217,7 +214,7 @@ public class WadoRsApiTest {
     }
 
     @Test
-    public void testRetrieveFrames_MultipleFrames_ReturnsMultipart() {
+    public void testRetrieveFrames_MultipleFrames_ReturnsMultipart() throws Exception {
         // Arrange
         String projectId = "TestProject";
         String studyUID = "1.2.3.4.5";
@@ -247,8 +244,8 @@ public class WadoRsApiTest {
         assertTrue("Should include boundary parameter", contentType.contains("boundary="));
     }
 
-    @Test
-    public void testRetrieveFrames_NotFound() {
+    @Test(expected = org.nrg.xnat.dicomweb.exceptions.ResourceNotFoundException.class)
+    public void testRetrieveFrames_NotFound() throws Exception {
         // Arrange
         String projectId = "TestProject";
         String studyUID = "1.2.3.4.5";
@@ -260,17 +257,12 @@ public class WadoRsApiTest {
                 eq(seriesUID), eq(instanceUID), eq(frameList)))
             .thenReturn(new ArrayList<>());
 
-        // Act
-        ResponseEntity<?> response = wadoRsApi.retrieveFrames(projectId, studyUID, seriesUID,
-                instanceUID, frameList, null);
-
-        // Assert
-        assertEquals("Should return 404 Not Found when no frames retrieved",
-                HttpStatus.NOT_FOUND, response.getStatusCode());
+        // Act - should throw ResourceNotFoundException
+        wadoRsApi.retrieveFrames(projectId, studyUID, seriesUID, instanceUID, frameList, null);
     }
 
-    @Test
-    public void testRetrieveFrames_InvalidFrameNumbers() {
+    @Test(expected = org.nrg.xnat.dicomweb.exceptions.ResourceNotFoundException.class)
+    public void testRetrieveFrames_InvalidFrameNumbers() throws Exception {
         // Arrange
         String projectId = "TestProject";
         String studyUID = "1.2.3.4.5";
@@ -283,17 +275,12 @@ public class WadoRsApiTest {
                 eq(seriesUID), eq(instanceUID), eq(frameList)))
             .thenReturn(new ArrayList<>());
 
-        // Act
-        ResponseEntity<?> response = wadoRsApi.retrieveFrames(projectId, studyUID, seriesUID,
-                instanceUID, frameList, null);
-
-        // Assert
-        assertEquals("Should return 404 when frame numbers are invalid",
-                HttpStatus.NOT_FOUND, response.getStatusCode());
+        // Act - should throw ResourceNotFoundException
+        wadoRsApi.retrieveFrames(projectId, studyUID, seriesUID, instanceUID, frameList, null);
     }
 
     @Test
-    public void testRetrieveFrames_NonSequentialFrames() {
+    public void testRetrieveFrames_NonSequentialFrames() throws Exception {
         // Arrange
         String projectId = "TestProject";
         String studyUID = "1.2.3.4.5";
