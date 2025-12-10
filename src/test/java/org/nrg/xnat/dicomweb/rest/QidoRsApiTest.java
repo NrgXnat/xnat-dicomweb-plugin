@@ -465,7 +465,250 @@ public class QidoRsApiTest {
         assertEquals("Should parse uppercase parameter names", "MR", capturedQuery.getString(Tag.Modality));
     }
 
+    // ========== Pagination Tests ==========
+
+    @Test
+    public void testSearchStudies_WithLimitParameter() {
+        // Arrange
+        String projectId = "TestProject";
+        Map<String, String> queryParams = new HashMap<>();
+        queryParams.put("limit", "2");
+
+        List<Attributes> mockStudies = createMockStudies(5);
+
+        when(mockDicomService.searchStudies(any(UserI.class), eq(projectId), any(Attributes.class)))
+            .thenReturn(mockStudies);
+
+        // Act
+        ResponseEntity<String> response = qidoRsApi.searchStudies(projectId, queryParams);
+
+        // Assert
+        assertEquals("Should return 200 OK", HttpStatus.OK, response.getStatusCode());
+        assertNotNull("Response body should not be null", response.getBody());
+
+        // Count StudyInstanceUIDs in response (should be limited to 2)
+        int studyCount = countOccurrences(response.getBody(), "\"0020000D\"");
+        assertEquals("Should return only 2 studies due to limit", 2, studyCount);
+
+        // Verify X-Total-Count header shows total (5)
+        assertEquals("X-Total-Count should show total count", "5",
+                response.getHeaders().getFirst("X-Total-Count"));
+    }
+
+    @Test
+    public void testSearchStudies_WithOffsetParameter() {
+        // Arrange
+        String projectId = "TestProject";
+        Map<String, String> queryParams = new HashMap<>();
+        queryParams.put("offset", "2");
+        queryParams.put("limit", "10");
+
+        List<Attributes> mockStudies = createMockStudies(5);
+
+        when(mockDicomService.searchStudies(any(UserI.class), eq(projectId), any(Attributes.class)))
+            .thenReturn(mockStudies);
+
+        // Act
+        ResponseEntity<String> response = qidoRsApi.searchStudies(projectId, queryParams);
+
+        // Assert
+        assertEquals("Should return 200 OK", HttpStatus.OK, response.getStatusCode());
+
+        // Count StudyInstanceUIDs (should be 3: indices 2,3,4)
+        int studyCount = countOccurrences(response.getBody(), "\"0020000D\"");
+        assertEquals("Should return 3 studies after offset", 3, studyCount);
+
+        // Verify response contains studies starting from index 2
+        assertTrue("Should contain study at index 2", response.getBody().contains("1.2.3.4.5.2"));
+        assertFalse("Should NOT contain study at index 0", response.getBody().contains("1.2.3.4.5.0"));
+    }
+
+    @Test
+    public void testSearchStudies_LimitExceedsMax() {
+        // Arrange
+        String projectId = "TestProject";
+        Map<String, String> queryParams = new HashMap<>();
+        queryParams.put("limit", "9999"); // Exceeds max (1000)
+
+        List<Attributes> mockStudies = createMockStudies(5);
+
+        when(mockDicomService.searchStudies(any(UserI.class), eq(projectId), any(Attributes.class)))
+            .thenReturn(mockStudies);
+
+        // Act
+        ResponseEntity<String> response = qidoRsApi.searchStudies(projectId, queryParams);
+
+        // Assert - should succeed (limit capped to max)
+        assertEquals("Should return 200 OK", HttpStatus.OK, response.getStatusCode());
+    }
+
+    @Test
+    public void testSearchStudies_InvalidLimitValue() {
+        // Arrange
+        String projectId = "TestProject";
+        Map<String, String> queryParams = new HashMap<>();
+        queryParams.put("limit", "invalid");
+
+        List<Attributes> mockStudies = createMockStudies(5);
+
+        when(mockDicomService.searchStudies(any(UserI.class), eq(projectId), any(Attributes.class)))
+            .thenReturn(mockStudies);
+
+        // Act
+        ResponseEntity<String> response = qidoRsApi.searchStudies(projectId, queryParams);
+
+        // Assert - should succeed with default limit
+        assertEquals("Should return 200 OK with default limit", HttpStatus.OK, response.getStatusCode());
+    }
+
+    @Test
+    public void testSearchStudies_NegativeOffset() {
+        // Arrange
+        String projectId = "TestProject";
+        Map<String, String> queryParams = new HashMap<>();
+        queryParams.put("offset", "-5");
+
+        List<Attributes> mockStudies = createMockStudies(5);
+
+        when(mockDicomService.searchStudies(any(UserI.class), eq(projectId), any(Attributes.class)))
+            .thenReturn(mockStudies);
+
+        // Act
+        ResponseEntity<String> response = qidoRsApi.searchStudies(projectId, queryParams);
+
+        // Assert - should succeed with offset = 0
+        assertEquals("Should return 200 OK", HttpStatus.OK, response.getStatusCode());
+        // All 5 studies should be returned (negative offset treated as 0)
+        int studyCount = countOccurrences(response.getBody(), "\"0020000D\"");
+        assertEquals("Should return all studies when offset is negative", 5, studyCount);
+    }
+
+    @Test
+    public void testSearchStudies_ZeroLimit() {
+        // Arrange
+        String projectId = "TestProject";
+        Map<String, String> queryParams = new HashMap<>();
+        queryParams.put("limit", "0");
+
+        List<Attributes> mockStudies = createMockStudies(5);
+
+        when(mockDicomService.searchStudies(any(UserI.class), eq(projectId), any(Attributes.class)))
+            .thenReturn(mockStudies);
+
+        // Act
+        ResponseEntity<String> response = qidoRsApi.searchStudies(projectId, queryParams);
+
+        // Assert - should succeed with default limit (0 is invalid)
+        assertEquals("Should return 200 OK", HttpStatus.OK, response.getStatusCode());
+    }
+
+    @Test
+    public void testSearchStudies_OffsetBeyondResults() {
+        // Arrange
+        String projectId = "TestProject";
+        Map<String, String> queryParams = new HashMap<>();
+        queryParams.put("offset", "100"); // Beyond the 5 results
+
+        List<Attributes> mockStudies = createMockStudies(5);
+
+        when(mockDicomService.searchStudies(any(UserI.class), eq(projectId), any(Attributes.class)))
+            .thenReturn(mockStudies);
+
+        // Act
+        ResponseEntity<String> response = qidoRsApi.searchStudies(projectId, queryParams);
+
+        // Assert
+        assertEquals("Should return 200 OK", HttpStatus.OK, response.getStatusCode());
+        assertEquals("Should return empty array when offset exceeds results", "[]", response.getBody());
+        assertEquals("X-Total-Count should still show total", "5",
+                response.getHeaders().getFirst("X-Total-Count"));
+    }
+
+    @Test
+    public void testSearchStudies_VerifyContentType() {
+        // Arrange
+        String projectId = "TestProject";
+        List<Attributes> mockStudies = createMockStudies(1);
+
+        when(mockDicomService.searchStudies(any(UserI.class), eq(projectId), any(Attributes.class)))
+            .thenReturn(mockStudies);
+
+        // Act
+        ResponseEntity<String> response = qidoRsApi.searchStudies(projectId, null);
+
+        // Assert
+        assertNotNull("Content-Type should be set", response.getHeaders().getContentType());
+        assertTrue("Content-Type should be application/dicom+json",
+                response.getHeaders().getContentType().toString().contains("application/dicom+json"));
+    }
+
+    @Test
+    public void testSearchSeries_WithPagination() {
+        // Arrange
+        String projectId = "TestProject";
+        String studyUID = "1.2.3.4.5";
+        Map<String, String> queryParams = new HashMap<>();
+        queryParams.put("limit", "2");
+        queryParams.put("offset", "1");
+
+        List<Attributes> mockSeries = createMockSeries(5);
+
+        when(mockDicomService.searchSeries(any(UserI.class), eq(projectId), eq(studyUID), any(Attributes.class)))
+            .thenReturn(mockSeries);
+
+        // Act
+        ResponseEntity<String> response = qidoRsApi.searchSeries(projectId, studyUID, queryParams);
+
+        // Assert
+        assertEquals("Should return 200 OK", HttpStatus.OK, response.getStatusCode());
+
+        // Count SeriesInstanceUIDs (should be 2: indices 1,2)
+        int seriesCount = countOccurrences(response.getBody(), "\"0020000E\"");
+        assertEquals("Should return 2 series", 2, seriesCount);
+
+        assertEquals("X-Total-Count should show total", "5",
+                response.getHeaders().getFirst("X-Total-Count"));
+    }
+
+    @Test
+    public void testSearchInstances_WithPagination() {
+        // Arrange
+        String projectId = "TestProject";
+        String studyUID = "1.2.3.4.5";
+        String seriesUID = "1.2.3.4.5.100";
+        Map<String, String> queryParams = new HashMap<>();
+        queryParams.put("limit", "3");
+
+        List<Attributes> mockInstances = createMockInstances(10);
+
+        when(mockDicomService.searchInstances(any(UserI.class), eq(projectId), eq(studyUID), eq(seriesUID), any(Attributes.class)))
+            .thenReturn(mockInstances);
+
+        // Act
+        ResponseEntity<String> response = qidoRsApi.searchInstances(projectId, studyUID, seriesUID, queryParams);
+
+        // Assert
+        assertEquals("Should return 200 OK", HttpStatus.OK, response.getStatusCode());
+
+        // Count SOPInstanceUIDs (should be 3)
+        int instanceCount = countOccurrences(response.getBody(), "\"00080018\"");
+        assertEquals("Should return 3 instances", 3, instanceCount);
+
+        assertEquals("X-Total-Count should show total", "10",
+                response.getHeaders().getFirst("X-Total-Count"));
+    }
+
     // ========== Helper Methods ==========
+
+    private int countOccurrences(String str, String substring) {
+        int count = 0;
+        int index = 0;
+        while ((index = str.indexOf(substring, index)) != -1) {
+            count++;
+            index += substring.length();
+        }
+        return count;
+    }
 
     private List<Attributes> createMockStudies(int count) {
         List<Attributes> studies = new ArrayList<>();
