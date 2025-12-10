@@ -1,618 +1,283 @@
-# STOW-RS Implementation Plan
+# STOW-RS Implementation
 
-## ✅ IMPLEMENTATION COMPLETE
+## Status: Implemented
 
-> **Note:** This document represents the original implementation plan. The actual implementation evolved during development and includes additional features:
-> - **Strategy Pattern**: Two import strategies (`GradualDicomImporter` and `DirectWrite`) are available via query parameter
-> - **DirectWrite Enhancement**: Uses `PrearcDatabase.eitherGetOrCreateSession()` for automatic session registration (matching the e39978f implementation approach)
-> - **Project Validation**: Added early validation in StowRsApi to verify project exists before processing
-> - **Multipart Parser**: Uses custom `Mime4jHybridParser` instead of Apache Commons FileUpload
-> - **Session Registration**: Both strategies now automatically register sessions in PrearcDatabase for immediate visibility in XNAT UI
->
-> See `dicomweb-doc/DirectWrite_Implementation_Comparison.md` for detailed comparison of implementations.
-
-This document outlines the implementation of STOW-RS (STore Over the Web by RESTful Services) support for the XNAT DICOMweb Proxy Plugin, completing the DICOMweb triumvirate (QIDO-RS, WADO-RS, STOW-RS).
-
-**Status:** Fully implemented and tested
 **Version:** 1.1.3
-**Original Plan Date:** November 17, 2025
-**Latest Update:** November 25, 2025
+**Last Updated:** December 10, 2025
+
+This document describes the STOW-RS (STore Over the Web by RESTful Services) implementation for the XNAT DICOMweb Proxy Plugin.
 
 ## Overview
 
-This document describes the complete implementation of STOW-RS support, including integration with XNAT's native import pipeline using `DicomInboxImportRequestService`.
+STOW-RS enables uploading DICOM instances to XNAT via RESTful HTTP POST requests. The implementation supports two import strategies and returns DICOMweb-compliant JSON responses.
 
-## DICOMweb STOW-RS Specification
+## API Endpoint
 
-### Reference
-- DICOM PS3.18 Section 10.5: Store Transaction
-- URL: https://dicom.nema.org/medical/dicom/current/output/html/part18.html#sect_10.5
-
-### Key Requirements
-
-#### 1. Endpoint Pattern
 ```
-POST /dicomweb/projects/{projectId}/studies
+POST /xapi/dicomweb/projects/{projectId}/studies[?strategy=<strategy>]
 ```
 
 **Content-Type:** `multipart/related; type="application/dicom"; boundary=<boundary>`
+**Accept:** `application/dicom+json`
+**Authentication:** Required (Edit permission on project)
 
-#### 2. Request Format
-- HTTP POST with multipart/related body
-- Each part contains one DICOM instance (PS3.10 binary format)
-- Parts separated by boundary string
-- Supports compressed and uncompressed transfer syntaxes
+### Query Parameters
 
-#### 3. Response Format
-**Success (200 OK):**
+| Parameter | Values | Default | Description |
+|-----------|--------|---------|-------------|
+| `strategy` | `GradualDicomImporter`, `DirectArchive` | `GradualDicomImporter` | Import strategy selection |
+
+## Import Strategies
+
+### 1. GradualDicomImporter (Default, Recommended)
+
+Uses XNAT's native `GradualDicomImporter` for a complete import pipeline.
+
+**Features:**
+- Full DICOM validation
+- Automatic session/scan creation
+- Prearchive workflow support
+- Session merging for concurrent uploads
+- Automatic archiving after build
+
+**Process Flow:**
+```
+Multipart Request → Parse → GradualDicomImporter → Prearchive → Build → Archive
+```
+
+**Concurrent Upload Handling:**
+- Per-session build locks prevent duplicate builds
+- Last-activity-time approach delays build until uploads complete
+- Import futures ensure all files are processed before building
+
+### 2. DirectArchive (Experimental)
+
+Direct archive writing bypassing prearchive.
+
+> ⚠️ **EXPERIMENTAL**: This strategy has significant limitations. Use only when you understand the trade-offs.
+
+**Limitations:**
+- **No session append support**: Cannot add files to existing sessions
+- **No duplicate detection**: Will fail if session already exists
+- **Limited concurrent support**: Concurrent protection is less robust than GradualDicomImporter
+- **No prearchive review**: Files go directly to archive without review opportunity
+
+**Use Cases:**
+- Fresh uploads to new sessions only
+- When prearchive workflow is not needed
+- Performance-critical scenarios with single-patient uploads
+
+**Process Flow:**
+```
+Multipart Request → Parse → DirectArchiveSession → Archive (direct)
+```
+
+## Response Format
+
+The response is a JSON array with one object per study, each containing the instances for that study.
+
+### Success Response (HTTP 200)
+
 ```json
-{
-  "00081190": {
-    "vr": "UR",
-    "Value": ["http://xnat/xapi/dicomweb/projects/PROJECT/studies/{uid}"]
-  },
-  "00081198": {
-    "vr": "SQ",
-    "Value": [{
-      "00081150": {"vr": "UI", "Value": ["1.2.840.10008.5.1.4.1.1.2"]},
-      "00081155": {"vr": "UI", "Value": ["1.3.6.1.4.1.5962.1.1.0..."]},
-      "00081190": {"vr": "UR", "Value": ["http://..."]}
-    }]
-  },
-  "00081199": {
-    "vr": "SQ",
-    "Value": []
+[
+  {
+    "00081190": {
+      "vr": "UR",
+      "Value": ["http://host/xapi/dicomweb/projects/PROJECT/studies/1.2.3.4"]
+    },
+    "00081198": {
+      "vr": "SQ"
+    },
+    "00081199": {
+      "vr": "SQ",
+      "Value": [
+        {
+          "00081150": {"vr": "UI", "Value": ["1.2.840.10008.5.1.4.1.1.2"]},
+          "00081155": {"vr": "UI", "Value": ["1.2.3.4.5.6.7.8.9"]},
+          "00081190": {"vr": "UR", "Value": ["http://host/.../instances/1.2.3.4.5.6.7.8.9"]}
+        }
+      ]
+    }
   }
-}
+]
 ```
 
-**Tags:**
-- `00081190` (Retrieve URL) - URL to retrieve stored study
-- `00081198` (Failed SOP Sequence) - Instances that failed (empty if all succeed)
-- `00081199` (Referenced SOP Sequence) - Successfully stored instances
+### Response Tags
 
-**Failure Codes:**
-- `400 Bad Request` - Invalid request format
-- `401 Unauthorized` - Authentication required
-- `403 Forbidden` - Insufficient permissions
-- `409 Conflict` - Duplicate instances
-- `507 Insufficient Storage` - Out of storage space
+| Tag | Name | Description |
+|-----|------|-------------|
+| `00081190` | RetrieveURL | URL to retrieve the study |
+| `00081198` | FailedSOPSequence | Failed instances with failure reasons |
+| `00081199` | ReferencedSOPSequence | Successfully stored instances |
 
-#### 4. Validation Requirements
-- Verify each DICOM instance is valid (parseable)
-- Check SOP Class UID and SOP Instance UID are present
-- Check Study Instance UID matches (if multiple instances)
-- Validate transfer syntax is supported
-- Check project permissions (user must have edit access)
+### Multi-Study Response
 
-#### 5. Storage Behavior
-- Store instances in XNAT archive
-- Create sessions (studies) if they don't exist
-- Create scans (series) if they don't exist
-- Handle duplicate detection (same SOP Instance UID)
-- Preserve original DICOM attributes
+When a single request contains instances from multiple studies (e.g., different patients), the response contains one object per study:
 
-## Implementation Architecture
-
-### Component Overview
-
-```
-┌─────────────────────────────────────────────┐
-│          DICOMweb Client                     │
-│      (OHIF, Weasis, Horos, etc.)            │
-└──────────────────┬──────────────────────────┘
-                   │ POST multipart/related
-                   │
-┌──────────────────▼──────────────────────────┐
-│            StowRsApi.java                    │
-│  - Parse multipart request                   │
-│  - Extract DICOM instances                   │
-│  - Validate user permissions                 │
-│  - Call service layer                        │
-│  - Build STOW-RS response                    │
-└──────────────────┬──────────────────────────┘
-                   │
-┌──────────────────▼──────────────────────────┐
-│       XnatDicomService.storeInstances()      │
-│  - Validate DICOM instances                  │
-│  - Extract metadata (Study/Series UIDs)      │
-│  - Write files to temporary directory        │
-│  - Call XNAT import pipeline                 │
-│  - Return success/failure status             │
-└──────────────────┬──────────────────────────┘
-                   │
-┌──────────────────▼──────────────────────────┐
-│         XNAT Import Pipeline                 │
-│  - GradualDicomImporter or                   │
-│  - DicomInboxImporter                        │
-│  - Creates sessions/scans                    │
-│  - Archives DICOM files                      │
-└──────────────────────────────────────────────┘
+```json
+[
+  { "study1 with its instances" },
+  { "study2 with its instances" }
+]
 ```
 
-### Design Decisions
+## Architecture
 
-#### Approach 1: Direct XNAT Import (Recommended)
-**Use XNAT's existing import services**
+```
+┌─────────────────────────────────────────────────────────────┐
+│                    StowRsApi (REST)                          │
+│  - Validate project access                                   │
+│  - Parse query parameters                                    │
+│  - Select import strategy                                    │
+└────────────────────────────┬────────────────────────────────┘
+                             │
+┌────────────────────────────▼────────────────────────────────┐
+│                  StowRsServiceImpl                           │
+│  - Parse multipart request (Mime4jHybridParser)             │
+│  - Delegate to strategy                                      │
+│  - Build JSON response (grouped by study)                    │
+│  - Handle concurrent build coordination                      │
+└────────────────────────────┬────────────────────────────────┘
+                             │
+        ┌────────────────────┴────────────────────┐
+        │                                         │
+┌───────▼──────────┐                    ┌────────▼─────────┐
+│ GradualDicomImporter │                │  DirectArchive    │
+│    Strategy          │                │    Strategy       │
+│                      │                │  (Experimental)   │
+│ - FileWriterWrapper  │                │                   │
+│ - GradualDicomImporter │              │ - DirectArchive   │
+│ - PrearcDatabase     │                │   SessionService  │
+│ - Build/Archive      │                │                   │
+└──────────────────────┘                └───────────────────┘
+```
 
-**Pros:**
-- Leverages proven import logic
-- Handles session/scan creation automatically
-- Applies anonymization/de-identification if configured
-- Respects project-level series import filters
-- Integrates with prearchive/archive workflow
-- Handles permissions correctly
+## Key Implementation Files
 
-**Cons:**
-- More complex integration
-- Need to write to temporary directory
-- Async processing (may need to track import status)
+| File | Description |
+|------|-------------|
+| `StowRsApi.java` | REST controller for STOW-RS endpoint |
+| `StowRsServiceImpl.java` | Service layer with concurrent build management |
+| `GradualDicomImporterStrategy.java` | Default import strategy |
+| `DirectArchiveStrategy.java` | Experimental direct archive strategy |
+| `Mime4jHybridParser.java` | Multipart parser (hybrid memory/disk) |
+| `InputStreamFileWriterWrapper.java` | FileWriterWrapper for DICOM instances |
+| `SuccessfulInstance.java` | Success instance data holder |
+| `FailedInstance.java` | Failed instance data holder |
 
-**Implementation:**
+## Multipart Parsing
+
+Uses custom `Mime4jHybridParser` based on Apache Mime4J:
+
+- **Memory threshold**: 10MB (configurable)
+- **Small files** (<10MB): Kept in memory for performance
+- **Large files** (>10MB): Written to temp directory
+- **Cleanup**: Automatic cleanup after request processing
+
+## Concurrent Upload Handling
+
+### GradualDicomImporter Strategy
+
+1. **Import Future Tracking**: Each upload thread registers a CompletableFuture
+2. **Session Key Grouping**: Uploads grouped by `project/sessionName`
+3. **Last Activity Time**: Tracks when last upload completed per session
+4. **Build Delay**: Waits 500ms after last activity before building
+5. **Build Lock**: Only one thread performs the build per session
+
+### File Naming
+
+Uses UUID-based filenames to prevent collisions:
 ```java
-// 1. Write DICOM instances to temp directory
-Path tempDir = Files.createTempDirectory("stow-rs-");
-
-// 2. Save each instance as .dcm file
-for (InputStream stream : dicomInstances) {
-    Attributes attrs = readDicom(stream);
-    String sopUID = attrs.getString(Tag.SOPInstanceUID);
-    Path outFile = tempDir.resolve(sopUID + ".dcm");
-    // Write to file
-}
-
-// 3. Trigger XNAT import
-DicomInboxImportRequestService service = ...;
-DicomInboxImportRequest request = new DicomInboxImportRequest(
-    user, projectId, tempDir.toString(), params);
-service.submit(request);
-
-// 4. Monitor import status (optional)
-// 5. Clean up temp directory after import completes
-```
-
-#### Approach 2: Direct File Writing (Not Recommended)
-**Write directly to XNAT archive structure**
-
-**Pros:**
-- Faster (no temp files)
-- Synchronous response
-
-**Cons:**
-- Bypasses import pipeline
-- Must manually create sessions/scans
-- Must manually update database
-- No anonymization
-- No series filtering
-- Fragile (depends on archive structure)
-- High risk of data corruption
-
-**Decision:** Use Approach 1 (XNAT Import Pipeline)
-
-## Implementation Details
-
-### 1. Service Layer (XnatDicomServiceImpl.java)
-
-```java
-@Override
-public StowRsResponse storeInstances(UserI user, String projectId,
-                                      List<InputStream> dicomInstances) {
-    List<InstanceStatus> statuses = new ArrayList<>();
-    int successCount = 0;
-    int failureCount = 0;
-
-    try {
-        // Verify project access
-        XnatProjectdata project = XnatProjectdata.getXnatProjectdatasById(
-            projectId, user, false);
-        if (project == null) {
-            throw new SecurityException("No access to project: " + projectId);
-        }
-
-        // Create temporary directory for upload
-        Path tempDir = Files.createTempDirectory("stow-rs-");
-        logger.info("Created temp directory for STOW-RS: {}", tempDir);
-
-        // Process each instance
-        for (InputStream stream : dicomInstances) {
-            try {
-                // Read DICOM attributes
-                Attributes attrs = DicomWebUtils.readDicom(stream);
-                String sopInstanceUID = attrs.getString(Tag.SOPInstanceUID);
-                String sopClassUID = attrs.getString(Tag.SOPClassUID);
-
-                if (sopInstanceUID == null || sopClassUID == null) {
-                    statuses.add(new InstanceStatus(
-                        sopInstanceUID, sopClassUID, false,
-                        "Missing required UIDs", 0xA900)); // Dataset does not match SOP Class
-                    failureCount++;
-                    continue;
-                }
-
-                // Write to temp file
-                Path outFile = tempDir.resolve(sopInstanceUID + ".dcm");
-                try (FileOutputStream fos = new FileOutputStream(outFile.toFile());
-                     DicomOutputStream dos = new DicomOutputStream(fos)) {
-                    dos.writeDataset(null, attrs);
-                }
-
-                statuses.add(new InstanceStatus(
-                    sopInstanceUID, sopClassUID, true, null, 0));
-                successCount++;
-
-            } catch (Exception e) {
-                logger.error("Error processing DICOM instance", e);
-                statuses.add(new InstanceStatus(
-                    null, null, false, e.getMessage(), 0xC000)); // Error
-                failureCount++;
-            }
-        }
-
-        // Trigger XNAT import if any files succeeded
-        if (successCount > 0) {
-            importToXnat(user, projectId, tempDir);
-        } else {
-            // Clean up if all failed
-            FileUtils.deleteDirectory(tempDir.toFile());
-        }
-
-    } catch (Exception e) {
-        logger.error("STOW-RS storage failed", e);
-        throw new RuntimeException("Storage failed: " + e.getMessage(), e);
-    }
-
-    return new StowRsResponse(successCount, failureCount, statuses);
-}
-
-private void importToXnat(UserI user, String projectId, Path tempDir) {
-    // Option 1: Use DicomInboxImportRequestService (async)
-    DicomInboxImportRequestService service =
-        XDAT.getContextService().getBean(DicomInboxImportRequestService.class);
-
-    Map<String, Object> params = new HashMap<>();
-    params.put("PROJECT_ID", projectId);
-    params.put("path", tempDir.toString());
-    params.put("cleanupAfterImport", "true");
-
-    DicomInboxImportRequest request = new DicomInboxImportRequest(
-        user.getLogin(), projectId, tempDir.toString(), params);
-    service.submit(request);
-
-    // Option 2: Use GradualDicomImporter directly (sync)
-    // More complex but provides immediate feedback
-}
-```
-
-### 2. REST Controller (StowRsApi.java)
-
-```java
-@XapiRestController
-@Api("DICOMweb STOW-RS API")
-public class StowRsApi extends AbstractXapiRestController {
-
-    private final XnatDicomService dicomService;
-
-    @Autowired
-    public StowRsApi(XnatDicomService dicomService,
-                     UserManagementServiceI userManagementService,
-                     RoleHolder roleHolder) {
-        super(userManagementService, roleHolder);
-        this.dicomService = dicomService;
-    }
-
-    /**
-     * Store DICOM instances (STOW-RS)
-     * POST /dicomweb/projects/{projectId}/studies
-     */
-    @XapiRequestMapping(
-        value = "/dicomweb/projects/{projectId}/studies",
-        method = RequestMethod.POST,
-        consumes = "multipart/related",
-        produces = "application/dicom+json",
-        restrictTo = Edit
-    )
-    @ApiOperation(value = "Store DICOM instances (STOW-RS)",
-                  response = String.class)
-    @ApiResponses({
-        @ApiResponse(code = 200, message = "Instances stored"),
-        @ApiResponse(code = 400, message = "Invalid request"),
-        @ApiResponse(code = 401, message = "Authentication required"),
-        @ApiResponse(code = 403, message = "Insufficient permissions"),
-        @ApiResponse(code = 500, message = "Server error")
-    })
-    public ResponseEntity<String> storeInstances(
-            @PathVariable String projectId,
-            HttpServletRequest request) {
-
-        try {
-            UserI user = getSessionUser();
-
-            // Parse multipart request
-            List<InputStream> instances = parseMultipartRequest(request);
-
-            if (instances.isEmpty()) {
-                return ResponseEntity.badRequest().body(
-                    createErrorResponse("No DICOM instances in request"));
-            }
-
-            // Store instances
-            StowRsResponse response = dicomService.storeInstances(
-                user, projectId, instances);
-
-            // Build STOW-RS response
-            String jsonResponse = buildStowRsResponse(
-                response, projectId, request);
-
-            return ResponseEntity.ok()
-                .contentType(MediaType.parseMediaType(
-                    DicomWebUtils.getDicomJsonContentType()))
-                .body(jsonResponse);
-
-        } catch (SecurityException e) {
-            return ResponseEntity.status(HttpStatus.FORBIDDEN)
-                .body(createErrorResponse(e.getMessage()));
-        } catch (Exception e) {
-            logger.error("STOW-RS error", e);
-            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
-                .body(createErrorResponse(e.getMessage()));
-        }
-    }
-
-    private List<InputStream> parseMultipartRequest(
-            HttpServletRequest request) throws IOException {
-
-        List<InputStream> streams = new ArrayList<>();
-        String contentType = request.getContentType();
-
-        if (!contentType.startsWith("multipart/related")) {
-            throw new IllegalArgumentException(
-                "Content-Type must be multipart/related");
-        }
-
-        // Extract boundary
-        String boundary = extractBoundary(contentType);
-
-        // Parse multipart body
-        ServletInputStream input = request.getInputStream();
-        MultipartStream multipartStream = new MultipartStream(
-            input, boundary.getBytes(), 8192, null);
-
-        boolean nextPart = multipartStream.skipPreamble();
-        while (nextPart) {
-            String headers = multipartStream.readHeaders();
-
-            // Check if part is DICOM (application/dicom)
-            if (headers.toLowerCase().contains("application/dicom")) {
-                ByteArrayOutputStream baos = new ByteArrayOutputStream();
-                multipartStream.readBodyData(baos);
-                streams.add(new ByteArrayInputStream(baos.toByteArray()));
-            } else {
-                multipartStream.discardBodyData();
-            }
-
-            nextPart = multipartStream.readBoundary();
-        }
-
-        return streams;
-    }
-
-    private String buildStowRsResponse(StowRsResponse response,
-                                        String projectId,
-                                        HttpServletRequest request) {
-        Attributes attrs = new Attributes();
-
-        // Build base URL for retrieval
-        String baseUrl = request.getRequestURL().toString()
-            .replace("/studies", "");
-
-        // Add retrieve URL (00081190)
-        if (response.getSuccessCount() > 0) {
-            // Get first successful study UID
-            String studyUID = getFirstStudyUID(response);
-            if (studyUID != null) {
-                attrs.setString(Tag.RetrieveURL, VR.UR,
-                    baseUrl + "/studies/" + studyUID);
-            }
-        }
-
-        // Add Referenced SOP Sequence (00081199) - successes
-        Sequence successSeq = attrs.newSequence(
-            Tag.ReferencedSOPSequence, response.getSuccessCount());
-        for (InstanceStatus status : response.getInstanceStatuses()) {
-            if (status.isSuccess()) {
-                Attributes item = new Attributes();
-                item.setString(Tag.ReferencedSOPClassUID, VR.UI,
-                    status.getSopClassUID());
-                item.setString(Tag.ReferencedSOPInstanceUID, VR.UI,
-                    status.getSopInstanceUID());
-                item.setString(Tag.RetrieveURL, VR.UR,
-                    buildInstanceURL(baseUrl, status));
-                successSeq.add(item);
-            }
-        }
-
-        // Add Failed SOP Sequence (00081198) - failures
-        Sequence failedSeq = attrs.newSequence(
-            Tag.FailedSOPSequence, response.getFailureCount());
-        for (InstanceStatus status : response.getInstanceStatuses()) {
-            if (!status.isSuccess()) {
-                Attributes item = new Attributes();
-                if (status.getSopClassUID() != null) {
-                    item.setString(Tag.ReferencedSOPClassUID, VR.UI,
-                        status.getSopClassUID());
-                }
-                if (status.getSopInstanceUID() != null) {
-                    item.setString(Tag.ReferencedSOPInstanceUID, VR.UI,
-                        status.getSopInstanceUID());
-                }
-                item.setInt(Tag.FailureReason, VR.US, status.getWarningCode());
-                failedSeq.add(item);
-            }
-        }
-
-        return DicomWebUtils.toJson(attrs);
-    }
-}
-```
-
-### 3. Dependencies
-
-Add Apache Commons FileUpload for multipart parsing:
-
-```gradle
-// build.gradle
-compileOnly 'commons-fileupload:commons-fileupload:1.4'
-```
-
-### 4. Testing Strategy
-
-#### Unit Tests (StowRsApiTest.java)
-- Test multipart parsing
-- Test response building
-- Test error handling
-- Test permission checking
-
-#### Integration Tests
-- Test end-to-end storage
-- Verify sessions/scans created in XNAT
-- Test duplicate detection
-- Test various transfer syntaxes
-- Test large file uploads
-
-#### Test with Real Clients
-- OHIF Viewer upload
-- Weasis DICOM send
-- dcm4che stowrs tool
-
-```bash
-# Test with dcm4che stowrs
-stowrs -m http://xnat/xapi/dicomweb/projects/PROJECT/studies \
-       --user admin:admin \
-       /path/to/dicom/files/*.dcm
-```
-
-## Security Considerations
-
-### 1. Authentication
-- Require XNAT session authentication
-- Use `getSessionUser()` to get current user
-- Check user has Edit permission on project
-
-### 2. Authorization
-```java
-// Check project edit permission
-if (!Permissions.canEditProject(user, projectId)) {
-    throw new SecurityException("User cannot edit project");
-}
-```
-
-### 3. Validation
-- Validate DICOM syntax
-- Check file size limits
-- Verify SOP Class UID is supported
-- Sanitize file paths
-- Prevent path traversal attacks
-
-### 4. Resource Limits
-- Max file size per instance (e.g., 2GB)
-- Max instances per request (e.g., 1000)
-- Max total request size (e.g., 10GB)
-- Timeout for long uploads
-
-## Configuration
-
-### Site Configuration Properties
-```java
-// In DicomWebConfig or site preferences
-public class StowRsConfig {
-    // Maximum size for single instance (bytes)
-    private long maxInstanceSize = 2L * 1024 * 1024 * 1024; // 2GB
-
-    // Maximum instances per STOW request
-    private int maxInstancesPerRequest = 1000;
-
-    // Enable duplicate detection
-    private boolean detectDuplicates = true;
-
-    // Auto-archive after import (skip prearchive)
-    private boolean autoArchive = false;
-}
+this.name = UUID.randomUUID().toString() + ".dcm";
 ```
 
 ## Error Handling
 
-### DICOM Warning Codes (0008,1198 Failure Reason)
-- `0xA700` - Out of resources
-- `0xA900` - Dataset does not match SOP Class
-- `0xC000` - Cannot understand
-- `0xC001` - Coercion of Data Elements
-- `0xC002` - Data Set does not Match SOP Class
-
 ### HTTP Status Codes
-- `200 OK` - All instances stored successfully
-- `202 Accepted` - Instances queued for processing (async)
-- `400 Bad Request` - Invalid DICOM or request format
-- `401 Unauthorized` - Not authenticated
-- `403 Forbidden` - No edit permission on project
-- `409 Conflict` - Duplicate instance UIDs
-- `413 Payload Too Large` - Request exceeds size limits
-- `500 Internal Server Error` - Unexpected error
-- `507 Insufficient Storage` - Out of disk space
 
-## Performance Optimization
+| Code | Meaning |
+|------|---------|
+| 200 | All instances stored successfully |
+| 400 | Invalid request format |
+| 403 | Project not found or no access |
+| 409 | Conflict (partial failure) |
+| 500 | Server error |
 
-### 1. Streaming
-- Don't load entire multipart body into memory
-- Stream each part directly to temp file
-- Use buffered I/O
+### DICOM Failure Codes
 
-### 2. Async Processing
-- Return 202 Accepted for large uploads
-- Process imports in background
-- Provide status endpoint to check progress
+| Code | Meaning |
+|------|---------|
+| 0x0110 | Processing failure |
+| 0xA900 | Data set does not match SOP class |
+| 0xC000 | Cannot understand |
 
-### 3. Cleanup
-- Delete temp files after import completes
-- Set file deletion hooks on JVM shutdown
-- Monitor temp directory for orphaned files
+## Testing
 
-## Deployment Checklist
+### Regression Test Suite
 
-- [ ] Implement XnatDicomService.storeInstances()
-- [ ] Create StowRsApi REST controller
-- [ ] Add multipart parsing logic
-- [ ] Integrate with XNAT import pipeline
-- [ ] Add permission checks
-- [ ] Implement response building
-- [ ] Write unit tests
-- [ ] Write integration tests
-- [ ] Test with OHIF/Weasis
-- [ ] Update ARCHITECTURE.md
-- [ ] Update docs/DICOMWEB_CONFORMANCE.md
-- [ ] Update README.md
-- [ ] Update CHANGELOG.md
-- [ ] Build and deploy to test XNAT
-- [ ] Performance testing
-- [ ] Security review
+Run after any refactoring:
+
+```bash
+./test-stowrs-suite.sh
+```
+
+**Test Cases:**
+
+| # | Test | Description |
+|---|------|-------------|
+| 1 | Single file upload | Basic functionality |
+| 2 | Multi-file same study | Batch upload |
+| 3 | Multi-patient single request | Response grouping by study |
+| 4 | Concurrent uploads (3 threads) | Thread safety |
+| 5 | Invalid file rejection | Error handling |
+| 6 | DirectArchive strategy | Alternative strategy |
+| 7 | Mixed success/failure | Partial success |
+
+**All 7 tests must pass before committing changes.**
+
+### Manual Testing
+
+```bash
+# Single file upload
+curl -u admin:admin -X POST \
+  -H "Content-Type: multipart/related; type=\"application/dicom\"; boundary=myboundary" \
+  --data-binary @request.multipart \
+  "http://localhost:8080/xapi/dicomweb/projects/TestProject/studies"
+
+# With DirectArchive strategy
+curl -u admin:admin -X POST \
+  -H "Content-Type: multipart/related; type=\"application/dicom\"; boundary=myboundary" \
+  --data-binary @request.multipart \
+  "http://localhost:8080/xapi/dicomweb/projects/TestProject/studies?strategy=DirectArchive"
+```
+
+## Configuration
+
+### DicomWebProperties
+
+```yaml
+dicomweb:
+  multipart:
+    memoryThreshold: 10485760  # 10MB
+```
+
+## Known Limitations
+
+1. **No Study-level endpoint**: Only project-level endpoint is supported (`/projects/{projectId}/studies`)
+2. **No DICOM JSON+Bulkdata format**: Only `multipart/related; type="application/dicom"` is supported
+3. **No duplicate detection**: Uploading same instance twice creates duplicates
+4. **DirectArchive limitations**: See "DirectArchive (Experimental)" section above
 
 ## Future Enhancements
 
-### Phase 2
-- Progress tracking for large uploads
-- Resume capability for interrupted uploads
-- Validation against project-specific SOP Class restrictions
-- Integration with XNAT workflow engine
-
-### Phase 3
-- Bulk import optimization
-- Direct archive writing (bypass prearchive)
-- Real-time notifications via WebSocket
-- DICOM C-STORE to STOW-RS gateway
+1. **Study-level endpoint**: `POST /studies/{studyUID}` with UID validation
+2. **Duplicate detection**: Check existing SOP Instance UIDs
+3. **DICOM JSON+Bulkdata**: Support metadata + bulkdata format
+4. **Warning codes**: Return warnings for data coercion
+5. **Progress tracking**: WebSocket-based upload progress
+6. **Async uploads**: Return 202 Accepted for large uploads
 
 ## References
 
-- DICOM PS3.18: https://dicom.nema.org/medical/dicom/current/output/html/part18.html
-- STOW-RS Specification: Section 10.5
-- DICOMweb Standard: https://www.dicomstandard.org/using/dicomweb/store-stow-rs
-- XNAT Import API: https://wiki.xnat.org/xnat-api/image-session-import-service-api
-- Apache Commons FileUpload: https://commons.apache.org/proper/commons-fileupload/
+- [DICOM PS3.18 Section 10.5 - STOW-RS](https://dicom.nema.org/medical/dicom/current/output/html/part18.html#sect_10.5)
+- [DICOMweb Standard](https://www.dicomstandard.org/using/dicomweb/store-stow-rs)

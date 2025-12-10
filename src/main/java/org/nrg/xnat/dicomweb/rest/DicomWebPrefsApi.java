@@ -53,8 +53,8 @@ public class DicomWebPrefsApi extends AbstractXapiRestController {
         Map<String, Object> prefs = new HashMap<>();
         prefs.put("defaultPageSize", preferenceBean.getDefaultPageSize());
         prefs.put("maxPageSize", preferenceBean.getMaxPageSize());
-        prefs.put("memoryThreshold", preferenceBean.getMemoryThreshold());
         prefs.put("bulkDataThreshold", preferenceBean.getBulkDataThreshold());
+        // Note: memoryThreshold is not exposed here as it requires restart to take effect
 
         return new ResponseEntity<>(prefs, HttpStatus.OK);
     }
@@ -80,11 +80,7 @@ public class DicomWebPrefsApi extends AbstractXapiRestController {
                 logger.info("Updated maxPageSize to: {}", value);
             }
 
-            if (preferences.containsKey("memoryThreshold")) {
-                long value = getLongValue(preferences, "memoryThreshold");
-                preferenceBean.setMemoryThreshold(value);
-                logger.info("Updated memoryThreshold to: {}", value);
-            }
+            // Note: memoryThreshold is not updatable via API as it requires restart to take effect
 
             if (preferences.containsKey("bulkDataThreshold")) {
                 int value = getIntValue(preferences, "bulkDataThreshold");

@@ -15,8 +15,8 @@ dicomwebConfigPanel:
         description:
             tag: div.message
             contents: >
-                Configure the DICOMweb plugin settings. These settings control pagination for QIDO-RS queries,
-                memory usage for STOW-RS uploads, and BulkData handling for WADO-RS responses.
+                Configure the DICOMweb plugin settings. Changes take effect immediately without restart.
+                Note: STOW-RS memory threshold (dicomweb.memoryThreshold) must be configured in properties file and requires restart.
 
         paginationHeader:
             tag: h3
@@ -43,22 +43,6 @@ dicomwebConfigPanel:
             description: >
                 Maximum allowed page size for QIDO-RS queries. Client requests exceeding this value
                 will be capped at this maximum. Recommended: 500-2000 depending on server capacity. Default: 1000
-
-        uploadHeader:
-            tag: h3
-            contents: "STOW-RS Upload Settings"
-
-        memoryThreshold:
-            kind: panel.input.text
-            name: memoryThreshold
-            label: Memory Threshold (bytes)
-            validation: "onblur integer greaterThan:0"
-            element:
-                title: Files larger than this will be written to disk
-            description: >
-                Memory threshold in bytes for STOW-RS multipart upload processing.
-                Files larger than this will be written to disk instead of kept in memory.
-                Default: 10485760 (10 MB). High memory systems: 52428800 (50 MB). Low memory systems: 5242880 (5 MB)
 
         bulkDataHeader:
             tag: h3
