@@ -15,6 +15,7 @@ import org.nrg.action.ClientException;
 import org.nrg.xdat.XDAT;
 import org.nrg.xft.security.UserI;
 import org.nrg.xnat.archive.Operation;
+import org.nrg.xnat.dicomweb.config.DicomWebPreferenceBean;
 import org.nrg.xnat.dicomweb.config.DicomWebProperties;
 import org.nrg.xnat.dicomweb.parser.Mime4jHybridParser;
 import org.nrg.xnat.dicomweb.parser.Mime4jHybridParser.MultipartPart;
@@ -77,6 +78,7 @@ public class StowRsServiceImpl implements StowRsService {
     private final Mime4jHybridParser multipartParser;
     private final DirectArchiveStrategy directArchiveStrategy;
     private final GradualDicomImporterStrategy gradualDicomImporterStrategy;
+    private final DicomWebPreferenceBean preferenceBean;
 
     // Concurrent build management - using last activity time approach
     private final ConcurrentHashMap<String, AtomicLong> lastActivityTime = new ConcurrentHashMap<>();
@@ -98,13 +100,15 @@ public class StowRsServiceImpl implements StowRsService {
     @Autowired
     public StowRsServiceImpl(DirectArchiveStrategy directArchiveStrategy,
                              GradualDicomImporterStrategy gradualDicomImporterStrategy,
-                             DicomWebProperties properties) {
+                             DicomWebProperties properties,
+                             DicomWebPreferenceBean preferenceBean) {
         // Create parser with configured memory threshold
         File tempDir = createTempDirectory();
         long memoryThreshold = properties.getMultipart().getMemoryThreshold();
         this.multipartParser = new Mime4jHybridParser(tempDir, memoryThreshold);
         this.directArchiveStrategy = directArchiveStrategy;
         this.gradualDicomImporterStrategy = gradualDicomImporterStrategy;
+        this.preferenceBean = preferenceBean;
         logger.info("StowRsServiceImpl initialized with {} strategies and multipart memory threshold: {} bytes",
                 2, memoryThreshold);
     }
@@ -122,13 +126,18 @@ public class StowRsServiceImpl implements StowRsService {
     /**
      * Select import strategy based on params.
      * Supports query parameter: ?strategy=GradualDicomImporter or ?strategy=DirectArchive
-     * Default: GradualDicomImporter
+     * Default: Configured via Admin UI (dicomweb.defaultStrategy preference)
      */
     private DicomImportStrategy selectStrategy(Map<String, Object> params) {
         String strategyName = (String) params.get("strategy");
 
         if (strategyName == null) {
-            strategyName = "GradualDicomImporter";  // Default
+            // Use configured default from preferences
+            strategyName = preferenceBean.getDefaultStrategy();
+            if (strategyName == null || strategyName.isEmpty()) {
+                strategyName = "GradualDicomImporter";  // Fallback
+            }
+            logger.debug("Using configured default strategy: {}", strategyName);
         }
 
         switch (strategyName) {

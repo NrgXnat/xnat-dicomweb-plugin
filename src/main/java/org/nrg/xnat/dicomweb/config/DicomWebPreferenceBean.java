@@ -104,4 +104,20 @@ public class DicomWebPreferenceBean extends AbstractPreferenceBean {
     public void setBulkDataThreshold(final int bulkDataThreshold) throws InvalidPreferenceName {
         setIntegerValue(bulkDataThreshold, "dicomweb.bulkDataThreshold");
     }
+
+    /**
+     * Default import strategy for STOW-RS uploads
+     * - GradualDicomImporter: Full XNAT import pipeline with prearchive (recommended)
+     * - DirectArchive: Direct archive writing, bypasses prearchive (experimental, has limitations)
+     *
+     * @return Default strategy name (default: GradualDicomImporter)
+     */
+    @NrgPreference(property = "dicomweb.defaultStrategy")
+    public String getDefaultStrategy() {
+        return getValue("dicomweb.defaultStrategy");
+    }
+
+    public void setDefaultStrategy(final String defaultStrategy) throws InvalidPreferenceName {
+        set(defaultStrategy, "dicomweb.defaultStrategy");
+    }
 }

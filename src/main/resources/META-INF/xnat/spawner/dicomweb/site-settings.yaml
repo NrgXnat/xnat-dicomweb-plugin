@@ -61,6 +61,34 @@ dicomwebConfigPanel:
                 Default: 1024 (1 KB). Smaller threshold (512-1024): More BulkDataURIs, smaller JSON responses.
                 Larger threshold (4096-8192): Fewer BulkDataURIs, larger JSON responses
 
+        stowrsHeader:
+            tag: h3
+            contents: "STOW-RS Upload Settings"
+
+        defaultStrategy:
+            kind: panel.select.single
+            name: defaultStrategy
+            label: Default Import Strategy
+            element:
+                title: Select the default strategy for STOW-RS uploads
+            options:
+                GradualDicomImporter: "GradualDicomImporter (Recommended)"
+                DirectArchive: "DirectArchive (Experimental)"
+            description: >
+                Default import strategy for STOW-RS uploads. Can be overridden per-request with ?strategy= parameter.
+
+        strategyWarning:
+            tag: div.warning
+            element:
+                style: "background-color: #fff3cd; border: 1px solid #ffc107; padding: 10px; margin: 10px 0; border-radius: 4px;"
+            contents: >
+                <strong>Strategy Comparison:</strong><br/>
+                <strong>GradualDicomImporter (Recommended):</strong> Full XNAT import pipeline with prearchive.
+                Supports session merging, append to existing sessions, and full DICOM validation.<br/><br/>
+                <strong>DirectArchive (Experimental):</strong> Direct archive writing, bypasses prearchive.
+                <span style="color: #dc3545;"><strong>Limitations:</strong> Cannot append to existing sessions,
+                limited concurrent support, no prearchive review. Use only for fresh uploads to new sessions.</span>
+
 ####
 #### Tab Definition
 ####

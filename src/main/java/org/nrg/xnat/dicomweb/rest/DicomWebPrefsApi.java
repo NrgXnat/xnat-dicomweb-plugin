@@ -54,6 +54,7 @@ public class DicomWebPrefsApi extends AbstractXapiRestController {
         prefs.put("defaultPageSize", preferenceBean.getDefaultPageSize());
         prefs.put("maxPageSize", preferenceBean.getMaxPageSize());
         prefs.put("bulkDataThreshold", preferenceBean.getBulkDataThreshold());
+        prefs.put("defaultStrategy", preferenceBean.getDefaultStrategy());
         // Note: memoryThreshold is not exposed here as it requires restart to take effect
 
         return new ResponseEntity<>(prefs, HttpStatus.OK);
@@ -86,6 +87,18 @@ public class DicomWebPrefsApi extends AbstractXapiRestController {
                 int value = getIntValue(preferences, "bulkDataThreshold");
                 preferenceBean.setBulkDataThreshold(value);
                 logger.info("Updated bulkDataThreshold to: {}", value);
+            }
+
+            if (preferences.containsKey("defaultStrategy")) {
+                String value = (String) preferences.get("defaultStrategy");
+                // Validate strategy name
+                if ("GradualDicomImporter".equals(value) || "DirectArchive".equals(value)) {
+                    preferenceBean.setDefaultStrategy(value);
+                    logger.info("Updated defaultStrategy to: {}", value);
+                } else {
+                    logger.warn("Invalid strategy name: {}. Must be 'GradualDicomImporter' or 'DirectArchive'", value);
+                    return new ResponseEntity<>(HttpStatus.BAD_REQUEST);
+                }
             }
 
             return new ResponseEntity<>(HttpStatus.OK);
