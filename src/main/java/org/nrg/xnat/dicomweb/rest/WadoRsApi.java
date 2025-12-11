@@ -29,7 +29,9 @@ import org.springframework.web.bind.annotation.RequestMethod;
 import org.springframework.web.bind.annotation.RequestParam;
 
 import javax.servlet.http.HttpServletRequest;
+import javax.servlet.http.HttpServletResponse;
 import java.io.ByteArrayInputStream;
+import java.io.IOException;
 import java.io.ByteArrayOutputStream;
 import java.io.InputStream;
 import java.util.List;
@@ -332,12 +334,13 @@ public class WadoRsApi extends AbstractXapiRestController {
             @ApiResponse(code = 404, message = "Instance not found"),
             @ApiResponse(code = 500, message = "Internal error")
     })
-    public ResponseEntity<byte[]> retrieveInstanceRendered(@PathVariable String projectId,
+    public void retrieveInstanceRendered(@PathVariable String projectId,
                                                            @PathVariable String studyUID,
                                                            @PathVariable String seriesUID,
                                                            @PathVariable String instanceUID,
                                                            @RequestParam(required = false) Integer frame,
-                                                           HttpServletRequest request) {
+                                                           HttpServletRequest request,
+                                                           HttpServletResponse response) throws IOException {
         UserI user = getSessionUser();
 
         // Determine output format from Accept header
@@ -354,24 +357,25 @@ public class WadoRsApi extends AbstractXapiRestController {
             throw new ResourceNotFoundException("Rendered instance", instanceUID);
         }
 
-        HttpHeaders headers = new HttpHeaders();
-        headers.setContentType(MediaType.parseMediaType(result.getMimeType()));
+        // Set response headers
+        response.setContentType(result.getMimeType());
+        response.setContentLength(result.getImageData().length);
 
         // Add frame metadata to response headers
-        headers.add("X-Frame-Count", String.valueOf(result.getTotalFrames()));
-        headers.add("X-Frame-Number", String.valueOf(result.getRenderedFrame()));
+        response.setHeader("X-Frame-Count", String.valueOf(result.getTotalFrames()));
+        response.setHeader("X-Frame-Number", String.valueOf(result.getRenderedFrame()));
         if (result.getFrameRate() != null) {
-            headers.add("X-Frame-Rate", String.format("%.2f", result.getFrameRate()));
+            response.setHeader("X-Frame-Rate", String.format("%.2f", result.getFrameRate()));
         }
 
         // Add info to help clients understand multi-frame content
         if (result.isMultiFrame()) {
-            headers.add("X-Multi-Frame", "true");
+            response.setHeader("X-Multi-Frame", "true");
         }
 
-        return ResponseEntity.ok()
-                .headers(headers)
-                .body(result.getImageData());
+        // Write directly to response output stream
+        response.getOutputStream().write(result.getImageData());
+        response.getOutputStream().flush();
     }
 
     /**
@@ -447,11 +451,12 @@ public class WadoRsApi extends AbstractXapiRestController {
             @ApiResponse(code = 400, message = "Invalid tag format"),
             @ApiResponse(code = 500, message = "Internal error")
     })
-    public ResponseEntity<byte[]> retrieveBulkData(@PathVariable String projectId,
+    public void retrieveBulkData(@PathVariable String projectId,
                                                     @PathVariable String studyUID,
                                                     @PathVariable String seriesUID,
                                                     @PathVariable String instanceUID,
-                                                    @PathVariable String tag) throws Exception {
+                                                    @PathVariable String tag,
+                                                    HttpServletResponse response) throws Exception {
         UserI user = getSessionUser();
 
         // Parse tag from hex string (e.g., "7FE00010" for PixelData)
@@ -496,14 +501,11 @@ public class WadoRsApi extends AbstractXapiRestController {
             logger.info("Retrieved bulk data for tag {}: {} bytes", tag, bulkData.length);
         }
 
-        // Return raw bytes
-        HttpHeaders headers = new HttpHeaders();
-        headers.setContentType(MediaType.APPLICATION_OCTET_STREAM);
-        headers.setContentLength(bulkData.length);
-
-        return ResponseEntity.ok()
-                .headers(headers)
-                .body(bulkData);
+        // Write directly to response output stream
+        response.setContentType(MediaType.APPLICATION_OCTET_STREAM_VALUE);
+        response.setContentLength(bulkData.length);
+        response.getOutputStream().write(bulkData);
+        response.getOutputStream().flush();
     }
 
     /**

@@ -15,13 +15,14 @@ import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 
 import javax.servlet.http.HttpServletRequest;
+import javax.servlet.http.HttpServletResponse;
 import java.util.ArrayList;
 import java.util.List;
 
 import static org.junit.Assert.*;
 import static org.mockito.ArgumentMatchers.*;
-import static org.mockito.Mockito.mock;
-import static org.mockito.Mockito.when;
+import static org.mockito.Mockito.*;
+
 
 /**
  * Tests for WadoRsApi, specifically the study metadata endpoint fix
@@ -184,7 +185,327 @@ public class WadoRsApiTest {
         return count;
     }
 
-    // Frame retrieval tests
+    // ========== Instance Retrieval Tests ==========
+
+    @Test
+    public void testRetrieveInstance_Success() throws Exception {
+        // Arrange
+        String projectId = "TestProject";
+        String studyUID = "1.2.3.4.5";
+        String seriesUID = "1.2.3.4.5.100";
+        String instanceUID = "1.2.3.4.5.6.1";
+
+        byte[] mockDicomData = new byte[]{0x00, 0x01, 0x02, 0x03};
+        java.io.ByteArrayInputStream mockStream = new java.io.ByteArrayInputStream(mockDicomData);
+
+        when(mockDicomService.retrieveInstance(any(UserI.class), eq(projectId), eq(studyUID),
+                eq(seriesUID), eq(instanceUID)))
+            .thenReturn(mockStream);
+
+        // Act
+        ResponseEntity<?> response = wadoRsApi.retrieveInstance(projectId, studyUID, seriesUID, instanceUID);
+
+        // Assert
+        assertEquals("Should return 200 OK", HttpStatus.OK, response.getStatusCode());
+        assertNotNull("Content-Type should be set", response.getHeaders().getContentType());
+        assertEquals("Should return application/dicom",
+                "application/dicom", response.getHeaders().getContentType().toString());
+    }
+
+    @Test(expected = org.nrg.xnat.dicomweb.exceptions.ResourceNotFoundException.class)
+    public void testRetrieveInstance_NotFound() throws Exception {
+        // Arrange
+        String projectId = "TestProject";
+        String studyUID = "1.2.3.4.5";
+        String seriesUID = "1.2.3.4.5.100";
+        String instanceUID = "1.2.3.4.5.6.999";
+
+        when(mockDicomService.retrieveInstance(any(UserI.class), eq(projectId), eq(studyUID),
+                eq(seriesUID), eq(instanceUID)))
+            .thenReturn(null);
+
+        // Act - should throw ResourceNotFoundException
+        wadoRsApi.retrieveInstance(projectId, studyUID, seriesUID, instanceUID);
+    }
+
+    // ========== Instance Metadata Tests ==========
+
+    @Test
+    public void testRetrieveInstanceMetadata_Success() throws Exception {
+        // Arrange
+        String projectId = "TestProject";
+        String studyUID = "1.2.3.4.5";
+        String seriesUID = "1.2.3.4.5.100";
+        String instanceUID = "1.2.3.4.5.6.1";
+
+        Attributes mockAttrs = new Attributes();
+        mockAttrs.setString(Tag.SOPClassUID, VR.UI, "1.2.840.10008.5.1.4.1.1.2");
+        mockAttrs.setString(Tag.SOPInstanceUID, VR.UI, instanceUID);
+
+        when(mockDicomService.retrieveMetadata(any(UserI.class), eq(projectId), eq(studyUID),
+                eq(seriesUID), eq(instanceUID)))
+            .thenReturn(mockAttrs);
+
+        HttpServletRequest mockRequest = mock(HttpServletRequest.class);
+        when(mockRequest.getRequestURL()).thenReturn(new StringBuffer(
+                "http://localhost:8080/xapi/dicomweb/projects/TestProject/studies/" + studyUID +
+                "/series/" + seriesUID + "/instances/" + instanceUID + "/metadata"));
+        when(mockRequest.getHeader("Accept")).thenReturn("application/dicom+json");
+
+        // Act
+        ResponseEntity<String> response = wadoRsApi.retrieveInstanceMetadata(projectId, studyUID,
+                seriesUID, instanceUID, mockRequest);
+
+        // Assert
+        assertEquals("Should return 200 OK", HttpStatus.OK, response.getStatusCode());
+        assertNotNull("Response body should not be null", response.getBody());
+        assertTrue("Response should be JSON array", response.getBody().startsWith("["));
+    }
+
+    @Test(expected = org.nrg.xnat.dicomweb.exceptions.ResourceNotFoundException.class)
+    public void testRetrieveInstanceMetadata_NotFound() throws Exception {
+        // Arrange
+        String projectId = "TestProject";
+        String studyUID = "1.2.3.4.5";
+        String seriesUID = "1.2.3.4.5.100";
+        String instanceUID = "1.2.3.4.5.6.999";
+
+        when(mockDicomService.retrieveMetadata(any(UserI.class), eq(projectId), eq(studyUID),
+                eq(seriesUID), eq(instanceUID)))
+            .thenReturn(null);
+
+        HttpServletRequest mockRequest = mock(HttpServletRequest.class);
+        when(mockRequest.getRequestURL()).thenReturn(new StringBuffer(
+                "http://localhost:8080/xapi/dicomweb/projects/TestProject/studies/" + studyUID +
+                "/series/" + seriesUID + "/instances/" + instanceUID + "/metadata"));
+
+        // Act - should throw ResourceNotFoundException
+        wadoRsApi.retrieveInstanceMetadata(projectId, studyUID, seriesUID, instanceUID, mockRequest);
+    }
+
+    // ========== Series Retrieval Tests ==========
+
+    @Test
+    public void testRetrieveSeries_Success() throws Exception {
+        // Arrange
+        String projectId = "TestProject";
+        String studyUID = "1.2.3.4.5";
+        String seriesUID = "1.2.3.4.5.100";
+
+        List<java.io.InputStream> mockStreams = new ArrayList<>();
+        mockStreams.add(new java.io.ByteArrayInputStream(new byte[]{1, 2, 3}));
+        mockStreams.add(new java.io.ByteArrayInputStream(new byte[]{4, 5, 6}));
+
+        when(mockDicomService.retrieveSeries(any(UserI.class), eq(projectId), eq(studyUID), eq(seriesUID)))
+            .thenReturn(mockStreams);
+
+        // Act
+        ResponseEntity<?> response = wadoRsApi.retrieveSeries(projectId, studyUID, seriesUID);
+
+        // Assert
+        assertEquals("Should return 200 OK", HttpStatus.OK, response.getStatusCode());
+        assertNotNull("Content-Type should be set", response.getHeaders().getContentType());
+        String contentType = response.getHeaders().getContentType().toString();
+        assertTrue("Should return multipart/related", contentType.startsWith("multipart/related"));
+    }
+
+    @Test(expected = org.nrg.xnat.dicomweb.exceptions.ResourceNotFoundException.class)
+    public void testRetrieveSeries_NotFound() throws Exception {
+        // Arrange
+        String projectId = "TestProject";
+        String studyUID = "1.2.3.4.5";
+        String seriesUID = "1.2.3.4.5.999";
+
+        when(mockDicomService.retrieveSeries(any(UserI.class), eq(projectId), eq(studyUID), eq(seriesUID)))
+            .thenReturn(new ArrayList<>());
+
+        // Act - should throw ResourceNotFoundException
+        wadoRsApi.retrieveSeries(projectId, studyUID, seriesUID);
+    }
+
+    // ========== Study Retrieval Tests ==========
+
+    @Test
+    public void testRetrieveStudy_Success() throws Exception {
+        // Arrange
+        String projectId = "TestProject";
+        String studyUID = "1.2.3.4.5";
+
+        List<java.io.InputStream> mockStreams = new ArrayList<>();
+        mockStreams.add(new java.io.ByteArrayInputStream(new byte[]{1, 2, 3}));
+        mockStreams.add(new java.io.ByteArrayInputStream(new byte[]{4, 5, 6}));
+        mockStreams.add(new java.io.ByteArrayInputStream(new byte[]{7, 8, 9}));
+
+        when(mockDicomService.retrieveStudy(any(UserI.class), eq(projectId), eq(studyUID)))
+            .thenReturn(mockStreams);
+
+        // Act
+        ResponseEntity<?> response = wadoRsApi.retrieveStudy(projectId, studyUID);
+
+        // Assert
+        assertEquals("Should return 200 OK", HttpStatus.OK, response.getStatusCode());
+        assertNotNull("Content-Type should be set", response.getHeaders().getContentType());
+        String contentType = response.getHeaders().getContentType().toString();
+        assertTrue("Should return multipart/related", contentType.startsWith("multipart/related"));
+    }
+
+    @Test(expected = org.nrg.xnat.dicomweb.exceptions.ResourceNotFoundException.class)
+    public void testRetrieveStudy_NotFound() throws Exception {
+        // Arrange
+        String projectId = "TestProject";
+        String studyUID = "1.2.3.4.5.999";
+
+        when(mockDicomService.retrieveStudy(any(UserI.class), eq(projectId), eq(studyUID)))
+            .thenReturn(new ArrayList<>());
+
+        // Act - should throw ResourceNotFoundException
+        wadoRsApi.retrieveStudy(projectId, studyUID);
+    }
+
+    // ========== Series Metadata Tests ==========
+
+    @Test
+    public void testRetrieveSeriesMetadata_Success() throws Exception {
+        // Arrange
+        String projectId = "TestProject";
+        String studyUID = "1.2.3.4.5";
+        String seriesUID = "1.2.3.4.5.100";
+
+        List<Attributes> mockInstances = createMockInstances(3);
+
+        when(mockDicomService.searchInstances(any(UserI.class), eq(projectId), eq(studyUID),
+                eq(seriesUID), any()))
+            .thenReturn(mockInstances);
+
+        HttpServletRequest mockRequest = mock(HttpServletRequest.class);
+        when(mockRequest.getRequestURL()).thenReturn(new StringBuffer(
+                "http://localhost:8080/xapi/dicomweb/projects/TestProject/studies/" + studyUID +
+                "/series/" + seriesUID + "/metadata"));
+        when(mockRequest.getHeader("Accept")).thenReturn("application/dicom+json");
+
+        // Act
+        ResponseEntity<String> response = wadoRsApi.retrieveSeriesMetadata(projectId, studyUID,
+                seriesUID, mockRequest);
+
+        // Assert
+        assertEquals("Should return 200 OK", HttpStatus.OK, response.getStatusCode());
+        assertNotNull("Response body should not be null", response.getBody());
+        assertTrue("Response should be JSON array", response.getBody().startsWith("["));
+
+        int sopInstanceUIDCount = countOccurrences(response.getBody(), "\"00080018\"");
+        assertEquals("Should contain 3 SOP Instance UIDs", 3, sopInstanceUIDCount);
+    }
+
+    @Test(expected = org.nrg.xnat.dicomweb.exceptions.ResourceNotFoundException.class)
+    public void testRetrieveSeriesMetadata_NotFound() throws Exception {
+        // Arrange
+        String projectId = "TestProject";
+        String studyUID = "1.2.3.4.5";
+        String seriesUID = "1.2.3.4.5.999";
+
+        when(mockDicomService.searchInstances(any(UserI.class), eq(projectId), eq(studyUID),
+                eq(seriesUID), any()))
+            .thenReturn(new ArrayList<>());
+
+        HttpServletRequest mockRequest = mock(HttpServletRequest.class);
+        when(mockRequest.getRequestURL()).thenReturn(new StringBuffer(
+                "http://localhost:8080/xapi/dicomweb/projects/TestProject/studies/" + studyUID +
+                "/series/" + seriesUID + "/metadata"));
+
+        // Act - should throw ResourceNotFoundException
+        wadoRsApi.retrieveSeriesMetadata(projectId, studyUID, seriesUID, mockRequest);
+    }
+
+    // ========== Rendered Instance Tests ==========
+
+    @Test
+    public void testRetrieveInstanceRendered_Success() throws Exception {
+        // Arrange
+        String projectId = "TestProject";
+        String studyUID = "1.2.3.4.5";
+        String seriesUID = "1.2.3.4.5.100";
+        String instanceUID = "1.2.3.4.5.6.1";
+
+        byte[] mockImageData = new byte[]{(byte)0xFF, (byte)0xD8, (byte)0xFF, (byte)0xE0}; // JPEG header
+        org.nrg.xnat.dicomweb.service.RenderedInstanceResult mockResult =
+                new org.nrg.xnat.dicomweb.service.RenderedInstanceResult(
+                        mockImageData, 1, 1, null);
+
+        when(mockDicomService.retrieveRenderedInstance(any(UserI.class), eq(projectId), eq(studyUID),
+                eq(seriesUID), eq(instanceUID), any(), any()))
+            .thenReturn(mockResult);
+
+        HttpServletRequest mockRequest = mock(HttpServletRequest.class);
+        when(mockRequest.getHeader("Accept")).thenReturn("image/jpeg");
+
+        HttpServletResponse mockResponse = mock(HttpServletResponse.class);
+        javax.servlet.ServletOutputStream mockOutputStream = mock(javax.servlet.ServletOutputStream.class);
+        when(mockResponse.getOutputStream()).thenReturn(mockOutputStream);
+
+        // Act
+        wadoRsApi.retrieveInstanceRendered(projectId, studyUID, seriesUID, instanceUID, null, mockRequest, mockResponse);
+
+        // Assert
+        verify(mockResponse).setContentType("image/jpeg");
+        verify(mockOutputStream).write(mockImageData);
+    }
+
+    @Test(expected = org.nrg.xnat.dicomweb.exceptions.ResourceNotFoundException.class)
+    public void testRetrieveInstanceRendered_NotFound() throws Exception {
+        // Arrange
+        String projectId = "TestProject";
+        String studyUID = "1.2.3.4.5";
+        String seriesUID = "1.2.3.4.5.100";
+        String instanceUID = "1.2.3.4.5.6.999";
+
+        when(mockDicomService.retrieveRenderedInstance(any(UserI.class), eq(projectId), eq(studyUID),
+                eq(seriesUID), eq(instanceUID), any(), any()))
+            .thenReturn(null);
+
+        HttpServletRequest mockRequest = mock(HttpServletRequest.class);
+        when(mockRequest.getHeader("Accept")).thenReturn("image/jpeg");
+
+        HttpServletResponse mockResponse = mock(HttpServletResponse.class);
+
+        // Act - should throw ResourceNotFoundException
+        wadoRsApi.retrieveInstanceRendered(projectId, studyUID, seriesUID, instanceUID, null, mockRequest, mockResponse);
+    }
+
+    @Test
+    public void testRetrieveInstanceRendered_WithFrameNumber() throws Exception {
+        // Arrange
+        String projectId = "TestProject";
+        String studyUID = "1.2.3.4.5";
+        String seriesUID = "1.2.3.4.5.100";
+        String instanceUID = "1.2.3.4.5.6.1";
+        Integer frameNumber = 5;
+
+        byte[] mockImageData = new byte[]{1, 2, 3, 4};
+        org.nrg.xnat.dicomweb.service.RenderedInstanceResult mockResult =
+                new org.nrg.xnat.dicomweb.service.RenderedInstanceResult(
+                        mockImageData, 10, 5, 15.0);
+
+        when(mockDicomService.retrieveRenderedInstance(any(UserI.class), eq(projectId), eq(studyUID),
+                eq(seriesUID), eq(instanceUID), eq(frameNumber), any()))
+            .thenReturn(mockResult);
+
+        HttpServletRequest mockRequest = mock(HttpServletRequest.class);
+        when(mockRequest.getHeader("Accept")).thenReturn("image/jpeg");
+
+        HttpServletResponse mockResponse = mock(HttpServletResponse.class);
+        javax.servlet.ServletOutputStream mockOutputStream = mock(javax.servlet.ServletOutputStream.class);
+        when(mockResponse.getOutputStream()).thenReturn(mockOutputStream);
+
+        // Act
+        wadoRsApi.retrieveInstanceRendered(projectId, studyUID, seriesUID, instanceUID, frameNumber, mockRequest, mockResponse);
+
+        // Assert
+        verify(mockResponse).setHeader("X-Frame-Count", "10");
+        verify(mockResponse).setHeader("X-Frame-Number", "5");
+        verify(mockResponse).setHeader("X-Multi-Frame", "true");
+    }
+
+    // ========== Frame retrieval tests ==========
 
     @Test
     public void testRetrieveFrames_SingleFrame_ReturnsOctetStream() throws Exception {

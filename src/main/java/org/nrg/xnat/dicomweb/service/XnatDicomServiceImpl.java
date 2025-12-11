@@ -161,16 +161,8 @@ public class XnatDicomServiceImpl implements XnatDicomService {
                 return results;
             }
 
-            XnatImagescandata targetScan = null;
             List scans = session.getScans_scan();
-
-            for (Object scanObj : scans) {
-                XnatImagescandata scan = (XnatImagescandata) scanObj;
-                if (seriesInstanceUID.equals(scan.getUid())) {
-                    targetScan = scan;
-                    break;
-                }
-            }
+            XnatImagescandata targetScan = findScanBySeriesUID(scans, seriesInstanceUID);
 
             if (targetScan == null) {
                 logger.warn("Series not found: {}", seriesInstanceUID);
@@ -209,16 +201,8 @@ public class XnatDicomServiceImpl implements XnatDicomService {
                 return null;
             }
 
-            XnatImagescandata targetScan = null;
             List scans = session.getScans_scan();
-
-            for (Object scanObj : scans) {
-                XnatImagescandata scan = (XnatImagescandata) scanObj;
-                if (seriesInstanceUID.equals(scan.getUid())) {
-                    targetScan = scan;
-                    break;
-                }
-            }
+            XnatImagescandata targetScan = findScanBySeriesUID(scans, seriesInstanceUID);
 
             if (targetScan == null) {
                 return null;
@@ -376,16 +360,8 @@ public class XnatDicomServiceImpl implements XnatDicomService {
                 return null;
             }
 
-            XnatImagescandata targetScan = null;
             List scans = session.getScans_scan();
-
-            for (Object scanObj : scans) {
-                XnatImagescandata scan = (XnatImagescandata) scanObj;
-                if (seriesInstanceUID.equals(scan.getUid())) {
-                    targetScan = scan;
-                    break;
-                }
-            }
+            XnatImagescandata targetScan = findScanBySeriesUID(scans, seriesInstanceUID);
 
             if (targetScan == null) {
                 return null;
@@ -766,6 +742,58 @@ public class XnatDicomServiceImpl implements XnatDicomService {
     }
 
     /**
+     * Find scan by SeriesInstanceUID.
+     * First tries to match scan.getUid(), then falls back to reading DICOM files.
+     */
+    private XnatImagescandata findScanBySeriesUID(List scans, String seriesInstanceUID) {
+        // First pass: try to match scan.getUid()
+        for (Object scanObj : scans) {
+            XnatImagescandata scan = (XnatImagescandata) scanObj;
+            if (seriesInstanceUID.equals(scan.getUid())) {
+                return scan;
+            }
+        }
+
+        // Second pass: if scan.uid is null, read DICOM files to find SeriesInstanceUID
+        for (Object scanObj : scans) {
+            XnatImagescandata scan = (XnatImagescandata) scanObj;
+            if (scan.getUid() == null || scan.getUid().isEmpty()) {
+                // Check if this scan contains files with matching SeriesInstanceUID
+                try {
+                    List resources = scan.getFile();
+                    if (resources != null) {
+                        for (Object resourceObj : resources) {
+                            if (resourceObj instanceof XnatAbstractresource) {
+                                XnatAbstractresource resource = (XnatAbstractresource) resourceObj;
+                                if (!isDicomResource(resource)) {
+                                    continue;
+                                }
+                                // Check first DICOM file for SeriesInstanceUID
+                                List<File> dicomFiles = resolveDicomFiles(resource, scan);
+                                if (!dicomFiles.isEmpty()) {
+                                    File firstFile = dicomFiles.get(0);
+                                    try (DicomInputStream dis = new DicomInputStream(firstFile)) {
+                                        Attributes attrs = dis.readDataset(-1, -1);
+                                        String fileSeriesUID = attrs.getString(Tag.SeriesInstanceUID);
+                                        if (seriesInstanceUID.equals(fileSeriesUID)) {
+                                            logger.debug("Found scan by reading DICOM file SeriesInstanceUID");
+                                            return scan;
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                } catch (Exception e) {
+                    logger.debug("Error checking scan for SeriesInstanceUID: {}", e.getMessage());
+                }
+            }
+        }
+
+        return null;
+    }
+
+    /**
      * Find specific DICOM file by SOPInstanceUID
      */
     private File findDicomFileInScan(XnatImagescandata scan, String sopInstanceUID) {
@@ -1136,16 +1164,8 @@ public class XnatDicomServiceImpl implements XnatDicomService {
                 return frames;
             }
 
-            XnatImagescandata targetScan = null;
             List scans = session.getScans_scan();
-
-            for (Object scanObj : scans) {
-                XnatImagescandata scan = (XnatImagescandata) scanObj;
-                if (seriesInstanceUID.equals(scan.getUid())) {
-                    targetScan = scan;
-                    break;
-                }
-            }
+            XnatImagescandata targetScan = findScanBySeriesUID(scans, seriesInstanceUID);
 
             if (targetScan == null) {
                 return frames;
