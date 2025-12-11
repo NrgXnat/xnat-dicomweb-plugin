@@ -35,6 +35,8 @@ repositories {
     mavenCentral()
     maven { url "https://www.dcm4che.org/maven2/" }
     maven { url "https://oss.sonatype.org/content/repositories/releases/" }
+    // For org.weasis.core:weasis-core-img:4.6.0.
+    maven { url "https://raw.githubusercontent.com/nroduit/mvn-repo/master/" }
 }
 
 sourceCompatibility = 1.8
@@ -93,6 +95,8 @@ dependencies {
     implementAndInclude "org.dcm4che:dcm4che-imageio:5.29.2"
     implementAndInclude "org.dcm4che:dcm4che-image:5.29.2"
     implementAndInclude "org.dcm4che:dcm4che-net:5.29.2"
+    // OpenCV image I/O for advanced compression formats (JPEG-LS, JPEG 2000)
+    implementAndInclude "org.dcm4che:dcm4che-imageio-opencv:5.29.2"
 
     // Apache Mime4J for multipart/related parsing (packaged in plugin)
     implementAndInclude 'org.apache.james:apache-mime4j-core:0.8.9'

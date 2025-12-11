@@ -382,7 +382,20 @@ public class XnatDicomServiceImpl implements XnatDicomService {
                 }
             }
 
-        } catch (Exception e) {
+        } catch (UnsupportedOperationException e) {
+            // Re-throw UnsupportedOperationException (from missing OpenCV)
+            throw e;
+        } catch (Throwable e) {
+            // Catch both Exception and Error (e.g., UnsatisfiedLinkError, NoClassDefFoundError)
+            // Check if this is due to missing native libraries
+            if (e instanceof UnsatisfiedLinkError || e instanceof NoClassDefFoundError) {
+                logger.error("Failed to render instance due to missing native libraries: {}", e.getMessage());
+                throw new UnsupportedOperationException(
+                        "Cannot render image. This DICOM file uses compression formats (JPEG-LS or JPEG 2000) " +
+                        "that require OpenCV native libraries. " +
+                        "Install OpenCV (macOS: 'brew install opencv', Ubuntu: 'apt-get install libopencv-dev') " +
+                        "or use the retrieveInstance endpoint to download the original DICOM file.");
+            }
             logger.error("Error rendering instance: " + sopInstanceUID, e);
         }
 
@@ -897,11 +910,15 @@ public class XnatDicomServiceImpl implements XnatDicomService {
      */
     private RenderedInstanceResult renderDicomToJpeg(File dicomFile, Integer requestedFrame) {
         try {
-            // First, read DICOM metadata to determine frame count and frame rate
+            // First, read DICOM metadata to determine frame count, frame rate, and transfer syntax
             int totalFrames = 1;
             Double frameRate = null;
+            String transferSyntax = null;
 
             try (DicomInputStream dis = new DicomInputStream(dicomFile)) {
+                // Read transfer syntax for logging
+                transferSyntax = dis.getTransferSyntax();
+
                 Attributes attrs = dis.readDataset(-1, -1);
                 totalFrames = attrs.getInt(Tag.NumberOfFrames, 1);
 
@@ -946,7 +963,56 @@ public class XnatDicomServiceImpl implements XnatDicomService {
             DicomImageReadParam param = (DicomImageReadParam) reader.getDefaultReadParam();
 
             // Read the selected frame
-            BufferedImage bufferedImage = reader.read(frameIndex, param);
+            BufferedImage bufferedImage;
+            try {
+                bufferedImage = reader.read(frameIndex, param);
+            } catch (Throwable readEx) {  // Catch Error (NoClassDefFoundError) and Exception
+                reader.dispose();
+                iis.close();
+
+                // Check if this is due to missing codec support for advanced compression
+                if (isAdvancedCompressionFormat(transferSyntax) &&
+                    isNativeLibraryMissing(readEx)) {
+                    String tsName = getTransferSyntaxName(transferSyntax);
+
+                    // Determine specific error based on exception type
+                    String detailedMessage;
+                    if (hasUnsatisfiedLinkError(readEx)) {
+                        // dcm4che-imageio-opencv.jar is present, but native OpenCV library is missing
+                        logger.error("Failed to render image with transfer syntax {} ({}). " +
+                                "dcm4che-imageio-opencv is installed, but native OpenCV libraries are not found. " +
+                                "Please install OpenCV: " +
+                                "macOS: 'brew install opencv' | " +
+                                "Ubuntu: 'sudo apt-get install libopencv-dev' | " +
+                                "CentOS: 'sudo yum install opencv-devel'",
+                                transferSyntax, tsName);
+                        detailedMessage = String.format(
+                            "Cannot render image with transfer syntax: %s. " +
+                            "Native OpenCV libraries are not installed on the system. " +
+                            "To enable rendering of JPEG-LS and JPEG 2000 images, install OpenCV:\n" +
+                            "  • macOS: brew install opencv\n" +
+                            "  • Ubuntu/Debian: sudo apt-get install libopencv-dev\n" +
+                            "  • CentOS/RHEL: sudo yum install opencv-devel\n" +
+                            "Alternatively, use the retrieveInstance endpoint to download the original DICOM file.",
+                            tsName);
+                    } else {
+                        // Other codec-related errors (likely missing ImageReader)
+                        logger.error("Failed to render image with transfer syntax {} ({}). " +
+                                "This format requires additional codec support that is not available. " +
+                                "See plugin documentation for installation instructions.",
+                                transferSyntax, tsName);
+                        detailedMessage = String.format(
+                            "Cannot render image with transfer syntax: %s. " +
+                            "This compression format requires additional codec support (e.g., OpenCV libraries). " +
+                            "Most DICOM files use JPEG Baseline compression which is fully supported. " +
+                            "To access this file, use the retrieveInstance endpoint to download the original DICOM file.",
+                            tsName);
+                    }
+
+                    throw new UnsupportedOperationException(detailedMessage);
+                }
+                throw readEx; // Re-throw if not a native library issue
+            }
 
             reader.dispose();
             iis.close();
@@ -964,9 +1030,105 @@ public class XnatDicomServiceImpl implements XnatDicomService {
 
             return new RenderedInstanceResult(baos.toByteArray(), totalFrames, frameIndex + 1, frameRate);
 
+        } catch (UnsupportedOperationException e) {
+            // Re-throw to preserve the helpful error message
+            throw e;
         } catch (Exception e) {
             logger.error("Error rendering DICOM to JPEG", e);
             return null;
+        }
+    }
+
+    /**
+     * Check if the transfer syntax is an advanced compression format that requires native libraries.
+     * JPEG-LS and JPEG 2000 require OpenCV native libraries.
+     */
+    private boolean isAdvancedCompressionFormat(String transferSyntax) {
+        if (transferSyntax == null) {
+            return false;
+        }
+        // JPEG-LS: 1.2.840.10008.1.2.4.80 (Lossless), 1.2.840.10008.1.2.4.81 (Near-lossless)
+        // JPEG 2000: 1.2.840.10008.1.2.4.90 (Lossless), 1.2.840.10008.1.2.4.91 (Lossy)
+        return transferSyntax.startsWith("1.2.840.10008.1.2.4.80") ||
+               transferSyntax.startsWith("1.2.840.10008.1.2.4.81") ||
+               transferSyntax.startsWith("1.2.840.10008.1.2.4.90") ||
+               transferSyntax.startsWith("1.2.840.10008.1.2.4.91");
+    }
+
+    /**
+     * Check if the exception/error indicates missing native libraries.
+     * Typically manifests as UnsatisfiedLinkError, NoClassDefFoundError, or specific IOException messages.
+     */
+    private boolean isNativeLibraryMissing(Throwable e) {
+        if (e == null) {
+            return false;
+        }
+
+        // Check for NoClassDefFoundError or UnsatisfiedLinkError (native library not loaded)
+        Throwable cause = e;
+        while (cause != null) {
+            if (cause instanceof UnsatisfiedLinkError || cause instanceof NoClassDefFoundError) {
+                return true;
+            }
+            // Check for common error messages indicating missing codec support
+            String message = cause.getMessage();
+            if (message != null) {
+                String lowerMsg = message.toLowerCase();
+                if (lowerMsg.contains("no image reader") ||
+                    lowerMsg.contains("unsupported") ||
+                    lowerMsg.contains("cannot read") ||
+                    lowerMsg.contains("codec") ||
+                    lowerMsg.contains("native") ||
+                    lowerMsg.contains("could not initialize class") ||
+                    lowerMsg.contains("streamsegment")) {
+                    return true;
+                }
+            }
+            cause = cause.getCause();
+        }
+
+        return false;
+    }
+
+    /**
+     * Check if the exception/error chain contains UnsatisfiedLinkError or NoClassDefFoundError.
+     * This specifically indicates that native libraries (e.g., OpenCV) are not installed.
+     */
+    private boolean hasUnsatisfiedLinkError(Throwable e) {
+        if (e == null) {
+            return false;
+        }
+
+        Throwable cause = e;
+        while (cause != null) {
+            if (cause instanceof UnsatisfiedLinkError || cause instanceof NoClassDefFoundError) {
+                return true;
+            }
+            cause = cause.getCause();
+        }
+
+        return false;
+    }
+
+    /**
+     * Get human-readable name for a transfer syntax UID.
+     */
+    private String getTransferSyntaxName(String transferSyntax) {
+        if (transferSyntax == null) return "Unknown";
+        switch (transferSyntax) {
+            case "1.2.840.10008.1.2": return "Implicit VR Little Endian";
+            case "1.2.840.10008.1.2.1": return "Explicit VR Little Endian";
+            case "1.2.840.10008.1.2.2": return "Explicit VR Big Endian";
+            case "1.2.840.10008.1.2.4.50": return "JPEG Baseline";
+            case "1.2.840.10008.1.2.4.51": return "JPEG Extended";
+            case "1.2.840.10008.1.2.4.57": return "JPEG Lossless";
+            case "1.2.840.10008.1.2.4.70": return "JPEG Lossless SV1";
+            case "1.2.840.10008.1.2.4.80": return "JPEG-LS Lossless";
+            case "1.2.840.10008.1.2.4.81": return "JPEG-LS Near-lossless";
+            case "1.2.840.10008.1.2.4.90": return "JPEG 2000 Lossless";
+            case "1.2.840.10008.1.2.4.91": return "JPEG 2000 Lossy";
+            case "1.2.840.10008.1.2.5": return "RLE Lossless";
+            default: return transferSyntax;
         }
     }
 
@@ -1332,7 +1494,24 @@ public class XnatDicomServiceImpl implements XnatDicomService {
 
             // Read and decompress the frame
             DicomImageReadParam param = (DicomImageReadParam) reader.getDefaultReadParam();
-            BufferedImage image = reader.read(frameIndex, param);
+            BufferedImage image;
+            try {
+                image = reader.read(frameIndex, param);
+            } catch (Throwable readEx) {
+                reader.dispose();
+                iis.close();
+
+                // Check if this is due to missing OpenCV native libraries
+                if (readEx instanceof NoClassDefFoundError || readEx instanceof UnsatisfiedLinkError) {
+                    logger.error("Failed to read frame due to missing native libraries: {}", readEx.getMessage());
+                    throw new UnsupportedOperationException(
+                            "Cannot extract frame data. This DICOM file uses compression formats (JPEG-LS or JPEG 2000) " +
+                            "that require OpenCV native libraries. " +
+                            "Install OpenCV (macOS: 'brew install opencv', Ubuntu: 'apt-get install libopencv-dev') " +
+                            "or use the retrieveInstance endpoint to download the original DICOM file.");
+                }
+                throw new RuntimeException("Failed to read frame: " + readEx.getMessage(), readEx);
+            }
 
             reader.dispose();
             iis.close();

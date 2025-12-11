@@ -77,6 +77,30 @@ public class GlobalExceptionHandler {
     }
 
     /**
+     * Handle UnsupportedOperationException (e.g., missing native libraries for advanced DICOM compression)
+     */
+    @ExceptionHandler(UnsupportedOperationException.class)
+    public ResponseEntity<String> handleUnsupportedOperationException(UnsupportedOperationException ex, HttpServletRequest request) {
+        String requestId = getRequestId();
+
+        logger.warn("Unsupported operation [{}]: {}", requestId, ex.getMessage());
+
+        ErrorResponse errorResponse = new ErrorResponse(
+            "UnsupportedOperation",
+            ex.getMessage(),
+            HttpStatus.NOT_IMPLEMENTED.value(),
+            requestId,
+            request.getRequestURI()
+        );
+
+        return ResponseEntity
+            .status(HttpStatus.NOT_IMPLEMENTED)
+            .header("X-Request-ID", requestId)
+            .header("Content-Type", "application/json")
+            .body(toJson(errorResponse));
+    }
+
+    /**
      * Handle generic exceptions
      */
     @ExceptionHandler(Exception.class)
