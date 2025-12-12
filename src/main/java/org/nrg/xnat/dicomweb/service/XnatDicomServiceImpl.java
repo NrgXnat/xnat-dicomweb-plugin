@@ -1715,6 +1715,15 @@ public class XnatDicomServiceImpl implements XnatDicomService {
             }
         }
 
+        // StudyTime matching (range support)
+        if (query.contains(Tag.StudyTime)) {
+            String queryValue = query.getString(Tag.StudyTime);
+            String attrValue = attrs.getString(Tag.StudyTime);
+            if (!matchesDicomTime(attrValue, queryValue)) {
+                return false;
+            }
+        }
+
         // StudyInstanceUID matching (exact)
         if (query.contains(Tag.StudyInstanceUID)) {
             String queryValue = query.getString(Tag.StudyInstanceUID);
@@ -1888,6 +1897,74 @@ public class XnatDicomServiceImpl implements XnatDicomService {
         }
 
         return false;
+    }
+
+    /**
+     * DICOM time matching with range support
+     * Supports formats: HHMMSS, HHMMSS.FFFFFF, HHMMSS-, -HHMMSS, HHMMSS-HHMMSS
+     * Time values are compared as strings (lexicographic comparison works for DICOM TM format)
+     */
+    private boolean matchesDicomTime(String attrValue, String queryValue) {
+        if (queryValue == null || queryValue.isEmpty()) {
+            return true;
+        }
+
+        if (attrValue == null || attrValue.isEmpty()) {
+            return false;
+        }
+
+        // Normalize time values (remove fractional seconds for comparison if needed)
+        String normalizedAttr = normalizeTime(attrValue);
+        String normalizedQuery = queryValue;
+
+        // Single time match
+        if (!normalizedQuery.contains("-")) {
+            String normalizedQueryTime = normalizeTime(normalizedQuery);
+            return normalizedAttr.startsWith(normalizedQueryTime) || normalizedQueryTime.startsWith(normalizedAttr);
+        }
+
+        // Range match: startTime-endTime
+        String[] parts = normalizedQuery.split("-", -1);
+
+        if (parts.length == 2) {
+            String startTime = normalizeTime(parts[0]);
+            String endTime = normalizeTime(parts[1]);
+
+            // startTime- (from time onwards)
+            if (endTime.isEmpty()) {
+                return normalizedAttr.compareTo(startTime) >= 0;
+            }
+
+            // -endTime (up to time)
+            if (startTime.isEmpty()) {
+                return normalizedAttr.compareTo(endTime) <= 0;
+            }
+
+            // startTime-endTime (between times)
+            return normalizedAttr.compareTo(startTime) >= 0 && normalizedAttr.compareTo(endTime) <= 0;
+        }
+
+        return false;
+    }
+
+    /**
+     * Normalize DICOM time value for comparison
+     * Removes fractional seconds and ensures consistent length
+     */
+    private String normalizeTime(String time) {
+        if (time == null || time.isEmpty()) {
+            return "";
+        }
+        // Remove fractional seconds (after decimal point)
+        int dotIndex = time.indexOf('.');
+        if (dotIndex > 0) {
+            time = time.substring(0, dotIndex);
+        }
+        // Pad to 6 characters (HHMMSS) if shorter
+        while (time.length() < 6) {
+            time = time + "0";
+        }
+        return time;
     }
 
     @Override
