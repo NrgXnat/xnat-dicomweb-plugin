@@ -231,29 +231,30 @@ Controls when DICOM attributes use URIs instead of inline values:
 - Everything in one request
 - Better for fast networks
 
-### Via Configuration File
+### Initial Configuration File
 
-For advanced users, settings can also be configured via properties files:
+**Initial defaults** are defined in the plugin's properties file at first installation:
 
-**File:** `{xnat-home}/config/xnat-conf.properties`
-
-```properties
-# High-performance configuration
-dicomweb.defaultPageSize=200
-dicomweb.maxPageSize=2000
-dicomweb.memoryThreshold=52428800
-dicomweb.bulkDataThreshold=4096
-```
+**File:** `src/main/resources/config/dicomweb/dicomweb.properties` (plugin source)
 
 ```properties
-# Low-resource configuration
-dicomweb.defaultPageSize=50
-dicomweb.maxPageSize=500
-dicomweb.memoryThreshold=5242880
-dicomweb.bulkDataThreshold=512
+# Default configuration (used only on first load)
+dicomweb.defaultPageSize=100
+dicomweb.maxPageSize=1000
+dicomweb.memoryThreshold=10485760
+dicomweb.bulkDataThreshold=1024
 ```
 
-**Note:** Property file changes require XNAT restart.
+**Important Notes:**
+- ⚠️ **Configuration is stored in the database** after first load
+- ⚠️ **Modifying the properties file will NOT affect running instances**
+- ✅ **Use Admin UI to modify settings** - changes take effect immediately
+- ⚠️ Properties file is only used for initial defaults when plugin is first installed
+
+**To reset to defaults:**
+1. Go to Admin UI → Plugin Settings → DICOMweb Plugin
+2. Manually enter default values shown above
+3. Click Save
 
 ---
 
@@ -416,7 +417,7 @@ curl -u user:pass \
 ```bash
 curl -u user:pass \
   "https://xnat/xapi/dicomweb/projects/MyProject/studies/1.2.3.../series/1.2.4..." \
-  -H "Accept: multipart/related; type=application/dicom" \
+  -H "Accept: multipart/related; type=\"application/dicom\"" \
   -o series.multipart
 ```
 
@@ -424,7 +425,7 @@ curl -u user:pass \
 ```bash
 curl -u user:pass \
   "https://xnat/xapi/dicomweb/projects/MyProject/studies/1.2.3..." \
-  -H "Accept: multipart/related; type=application/dicom" \
+  -H "Accept: multipart/related; type=\"application/dicom\"" \
   -o study.multipart
 ```
 
@@ -591,7 +592,8 @@ DICOM_FILE="image.dcm"
 PROJECT_ID="MyProject"
 
 curl -u user:pass -X POST \
-  -H "Content-Type: multipart/related; type=application/dicom; boundary=$BOUNDARY" \
+  -H "Content-Type: multipart/related; type=\"application/dicom\"; boundary=$BOUNDARY" \
+  -H "Accept: application/dicom+json" \
   --data-binary @- \
   "https://xnat/xapi/dicomweb/projects/$PROJECT_ID/studies" << EOF
 --$BOUNDARY
@@ -601,6 +603,8 @@ $(cat "$DICOM_FILE")
 --$BOUNDARY--
 EOF
 ```
+
+**Important:** The `type` parameter value **must be quoted** (`type="application/dicom"`) because it contains the `/` character, which is a special character (tspecial) per RFC 2045. Unquoted format will result in HTTP 415 error.
 
 **Response:**
 ```json
@@ -739,12 +743,15 @@ body = (
 ).encode() + dicom_data + f"\r\n--{boundary}--\r\n".encode()
 
 headers = {
-    "Content-Type": f"multipart/related; type=application/dicom; boundary={boundary}"
+    "Content-Type": f'multipart/related; type="application/dicom"; boundary={boundary}',
+    "Accept": "application/dicom+json"
 }
 
 response = requests.post(url, auth=auth, headers=headers, data=body)
 print(response.json())
 ```
+
+**Note:** Use single quotes for the outer string and double quotes for `"application/dicom"` to ensure proper RFC 2045 compliance.
 
 **For detailed STOW-RS documentation, see:** [docs/STOW_RS_IMPLEMENTATION_PLAN.md](STOW_RS_IMPLEMENTATION_PLAN.md)
 
@@ -1214,7 +1221,7 @@ A: For efficiency. Pixel data can be megabytes - using URIs keeps JSON responses
 A: Yes:
 ```bash
 GET /projects/{proj}/studies/{studyUID}
-Accept: multipart/related; type=application/dicom
+Accept: multipart/related; type="application/dicom"
 ```
 
 **Q: What image formats are supported for rendering?**
