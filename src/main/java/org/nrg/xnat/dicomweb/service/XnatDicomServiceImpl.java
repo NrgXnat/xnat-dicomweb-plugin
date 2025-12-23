@@ -1,5 +1,6 @@
 package org.nrg.xnat.dicomweb.service;
 
+import org.apache.commons.lang3.StringUtils;
 import org.dcm4che3.data.Attributes;
 import org.dcm4che3.data.Tag;
 import org.dcm4che3.data.VR;
@@ -7,14 +8,16 @@ import org.dcm4che3.imageio.plugins.dcm.DicomImageReadParam;
 import org.dcm4che3.io.DicomInputStream;
 import org.nrg.action.ServerException;
 import org.nrg.xdat.XDAT;
+import org.nrg.xdat.bean.CatDcmentryBean;
 import org.nrg.xdat.model.CatEntryI;
-import org.nrg.xdat.om.XnatAbstractresource;
-import org.nrg.xdat.om.XnatImagescandata;
-import org.nrg.xdat.om.XnatImagesessiondata;
-import org.nrg.xdat.om.XnatProjectdata;
-import org.nrg.xdat.om.XnatResourcecatalog;
-import org.nrg.xft.XFTItem;
+import org.nrg.xdat.model.XnatExperimentdataShareI;
+import org.nrg.xdat.model.XnatImagescandataShareI;
+import org.nrg.xdat.model.XnatProjectparticipantI;
+import org.nrg.xdat.om.*;
+import org.nrg.xdat.security.helpers.Permissions;
+import org.nrg.xft.XFTTable;
 import org.nrg.xft.search.CriteriaCollection;
+import org.nrg.xft.search.QueryOrganizer;
 import org.nrg.xft.security.UserI;
 import org.nrg.xnat.dicomweb.utils.DicomWebUtils;
 import org.nrg.xnat.utils.CatalogUtils;
@@ -48,40 +51,97 @@ public class XnatDicomServiceImpl implements XnatDicomService {
     @Override
     public List<Attributes> searchStudies(UserI user, String projectId, Attributes queryAttributes) {
         List<Attributes> results = new ArrayList<>();
-
         try {
-            // Get project and check permissions
             XnatProjectdata project = XnatProjectdata.getXnatProjectdatasById(projectId, user, false);
             if (project == null) {
                 logger.warn("Project not found or user does not have access: {}", projectId);
                 return results;
             }
 
-            // Search for image sessions in this project using CriteriaCollection
-            CriteriaCollection cc = new CriteriaCollection("AND");
+            // Check if user has unrestricted access to all data in the project
+            // If user is owner, member, or collaborator, they have access to all modalities
+            boolean hasUnrestrictedAccess = isUserOwnerMemberOrCollaborator(user, projectId);
+
+            if (!hasUnrestrictedAccess) {
+                logger.debug("User {} has restricted access to project {} - will filter by element permissions",
+                    user.getUsername(), projectId);
+            }
+
+            // Use QueryOrganizer to efficiently query image sessions
+            String rootElementName = "xnat:imageSessionData";
+            QueryOrganizer qo = QueryOrganizer.buildXFTQueryOrganizerWithClause(rootElementName, user);
+
+            // Add fields needed for DICOM study attributes
+            qo.addField("xnat:imageSessionData/ID");
+            qo.addField("xnat:imageSessionData/UID");
+            qo.addField("xnat:imageSessionData/project");
+            qo.addField("xnat:imageSessionData/label");
+            qo.addField("xnat:imageSessionData/date");
+            qo.addField("xnat:imageSessionData/time");
+            qo.addField("xnat:imageSessionData/subject_ID");
+            qo.addField("xnat:subjectData/label");
+            qo.addField("xnat:imageSessionData/extension_item/element_name");
+
+            // Add project filter
+            CriteriaCollection cc = new CriteriaCollection("OR");
             cc.addClause("xnat:imageSessionData/project", projectId);
+            cc.addClause("xnat:imageSessionData/sharing/share/project", projectId);
+            qo.addWhere(cc);
 
-            ArrayList sessions = XnatImagesessiondata.getXnatImagesessiondatasByField(
-                "xnat:imageSessionData/project", projectId, user, false);
+            // Execute query
+            String query = qo.buildFullQuery();
+            XFTTable table = XFTTable.Execute(query, user.getDBName(), user.getUsername());
 
-            logger.debug("Found {} sessions in project {}",
-                        sessions != null ? sessions.size() : 0, projectId);
+            logger.debug("Found {} sessions in project {}", table.size(), projectId);
 
-            if (sessions != null) {
-                for (Object sessionObj : sessions) {
+            // Map table rows to DICOM Attributes
+            if (table.size() > 0) {
+                // Get column indices
+                Integer idCol = table.getColumnIndex(qo.getFieldAlias("xnat:imageSessionData/ID").toLowerCase());
+                Integer uidCol = table.getColumnIndex(qo.getFieldAlias("xnat:imageSessionData/UID").toLowerCase());
+                Integer projectCol = table.getColumnIndex(qo.getFieldAlias("xnat:imageSessionData/project").toLowerCase());
+                Integer sessionLabelCol = table.getColumnIndex(qo.getFieldAlias("xnat:imageSessionData/label").toLowerCase());
+                Integer dateCol = table.getColumnIndex(qo.getFieldAlias("xnat:imageSessionData/date").toLowerCase());
+                Integer timeCol = table.getColumnIndex(qo.getFieldAlias("xnat:imageSessionData/time").toLowerCase());
+                Integer subjectIdCol = table.getColumnIndex(qo.getFieldAlias("xnat:imageSessionData/subject_ID").toLowerCase());
+                Integer subjectLabelCol = table.getColumnIndex(qo.getFieldAlias("xnat:subjectData/label").toLowerCase());
+                Integer elementNameCol = table.getColumnIndex(qo.getFieldAlias("xnat:imageSessionData/extension_item/element_name").toLowerCase());
+
+                // Iterate through rows and create study attributes
+                for (Object[] row : table.rows()) {
                     try {
-                        if (sessionObj instanceof XnatImagesessiondata) {
-                            XnatImagesessiondata session = (XnatImagesessiondata) sessionObj;
+                        String studyUID = (String) row[uidCol];
 
-                            // Only include sessions with StudyInstanceUID
-                            String studyUID = session.getUid();
-                            if (studyUID != null && !studyUID.isEmpty()) {
-                                Attributes attrs = createStudyAttributes(session);
+                        // Only include sessions with StudyInstanceUID
+                        if (studyUID != null && !studyUID.isEmpty()) {
+                            // Check permissions for custom groups (not owner/member/collaborator)
+                            if (!hasUnrestrictedAccess) {
+                                // Get element name for permission check
+                                String elementName = elementNameCol != null ? (String) row[elementNameCol] : null;
+
+                                if (elementName == null || elementName.isEmpty()) {
+                                    logger.debug("Skipping session {} - no element name for permission check", studyUID);
+                                    continue;
+                                }
+
+                                // Check if user can read this specific element type in the project
+                                if (!Permissions.canRead(user,elementName + "/project",projectId)){
+                                    logger.debug("User {} does not have permission to read {} in project {}",
+                                        user.getUsername(), elementName, projectId);
+                                    continue;
+                                }
+                            }
+
+                            Attributes attrs = createStudyAttributesFromRow(row,
+                                idCol, uidCol, projectCol, sessionLabelCol, dateCol, timeCol,
+                                subjectIdCol, subjectLabelCol, elementNameCol);
+
+                            if (attrs != null) {
                                 results.add(attrs);
                             }
                         }
                     } catch (Exception e) {
-                        logger.error("Error processing session", e);
+                        logger.error("Error processing session row", e);
                     }
                 }
             }
@@ -107,27 +167,37 @@ public class XnatDicomServiceImpl implements XnatDicomService {
         try {
             XnatProjectdata project = XnatProjectdata.getXnatProjectdatasById(projectId, user, false);
             if (project == null) {
+                logger.warn("Project not found or user does not have access: {}", projectId);
                 return results;
             }
 
-            // Find the session with matching StudyInstanceUID
-            XnatImagesessiondata targetSession = findSessionByUID(user, projectId, studyInstanceUID);
+            // Find all sessions with matching StudyInstanceUID (XNAT allows multiple sessions with same UID)
+            List<XnatImagesessiondata> targetSessions = findSessionsByUID(user, projectId, studyInstanceUID);
 
-            if (targetSession == null) {
+            if (targetSessions.isEmpty()) {
                 logger.warn("Study not found: {}", studyInstanceUID);
                 return results;
             }
 
-            // Get all scans (series) in the session
-            List scans = targetSession.getScans_scan();
+            // Aggregate all scans (series) from all matching sessions
+            int totalScans = 0;
+            for (XnatImagesessiondata session : targetSessions) {
+                if(!Permissions.canRead(user,session)){
+                    continue;
+                }
 
-            logger.debug("Found {} scans in session {}", scans.size(), targetSession.getId());
+                List scans = session.getScans_scan();
+                totalScans += scans.size();
 
-            for (Object scanObj : scans) {
-                XnatImagescandata scan = (XnatImagescandata) scanObj;
-                Attributes attrs = createSeriesAttributes(scan, studyInstanceUID);
-                results.add(attrs);
+                for (Object scanObj : scans) {
+                    XnatImagescandata scan = (XnatImagescandata) scanObj;
+                    Attributes attrs = createSeriesAttributes(scan, studyInstanceUID);
+                    results.add(attrs);
+                }
             }
+
+            logger.debug("Found {} scans across {} sessions for study {}",
+                totalScans, targetSessions.size(), studyInstanceUID);
 
             // Apply query filters if provided
             if (queryAttributes != null && !queryAttributes.isEmpty()) {
@@ -144,6 +214,40 @@ public class XnatDicomServiceImpl implements XnatDicomService {
     }
 
     @Override
+    public Attributes getInstanceAttributes(UserI user, String projectId, String studyInstanceUID,
+                                            String seriesInstanceUID, String sopInstanceUID) {
+        try {
+            File dicomFile = getInstance(user, projectId, studyInstanceUID, seriesInstanceUID, sopInstanceUID);
+            try (DicomInputStream dis = new DicomInputStream(dicomFile)) {
+                // Use URI mode to save memory - BulkData will reference file location
+                dis.setIncludeBulkData(DicomInputStream.IncludeBulkData.URI);
+
+                // Read FileMetaInformation
+                Attributes fmi = dis.readFileMetaInformation();
+
+                // Read dataset (bulk data replaced with BulkData objects containing file URI)
+                Attributes attrs = dis.readDataset();
+
+                // Merge FileMetaInformation
+                if (fmi != null) {
+                    attrs.addAll(fmi);
+                }
+
+                return attrs;
+            } catch (Exception e) {
+                logger.debug("Error reading DICOM candidate {}", dicomFile.getAbsolutePath(), e);
+            }
+
+            logger.info("Instance search for series {} returned 0 instances", seriesInstanceUID);
+
+        } catch (Exception e) {
+            logger.error("Error searching instances in series: " + seriesInstanceUID, e);
+        }
+
+        return null;
+    }
+
+    @Override
     public List<Attributes> searchInstances(UserI user, String projectId, String studyInstanceUID,
                                            String seriesInstanceUID, Attributes queryAttributes) {
         List<Attributes> results = new ArrayList<>();
@@ -151,31 +255,39 @@ public class XnatDicomServiceImpl implements XnatDicomService {
         try {
             XnatProjectdata project = XnatProjectdata.getXnatProjectdatasById(projectId, user, false);
             if (project == null) {
+                logger.warn("Project not found or user does not have access: {}", projectId);
                 return results;
             }
 
-            // Find the scan by SeriesInstanceUID
-            XnatImagesessiondata session = findSessionByUID(user, projectId, studyInstanceUID);
-            if (session == null) {
+            // Find all sessions with matching StudyInstanceUID (XNAT allows multiple sessions with same UID)
+            List<XnatImagesessiondata> targetSessions = findSessionsByUID(user, projectId, studyInstanceUID);
+
+            if (targetSessions.isEmpty()) {
                 logger.warn("Study not found: {}", studyInstanceUID);
                 return results;
             }
 
-            List scans = session.getScans_scan();
-            XnatImagescandata targetScan = findScanBySeriesUID(scans, seriesInstanceUID);
+            for(XnatImagesessiondata session : targetSessions){
+                if(!Permissions.canRead(user,session)){
+                    continue;
+                }
 
-            if (targetScan == null) {
-                logger.warn("Series not found: {}", seriesInstanceUID);
-                return results;
+                // Find the scan directly by SeriesInstanceUID using efficient SQL query
+                XnatImagescandata targetScan = findScanBySeriesUIDDirect(session.getScans_scan(), seriesInstanceUID);
+
+                if (targetScan == null) {
+                    continue;
+                }
+
+                // Get DICOM files for this scan
+                results = readDicomFilesFromScan(targetScan);
+
+                // Apply query filters if provided
+                if (queryAttributes != null && !queryAttributes.isEmpty()) {
+                    results = filterInstanceResults(results, queryAttributes);
+                }
             }
 
-            // Get DICOM files for this scan
-            results = readDicomFilesFromScan(targetScan);
-
-            // Apply query filters if provided
-            if (queryAttributes != null && !queryAttributes.isEmpty()) {
-                results = filterInstanceResults(results, queryAttributes);
-            }
 
             logger.info("Instance search for series {} returned {} instances", seriesInstanceUID, results.size());
 
@@ -186,36 +298,55 @@ public class XnatDicomServiceImpl implements XnatDicomService {
         return results;
     }
 
+    private File getInstance(UserI user, String projectId, String studyInstanceUID,
+                                        String seriesInstanceUID, String sopInstanceUID) {
+        try {
+            XnatProjectdata project = XnatProjectdata.getXnatProjectdatasById(projectId, user, false);
+            if (project == null) {
+                logger.warn("Project not found or user does not have access: {}", projectId);
+                return null;
+            }
+
+            // Find all sessions with matching StudyInstanceUID (XNAT allows multiple sessions with same UID)
+            List<XnatImagesessiondata> targetSessions = findSessionsByUID(user, projectId, studyInstanceUID);
+
+            if (targetSessions.isEmpty()) {
+                logger.warn("Study not found: {}", studyInstanceUID);
+                return null;
+            }
+
+            for(XnatImagesessiondata session : targetSessions){
+                if(!Permissions.canRead(user,session)){
+                    continue;
+                }
+
+                // Find the scan directly by SeriesInstanceUID using efficient SQL query
+                final XnatImagescandata targetScan = findScanBySeriesUIDDirect(session.getScans_scan(), seriesInstanceUID);
+
+                if (targetScan == null) {
+                    continue;
+                }
+
+                // Find the specific DICOM file
+                return findDicomFileInScan(targetScan, sopInstanceUID);
+            }
+        } catch (Exception e) {
+            logger.error("Error retrieving instance: " + sopInstanceUID, e);
+        }
+
+        return null;
+    }
+
     @Override
     public InputStream retrieveInstance(UserI user, String projectId, String studyInstanceUID,
                                        String seriesInstanceUID, String sopInstanceUID) {
         try {
-            XnatProjectdata project = XnatProjectdata.getXnatProjectdatasById(projectId, user, false);
-            if (project == null) {
-                return null;
-            }
-
-            // Find the session and scan
-            XnatImagesessiondata session = findSessionByUID(user, projectId, studyInstanceUID);
-            if (session == null) {
-                return null;
-            }
-
-            List scans = session.getScans_scan();
-            XnatImagescandata targetScan = findScanBySeriesUID(scans, seriesInstanceUID);
-
-            if (targetScan == null) {
-                return null;
-            }
-
-            // Find the specific DICOM file
-            File dicomFile = findDicomFileInScan(targetScan, sopInstanceUID);
+            File dicomFile = getInstance(user, projectId, studyInstanceUID, seriesInstanceUID, sopInstanceUID);
 
             if (dicomFile != null) {
                 logger.info("Retrieved instance: {}", sopInstanceUID);
                 return new FileInputStream(dicomFile);
             }
-
         } catch (Exception e) {
             logger.error("Error retrieving instance: " + sopInstanceUID, e);
         }
@@ -226,15 +357,7 @@ public class XnatDicomServiceImpl implements XnatDicomService {
     @Override
     public Attributes retrieveMetadata(UserI user, String projectId, String studyInstanceUID,
                                       String seriesInstanceUID, String sopInstanceUID) {
-        List<Attributes> instances = searchInstances(user, projectId, studyInstanceUID, seriesInstanceUID, null);
-
-        for (Attributes attrs : instances) {
-            if (sopInstanceUID.equals(attrs.getString(Tag.SOPInstanceUID))) {
-                return attrs;
-            }
-        }
-
-        return null;
+        return getInstanceAttributes(user, projectId, studyInstanceUID, seriesInstanceUID, sopInstanceUID);
     }
 
     @Override
@@ -246,17 +369,48 @@ public class XnatDicomServiceImpl implements XnatDicomService {
                 return null;
             }
 
-            // Find the session with matching StudyInstanceUID
-            XnatImagesessiondata session = findSessionByUID(user, projectId, studyInstanceUID);
-            if (session == null) {
+            // Find all sessions with matching StudyInstanceUID (XNAT allows multiple sessions with same UID)
+            List<XnatImagesessiondata> sessions = findSessionsByUID(user, projectId, studyInstanceUID);
+            if (sessions.isEmpty()) {
                 logger.warn("Study not found: {}", studyInstanceUID);
                 return null;
             }
 
-            // Create comprehensive study-level metadata
-            Attributes attrs = createEnhancedStudyAttributes(session);
+            // Create comprehensive study-level metadata from the first session
+            // (all sessions with same UID should have same study-level metadata)
+            Attributes attrs = createEnhancedStudyAttributes(projectId, sessions.get(0));
 
-            logger.info("Retrieved study metadata for study: {}", studyInstanceUID);
+            // If multiple sessions, aggregate series and instance counts
+            if (sessions.size() > 1) {
+                int totalSeries = 0;
+                int totalInstances = 0;
+                Set<String> allModalities = new LinkedHashSet<>();
+
+                for (XnatImagesessiondata session : sessions) {
+                    List scans = session.getScans_scan();
+                    if (scans != null) {
+                        totalSeries += scans.size();
+                        for (Object scanObj : scans) {
+                            XnatImagescandata scan = (XnatImagescandata) scanObj;
+                            String modality = scan.getModality();
+                            if (modality != null && !modality.isEmpty()) {
+                                allModalities.add(modality);
+                            }
+                            List<Attributes> instances = readDicomFilesFromScan(scan);
+                            totalInstances += instances.size();
+                        }
+                    }
+                }
+
+                // Update aggregated counts
+                attrs.setInt(Tag.NumberOfStudyRelatedSeries, VR.IS, totalSeries);
+                attrs.setInt(Tag.NumberOfStudyRelatedInstances, VR.IS, totalInstances);
+                if (!allModalities.isEmpty()) {
+                    attrs.setString(Tag.ModalitiesInStudy, VR.CS, String.join("\\", allModalities));
+                }
+            }
+
+            logger.info("Retrieved study metadata for study: {} ({} sessions)", studyInstanceUID, sessions.size());
             return attrs;
 
         } catch (Exception e) {
@@ -276,24 +430,28 @@ public class XnatDicomServiceImpl implements XnatDicomService {
                 return allInstances;
             }
 
-            // Find the session with matching StudyInstanceUID
-            XnatImagesessiondata session = findSessionByUID(user, projectId, studyInstanceUID);
-            if (session == null) {
+            // Find all sessions with matching StudyInstanceUID (XNAT allows multiple sessions with same UID)
+            List<XnatImagesessiondata> sessions = findSessionsByUID(user, projectId, studyInstanceUID);
+            if (sessions.isEmpty()) {
                 logger.warn("Study not found: {}", studyInstanceUID);
                 return allInstances;
             }
 
-            // Get all scans (series) in the session
-            List scans = session.getScans_scan();
-            logger.debug("Found {} scans in study {}", scans.size(), studyInstanceUID);
+            // Collect instances from all series across all sessions
+            int totalScans = 0;
+            for (XnatImagesessiondata session : sessions) {
+                List scans = session.getScans_scan();
+                totalScans += scans.size();
 
-            // Collect instances from all series
-            for (Object scanObj : scans) {
-                XnatImagescandata scan = (XnatImagescandata) scanObj;
-                List<Attributes> instances = readDicomFilesFromScan(scan);
-                allInstances.addAll(instances);
+                for (Object scanObj : scans) {
+                    XnatImagescandata scan = (XnatImagescandata) scanObj;
+                    List<Attributes> instances = readDicomFilesFromScan(scan);
+                    allInstances.addAll(instances);
+                }
             }
 
+            logger.debug("Found {} scans across {} sessions for study {}",
+                totalScans, sessions.size(), studyInstanceUID);
             logger.info("Retrieved metadata for {} instances in study {}", allInstances.size(), studyInstanceUID);
 
         } catch (Exception e) {
@@ -354,31 +512,34 @@ public class XnatDicomServiceImpl implements XnatDicomService {
                 return null;
             }
 
-            // Find the session and scan
-            XnatImagesessiondata session = findSessionByUID(user, projectId, studyInstanceUID);
-            if (session == null) {
+            // Find all sessions with matching StudyInstanceUID (XNAT allows multiple sessions with same UID)
+            List<XnatImagesessiondata> sessions = findSessionsByUID(user, projectId, studyInstanceUID);
+            if (sessions.isEmpty()) {
+                logger.warn("Study not found: {}", studyInstanceUID);
                 return null;
             }
 
-            List scans = session.getScans_scan();
-            XnatImagescandata targetScan = findScanBySeriesUID(scans, seriesInstanceUID);
+            for(XnatImagesessiondata session : sessions) {
+                // Find the scan directly by SeriesInstanceUID using efficient SQL query
+                XnatImagescandata targetScan = findScanBySeriesUIDDirect(session.getScans_scan(), seriesInstanceUID);
 
-            if (targetScan == null) {
-                return null;
-            }
+                if (targetScan == null) {
+                    continue;
+                }
 
-            // Find the specific DICOM file
-            File dicomFile = findDicomFileInScan(targetScan, sopInstanceUID);
+                // Find the specific DICOM file
+                File dicomFile = findDicomFileInScan(targetScan, sopInstanceUID);
 
-            if (dicomFile != null) {
-                logger.info("Rendering instance: {} (frame: {}, format: {})", sopInstanceUID,
-                        frameNumber != null ? frameNumber : "default", format);
+                if (dicomFile != null) {
+                    logger.info("Rendering instance: {} (frame: {}, format: {})", sopInstanceUID,
+                            frameNumber != null ? frameNumber : "default", format);
 
-                // For GIF format with multi-frame, render as animated GIF
-                if (format == ImageFormat.GIF) {
-                    return renderDicomToGif(dicomFile, frameNumber);
-                } else {
-                    return renderDicomToJpeg(dicomFile, frameNumber);
+                    // For GIF format with multi-frame, render as animated GIF
+                    if (format == ImageFormat.GIF) {
+                        return renderDicomToGif(dicomFile, frameNumber);
+                    } else {
+                        return renderDicomToJpeg(dicomFile, frameNumber);
+                    }
                 }
             }
 
@@ -405,9 +566,13 @@ public class XnatDicomServiceImpl implements XnatDicomService {
     // Helper methods
 
     /**
-     * Find session by StudyInstanceUID
+     * Find all sessions with the given StudyInstanceUID in the project
+     * XNAT allows multiple image sessions in the same project to have the same UID
+     * Returns all matching sessions to treat them as a single DICOM study
      */
-    private XnatImagesessiondata findSessionByUID(UserI user, String projectId, String studyUID) {
+    private List<XnatImagesessiondata> findSessionsByUID(UserI user, String projectId, String studyUID) {
+        List<XnatImagesessiondata> matchingSessions = new ArrayList<>();
+
         try {
             // Search by UID field
             ArrayList sessions = XnatImagesessiondata.getXnatImagesessiondatasByField(
@@ -417,24 +582,109 @@ public class XnatDicomServiceImpl implements XnatDicomService {
                 for (Object sessionObj : sessions) {
                     if (sessionObj instanceof XnatImagesessiondata) {
                         XnatImagesessiondata session = (XnatImagesessiondata) sessionObj;
+                        if(!Permissions.canRead(user,session)){
+                            continue;
+                        }
+
                         // Verify it's in the correct project
                         if (projectId.equals(session.getProject())) {
-                            return session;
+                            matchingSessions.add(session);
                         }
                     }
                 }
             }
         } catch (Exception e) {
-            logger.error("Error finding session by UID: " + studyUID, e);
+            logger.error("Error finding sessions by UID: " + studyUID, e);
+        }
+
+        return matchingSessions;
+    }
+
+    /**
+     * Find scan by SeriesInstanceUID using direct SQL query
+     * This is more efficient than loading entire sessions to find a scan
+     * @param user The user making the request
+     * @param seriesInstanceUID The SeriesInstanceUID to search for
+     * @return The XnatImagescandata object, or null if not found
+     */
+    private List<XnatImagescandata> findScanIdsBySeriesUIDDirect(UserI user, String projectId, String seriesInstanceUID) {
+        final List<XnatImagescandata> matchingByProjectUID = new ArrayList();
+        try {
+            // Use XFT to query for the scan by UID
+            final List<XnatImagescandata> scans = XnatImagescandata.getXnatImagescandatasByField(
+                "xnat:imageScanData/UID", seriesInstanceUID, user, false);
+
+            if (scans != null && !scans.isEmpty()) {
+                // Return the first matching scan
+                final XnatImagescandata scan = scans.get(0);
+                if(StringUtils.equals(projectId, scan.getProject())){
+                    matchingByProjectUID.add(scan);
+                }else{
+                    for(XnatImagescandataShareI share: scan.getSharing_share()){
+                        if(StringUtils.equals(share.getProject(),projectId)){
+                            matchingByProjectUID.add(scan);
+                        }
+                    }
+                }
+            }
+
+            if(!matchingByProjectUID.isEmpty()){
+                return matchingByProjectUID;
+            }
+
+            // If not found by UID field, might need to check DICOM files
+            // This is a fallback for scans where UID is not set in XNAT
+            logger.debug("Scan not found by UID field for SeriesInstanceUID: {}", seriesInstanceUID);
+
+        } catch (Exception e) {
+            logger.error("Error finding scan by SeriesInstanceUID: " + seriesInstanceUID, e);
         }
 
         return null;
     }
 
     /**
+     * Check if user has unrestricted access to project data
+     * Returns true if user is an owner, member, or collaborator
+     * Returns false if user is in a custom group (may have restricted access by modality)
+     */
+    private boolean isUserOwnerMemberOrCollaborator(UserI user, String projectId) {
+        try {
+            String username = user.getUsername();
+
+            // Check if user is owner
+            if (Permissions.isProjectOwner(user,projectId)) {
+                logger.debug("User {} is owner of project {}", username, projectId);
+                return true;
+            }
+
+            // Check if user is member
+            if (Permissions.isProjectMember(user,projectId)) {
+                logger.debug("User {} is member of project {}", username, projectId);
+                return true;
+            }
+
+            // Check if user is collaborator
+            if (Permissions.isProjectCollaborator(user,projectId)) {
+                logger.debug("User {} is collaborator of project {}", username, projectId);
+                return true;
+            }
+
+            // User is in a custom group - may have restricted access
+            logger.debug("User {} is in custom group for project {} - has restricted access", username, projectId);
+            return false;
+
+        } catch (Exception e) {
+            logger.warn("Error checking user group membership for project {}: {}", projectId, e.getMessage());
+            // Default to restricted access if we can't determine group
+            return false;
+        }
+    }
+
+    /**
      * Create study-level DICOM attributes from session
      */
-    private Attributes createStudyAttributes(XnatImagesessiondata session) {
+    private Attributes createStudyAttributes(String projectId, XnatImagesessiondata session) {
         Attributes attrs = new Attributes();
 
         try {
@@ -445,8 +695,8 @@ public class XnatDicomServiceImpl implements XnatDicomService {
             }
 
             // Use helper methods to get DICOM patient information from original DICOM data
-            attrs.setString(Tag.PatientName, VR.PN, getPatientName(session));
-            attrs.setString(Tag.PatientID, VR.LO, getPatientID(session));
+            attrs.setString(Tag.PatientName, VR.PN, getPatientName(projectId, session));
+            attrs.setString(Tag.PatientID, VR.LO, getPatientID(projectId, session));
 
             // Format date
             Object sessionDateObj = session.getDate();
@@ -499,9 +749,127 @@ public class XnatDicomServiceImpl implements XnatDicomService {
     }
 
     /**
+     * Create study-level DICOM attributes from query table row
+     * Maps XFTTable row data to DICOM Attributes efficiently without loading full objects
+     */
+    private Attributes createStudyAttributesFromRow(Object[] row,
+                                                   Integer idCol, Integer uidCol, Integer projectCol,
+                                                   Integer sessionLabelCol, Integer dateCol, Integer timeCol,
+                                                   Integer subjectIdCol, Integer subjectLabelCol,
+                                                   Integer elementNameCol) {
+        Attributes attrs = new Attributes();
+
+        try {
+            // StudyInstanceUID (required)
+            String studyUID = (String) row[uidCol];
+            if (studyUID != null && !studyUID.isEmpty()) {
+                attrs.setString(Tag.StudyInstanceUID, VR.UI, studyUID);
+            }
+
+            // Patient Name = xnat:imageSessionData/label
+            String patientName = sessionLabelCol != null ? (String) row[sessionLabelCol] : null;
+            attrs.setString(Tag.PatientName, VR.PN, patientName != null ? patientName : "UNKNOWN");
+
+            // Patient ID = xnat:subjectData/label
+            String patientID = subjectLabelCol != null ? (String) row[subjectLabelCol] : null;
+            attrs.setString(Tag.PatientID, VR.LO, patientID != null ? patientID : "UNKNOWN");
+
+            // Study Date
+            if (dateCol != null && row[dateCol] != null) {
+                String dateStr = row[dateCol].toString().replaceAll("-", "");
+                attrs.setString(Tag.StudyDate, VR.DA, dateStr);
+            } else {
+                attrs.setString(Tag.StudyDate, VR.DA, "");
+            }
+
+            // Study Time
+            if (timeCol != null && row[timeCol] != null) {
+                String timeStr = row[timeCol].toString().replaceAll(":", "");
+                attrs.setString(Tag.StudyTime, VR.TM, timeStr);
+            } else {
+                attrs.setString(Tag.StudyTime, VR.TM, "");
+            }
+
+            // Study Description = xnat:imageSessionData/project
+            String studyDescription = projectCol != null ? (String) row[projectCol] : null;
+            attrs.setString(Tag.StudyDescription, VR.LO, studyDescription != null ? studyDescription : "");
+
+            // Accession Number = xnat:imageSessionData/ID
+            String accessionNumber = idCol != null ? (String) row[idCol] : null;
+            attrs.setString(Tag.AccessionNumber, VR.SH, accessionNumber != null ? accessionNumber : "");
+
+            // Study ID
+            String id = idCol != null ? (String) row[idCol] : null;
+            attrs.setString(Tag.StudyID, VR.SH, id != null ? id : "");
+
+            // Modalities in Study - derive from xnat:imageSessionData/extension_item/element_name
+            String elementName = elementNameCol != null ? (String) row[elementNameCol] : null;
+            if (elementName != null && !elementName.isEmpty()) {
+                String modality = deriveModalityFromElementName(elementName);
+                if (modality != null) {
+                    attrs.setString(Tag.ModalitiesInStudy, VR.CS, modality);
+                }
+            }
+
+        } catch (Exception e) {
+            logger.error("Error creating study attributes from row", e);
+            return null;
+        }
+
+        return attrs;
+    }
+
+    /**
+     * Derive DICOM modality from XNAT element name
+     * Maps element names like "xnat:mrSessionData" to "MR", "xnat:ctSessionData" to "CT", etc.
+     */
+    private String deriveModalityFromElementName(String elementName) {
+        if (elementName == null || elementName.isEmpty()) {
+            return null;
+        }
+
+        // Remove namespace prefix if present
+        String name = elementName.contains(":") ? elementName.substring(elementName.indexOf(":") + 1) : elementName;
+
+        // Convert to uppercase and remove "SessionData" or "ImageSessionData" suffix
+        name = name.toUpperCase()
+                   .replace("SESSIONDATA", "")
+                   .replace("IMAGESESSIONDATA", "");
+
+        // Map common XNAT session types to DICOM modalities
+        switch (name) {
+            case "MR":
+                return "MR";
+            case "CT":
+                return "CT";
+            case "PET":
+                return "PT";
+            case "US":
+                return "US";
+            case "CR":
+                return "CR";
+            case "DX":
+                return "DX";
+            case "MG":
+                return "MG";
+            case "NM":
+                return "NM";
+            case "XA":
+                return "XA";
+            case "RF":
+                return "RF";
+            case "OT":
+                return "OT";
+            default:
+                // If we can't map it, return the cleaned name (max 16 chars for DICOM CS)
+                return name.length() > 16 ? name.substring(0, 16) : name;
+        }
+    }
+
+    /**
      * Create enhanced study-level DICOM attributes with comprehensive metadata
      */
-    private Attributes createEnhancedStudyAttributes(XnatImagesessiondata session) {
+    private Attributes createEnhancedStudyAttributes(String projectId, XnatImagesessiondata session) {
         Attributes attrs = new Attributes();
 
         try {
@@ -512,8 +880,8 @@ public class XnatDicomServiceImpl implements XnatDicomService {
             }
 
             // Patient identification - use helper methods to get DICOM patient information
-            attrs.setString(Tag.PatientName, VR.PN, getPatientName(session));
-            attrs.setString(Tag.PatientID, VR.LO, getPatientID(session));
+            attrs.setString(Tag.PatientName, VR.PN, getPatientName(projectId, session));
+            attrs.setString(Tag.PatientID, VR.LO, getPatientID(projectId, session));
 
             // Study date and time
             Object sessionDateObj = session.getDate();
@@ -565,8 +933,7 @@ public class XnatDicomServiceImpl implements XnatDicomService {
                     }
 
                     // Count instances in this series
-                    List<Attributes> instances = readDicomFilesFromScan(scan);
-                    numberOfInstances += instances.size();
+                    numberOfInstances += getFileCount(scan);
                 }
             }
 
@@ -577,6 +944,8 @@ public class XnatDicomServiceImpl implements XnatDicomService {
 
             // Number of series and instances
             attrs.setInt(Tag.NumberOfStudyRelatedSeries, VR.IS, numberOfSeries);
+
+            //TODO: calculate the numberOfInstances b
             attrs.setInt(Tag.NumberOfStudyRelatedInstances, VR.IS, numberOfInstances);
 
             // Institution name (use project name or scanner)
@@ -597,6 +966,39 @@ public class XnatDicomServiceImpl implements XnatDicomService {
         }
 
         return attrs;
+    }
+
+    private String getPatientID(String projectId, XnatImagesessiondata session) {
+        XnatSubjectdata subj = session.getSubjectData();
+        if(StringUtils.equals(subj.getProject(),projectId)){
+            return session.getLabel();
+        }else{
+            for(XnatProjectparticipantI share : subj.getSharing_share()){
+                if(StringUtils.equals(share.getProject(),projectId)){
+                    return share.getLabel();
+                }
+            }
+        }
+
+        return subj.getLabel();
+    }
+
+    private String getAccessionNumber(XnatImagesessiondata session) {
+        return session.getId();
+    }
+
+    private String getPatientName(String projectId, XnatImagesessiondata session) {
+        if(StringUtils.equals(session.getProject(),projectId)){
+            return session.getLabel();
+        }else{
+            for(XnatExperimentdataShareI share : session.getSharing_share()){
+                if(StringUtils.equals(share.getProject(),projectId)){
+                    return share.getLabel();
+                }
+            }
+        }
+
+        return session.getLabel();
     }
 
     /**
@@ -631,6 +1033,17 @@ public class XnatDicomServiceImpl implements XnatDicomService {
         return attrs;
     }
 
+    private Integer getFileCount(XnatImagescandata scan) {
+        List<XnatAbstractresource> resources = scan.getFile();
+        for(XnatAbstractresource resource : resources) {
+            if("DICOM".equals(resource.getLabel()) && resource instanceof XnatResourcecatalog){
+                return resource.getFileCount();
+            }
+        }
+
+        return -1;
+    }
+
     /**
      * Read DICOM files from scan resources
      */
@@ -650,7 +1063,7 @@ public class XnatDicomServiceImpl implements XnatDicomService {
                             continue;
                         }
 
-                        for (File dicomFile : resolveDicomFiles(resource, scan)) {
+                        for (File dicomFile : resolveDicomFiles(resource, scan, null)) {
                             try (DicomInputStream dis = new DicomInputStream(dicomFile)) {
                                 // Use URI mode to save memory - BulkData will reference file location
                                 dis.setIncludeBulkData(DicomInputStream.IncludeBulkData.URI);
@@ -682,7 +1095,7 @@ public class XnatDicomServiceImpl implements XnatDicomService {
         return results;
     }
 
-    private List<File> resolveDicomFiles(XnatAbstractresource resource, XnatImagescandata scan) {
+    private List<File> resolveDicomFiles(XnatAbstractresource resource, XnatImagescandata scan, String fileSOPUID) {
         Set<File> files = new LinkedHashSet<>();
 
         XnatImagesessiondata session = (XnatImagesessiondata) scan.getImageSessionData();
@@ -693,28 +1106,21 @@ public class XnatDicomServiceImpl implements XnatDicomService {
                 String projectId = session.getProject();
 
                 for (CatEntryI entry : catalogData.catBean.getEntries_entry()) {
-                    File file = CatalogUtils.getFile(entry, catalogData.catPath, projectId);
-                    if (isReadableFile(file)) {
-                        files.add(file);
+                    if(entry instanceof CatDcmentryBean){
+                        if ((fileSOPUID == null || !fileSOPUID.equals(((CatDcmentryBean)entry).getUid()))) {
+                            File file = CatalogUtils.getFile(entry, catalogData.catPath, projectId);
+                            files.add(file);
+                        }
                     }
                 }
             } catch (ServerException e) {
-                logger.warn("Unable to resolve catalog for resource {}", resource.getXnatAbstractresourceId(), e);
+                logger.error("Unable to resolve catalog for resource {}", resource.getXnatAbstractresourceId(), e);
             } catch (Exception e) {
-                logger.warn("Unexpected error resolving catalog for resource {}", resource.getXnatAbstractresourceId(), e);
-            }
-        } else {
-            String basePath = getResourcePath(resource, scan);
-            if (basePath != null) {
-                collectFiles(new File(basePath), files);
+                logger.error("Unexpected error resolving catalog for resource {}", resource.getXnatAbstractresourceId(), e);
             }
         }
 
         return new ArrayList<>(files);
-    }
-
-    private boolean isReadableFile(File file) {
-        return file != null && file.exists() && file.isFile() && file.canRead();
     }
 
     private void collectFiles(File root, Set<File> sink) {
@@ -758,48 +1164,11 @@ public class XnatDicomServiceImpl implements XnatDicomService {
      * Find scan by SeriesInstanceUID.
      * First tries to match scan.getUid(), then falls back to reading DICOM files.
      */
-    private XnatImagescandata findScanBySeriesUID(List scans, String seriesInstanceUID) {
+    private XnatImagescandata findScanBySeriesUIDDirect(List<XnatImagescandata> scans, String seriesInstanceUID) {
         // First pass: try to match scan.getUid()
-        for (Object scanObj : scans) {
-            XnatImagescandata scan = (XnatImagescandata) scanObj;
+        for (XnatImagescandata scan : scans) {
             if (seriesInstanceUID.equals(scan.getUid())) {
                 return scan;
-            }
-        }
-
-        // Second pass: if scan.uid is null, read DICOM files to find SeriesInstanceUID
-        for (Object scanObj : scans) {
-            XnatImagescandata scan = (XnatImagescandata) scanObj;
-            if (scan.getUid() == null || scan.getUid().isEmpty()) {
-                // Check if this scan contains files with matching SeriesInstanceUID
-                try {
-                    List resources = scan.getFile();
-                    if (resources != null) {
-                        for (Object resourceObj : resources) {
-                            if (resourceObj instanceof XnatAbstractresource) {
-                                XnatAbstractresource resource = (XnatAbstractresource) resourceObj;
-                                if (!isDicomResource(resource)) {
-                                    continue;
-                                }
-                                // Check first DICOM file for SeriesInstanceUID
-                                List<File> dicomFiles = resolveDicomFiles(resource, scan);
-                                if (!dicomFiles.isEmpty()) {
-                                    File firstFile = dicomFiles.get(0);
-                                    try (DicomInputStream dis = new DicomInputStream(firstFile)) {
-                                        Attributes attrs = dis.readDataset(-1, -1);
-                                        String fileSeriesUID = attrs.getString(Tag.SeriesInstanceUID);
-                                        if (seriesInstanceUID.equals(fileSeriesUID)) {
-                                            logger.debug("Found scan by reading DICOM file SeriesInstanceUID");
-                                            return scan;
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    }
-                } catch (Exception e) {
-                    logger.debug("Error checking scan for SeriesInstanceUID: {}", e.getMessage());
-                }
             }
         }
 
@@ -822,17 +1191,8 @@ public class XnatDicomServiceImpl implements XnatDicomService {
                             continue;
                         }
 
-                        for (File dicomFile : resolveDicomFiles(resource, scan)) {
-                            try (DicomInputStream dis = new DicomInputStream(dicomFile)) {
-                                Attributes attrs = dis.readDataset(-1, -1);
-                                String fileSOPUID = attrs.getString(Tag.SOPInstanceUID);
-
-                                if (sopInstanceUID.equals(fileSOPUID)) {
-                                    return dicomFile;
-                                }
-                            } catch (Exception e) {
-                                logger.debug("Error reading DICOM candidate {}", dicomFile.getAbsolutePath(), e);
-                            }
+                        for (File dicomFile : resolveDicomFiles(resource, scan, sopInstanceUID)) {
+                            return dicomFile;
                         }
                     }
                 }
@@ -1320,53 +1680,57 @@ public class XnatDicomServiceImpl implements XnatDicomService {
                 return frames;
             }
 
-            // Find the session and scan
-            XnatImagesessiondata session = findSessionByUID(user, projectId, studyInstanceUID);
-            if (session == null) {
+            // Find all sessions with matching StudyInstanceUID (XNAT allows multiple sessions with same UID)
+            List<XnatImagesessiondata> targetSessions = findSessionsByUID(user, projectId, studyInstanceUID);
+
+            if (targetSessions.isEmpty()) {
+                logger.warn("Study not found: {}", studyInstanceUID);
                 return frames;
             }
 
-            List scans = session.getScans_scan();
-            XnatImagescandata targetScan = findScanBySeriesUID(scans, seriesInstanceUID);
+            for(XnatImagesessiondata session : targetSessions) {
+                // Find the scan directly by SeriesInstanceUID using efficient SQL query
+                XnatImagescandata targetScan = findScanBySeriesUIDDirect(session.getScans_scan(), seriesInstanceUID);
 
-            if (targetScan == null) {
-                return frames;
-            }
+                if (targetScan == null) {
+                    continue;
+                }
 
-            // Find the specific DICOM file
-            File dicomFile = findDicomFileInScan(targetScan, sopInstanceUID);
+                // Find the specific DICOM file
+                File dicomFile = findDicomFileInScan(targetScan, sopInstanceUID);
 
-            if (dicomFile == null) {
-                return frames;
-            }
+                if (dicomFile == null) {
+                    continue;
+                }
 
-            // Parse frame numbers
-            List<Integer> frameList = parseFrameNumbers(frameNumbers);
-            if (frameList.isEmpty()) {
-                return frames;
-            }
+                // Parse frame numbers
+                List<Integer> frameList = parseFrameNumbers(frameNumbers);
+                if (frameList.isEmpty()) {
+                    continue;
+                }
 
-            // Read DICOM file and extract frames
-            try (DicomInputStream dis = new DicomInputStream(dicomFile)) {
-                Attributes attrs = dis.readDataset(-1, -1);
+                // Read DICOM file and extract frames
+                try (DicomInputStream dis = new DicomInputStream(dicomFile)) {
+                    Attributes attrs = dis.readDataset(-1, -1);
 
-                // Check if this is a multi-frame image
-                int numberOfFrames = attrs.getInt(Tag.NumberOfFrames, 1);
+                    // Check if this is a multi-frame image
+                    int numberOfFrames = attrs.getInt(Tag.NumberOfFrames, 1);
 
-                logger.info("Retrieving frames {} from instance {} (total frames: {})",
-                        frameNumbers, sopInstanceUID, numberOfFrames);
+                    logger.info("Retrieving frames {} from instance {} (total frames: {})",
+                            frameNumbers, sopInstanceUID, numberOfFrames);
 
-                // Validate requested frames
-                for (Integer frameNumber : frameList) {
-                    if (frameNumber < 1 || frameNumber > numberOfFrames) {
-                        logger.warn("Frame number {} out of range (1-{})", frameNumber, numberOfFrames);
-                        continue;
-                    }
+                    // Validate requested frames
+                    for (Integer frameNumber : frameList) {
+                        if (frameNumber < 1 || frameNumber > numberOfFrames) {
+                            logger.warn("Frame number {} out of range (1-{})", frameNumber, numberOfFrames);
+                            continue;
+                        }
 
-                    // Extract pixel data for the frame
-                    byte[] frameData = extractFramePixelData(dicomFile, frameNumber - 1); // Convert to 0-based
-                    if (frameData != null) {
-                        frames.add(frameData);
+                        // Extract pixel data for the frame
+                        byte[] frameData = extractFramePixelData(dicomFile, frameNumber - 1); // Convert to 0-based
+                        if (frameData != null) {
+                            frames.add(frameData);
+                        }
                     }
                 }
             }
@@ -1556,81 +1920,6 @@ public class XnatDicomServiceImpl implements XnatDicomService {
             logger.error("Error extracting frame via ImageIO", e);
             return null;
         }
-    }
-
-    /**
-     * Get DICOM patient name from session.
-     * Priority: 1) dcmPatientName field, 2) subject label, 3) subject ID
-     */
-    private String getPatientName(XnatImagesessiondata session) {
-        try {
-            // Try to get from dcmPatientName field (stored during DICOM import)
-            XFTItem item = session.getItem();
-            if (item != null) {
-                String dcmPatientName = (String) item.getProperty("dcmPatientName");
-                if (dcmPatientName != null && !dcmPatientName.isEmpty()) {
-                    return dcmPatientName;
-                }
-            }
-        } catch (Exception e) {
-            logger.debug("Could not get dcmPatientName from session", e);
-        }
-
-        // Fallback: use subject ID
-        String subjectId = session.getSubjectId();
-        return subjectId != null ? subjectId : "UNKNOWN";
-    }
-
-    /**
-     * Get DICOM patient ID from session.
-     * Priority: 1) dcmPatientId field, 2) session label, 3) subject ID
-     */
-    private String getPatientID(XnatImagesessiondata session) {
-        try {
-            // Try to get from dcmPatientId field (stored during DICOM import)
-            XFTItem item = session.getItem();
-            if (item != null) {
-                String dcmPatientId = (String) item.getProperty("dcmPatientId");
-                if (dcmPatientId != null && !dcmPatientId.isEmpty()) {
-                    return dcmPatientId;
-                }
-            }
-        } catch (Exception e) {
-            logger.debug("Could not get dcmPatientId from session", e);
-        }
-
-        // Fallback: use session label (which is usually the experiment label)
-        String label = session.getLabel();
-        if (label != null && !label.isEmpty()) {
-            return label;
-        }
-
-        // Final fallback: use subject ID
-        String subjectId = session.getSubjectId();
-        return subjectId != null ? subjectId : "UNKNOWN";
-    }
-
-    /**
-     * Get DICOM accession number from session.
-     * Priority: 1) dcmAccessionNumber field, 2) session label
-     */
-    private String getAccessionNumber(XnatImagesessiondata session) {
-        try {
-            // Try to get from dcmAccessionNumber field (stored during DICOM import)
-            XFTItem item = session.getItem();
-            if (item != null) {
-                String dcmAccessionNumber = (String) item.getProperty("dcmAccessionNumber");
-                if (dcmAccessionNumber != null && !dcmAccessionNumber.isEmpty()) {
-                    return dcmAccessionNumber;
-                }
-            }
-        } catch (Exception e) {
-            logger.debug("Could not get dcmAccessionNumber from session", e);
-        }
-
-        // Fallback: use session label
-        String label = session.getLabel();
-        return label != null ? label : "";
     }
 
     /**

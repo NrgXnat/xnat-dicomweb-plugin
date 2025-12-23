@@ -22,6 +22,9 @@ public interface XnatDicomService {
      */
     List<Attributes> searchSeries(UserI user, String projectId, String studyInstanceUID, Attributes queryAttributes);
 
+    Attributes getInstanceAttributes(UserI user, String projectId, String studyInstanceUID,
+                                     String seriesInstanceUID, String sopInstanceUID);
+
     /**
      * Search for instances within a series
      */

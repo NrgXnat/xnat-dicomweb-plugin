@@ -115,7 +115,7 @@ public class WadoRsApi extends AbstractXapiRestController {
                                                            @PathVariable String instanceUID,
                                                            HttpServletRequest request) throws Exception {
         UserI user = getSessionUser();
-        Attributes attrs = dicomService.retrieveMetadata(user, projectId, studyUID, seriesUID, instanceUID);
+        Attributes attrs = dicomService.getInstanceAttributes(user, projectId, studyUID, seriesUID, instanceUID);
 
         if (attrs == null) {
             throw new ResourceNotFoundException("Instance metadata", instanceUID);
