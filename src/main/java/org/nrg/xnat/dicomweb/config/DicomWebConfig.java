@@ -9,13 +9,19 @@ import org.springframework.context.annotation.Configuration;
 /**
  * DICOMweb Plugin Configuration
  *
- * Note: multipart/related handling is done in XNAT core's WebConfig.java
+ * <p>Note: multipart/related handling is done in XNAT core's WebConfig.java
  * (via patch to skip multipart/related in StandardServletMultipartResolver)
  *
- * Configuration is managed via XNAT's preference system (@NrgPreferenceBean)
+ * <p>Configuration is managed via XNAT's preference system (@NrgPreferenceBean)
+ *
+ * <p>Component scanning includes:
+ * <ul>
+ *   <li>org.nrg.xnat.dicomweb - DICOMweb proxy plugin components</li>
+ *   <li>org.nrg.xnatx.dicomweb.core - Shared DICOMweb core library components</li>
+ * </ul>
  */
 @Configuration
-@ComponentScan({"org.nrg.xnat.dicomweb"})
+@ComponentScan({"org.nrg.xnat.dicomweb", "org.nrg.xnatx.dicomweb.core"})
 public class DicomWebConfig {
 
     private static final Logger logger = LoggerFactory.getLogger(DicomWebConfig.class);

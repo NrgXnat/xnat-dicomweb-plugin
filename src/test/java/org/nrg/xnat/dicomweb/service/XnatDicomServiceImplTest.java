@@ -2,6 +2,10 @@ package org.nrg.xnat.dicomweb.service;
 
 import org.junit.Before;
 import org.junit.Test;
+import org.mockito.Mock;
+import org.mockito.MockitoAnnotations;
+import org.nrg.xnatx.dicomweb.core.service.query.DicomwebDataService;
+import org.nrg.xnatx.dicomweb.core.service.query.DwInstanceDataService;
 
 import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Method;
@@ -17,6 +21,12 @@ import static org.junit.Assert.assertNotNull;
  */
 public class XnatDicomServiceImplTest {
 
+    @Mock
+    private DicomwebDataService dicomwebDataService;
+
+    @Mock
+    private DwInstanceDataService dwInstanceDataService;
+
     private XnatDicomServiceImpl service;
     private Method matchesDescriptor;
     private Method buildFallbackArchivePath;
@@ -27,7 +37,8 @@ public class XnatDicomServiceImplTest {
 
     @Before
     public void setUp() throws Exception {
-        service = new XnatDicomServiceImpl();
+        MockitoAnnotations.openMocks(this);
+        service = new XnatDicomServiceImpl(dicomwebDataService, dwInstanceDataService);
 
         matchesDescriptor = XnatDicomServiceImpl.class.getDeclaredMethod("matchesDicomDescriptor", String.class);
         matchesDescriptor.setAccessible(true);

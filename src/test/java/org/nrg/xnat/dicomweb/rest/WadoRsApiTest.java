@@ -242,7 +242,7 @@ public class WadoRsApiTest {
         mockAttrs.setString(Tag.SOPClassUID, VR.UI, "1.2.840.10008.5.1.4.1.1.2");
         mockAttrs.setString(Tag.SOPInstanceUID, VR.UI, instanceUID);
 
-        when(mockDicomService.retrieveMetadata(any(UserI.class), eq(projectId), eq(studyUID),
+        when(mockDicomService.getInstanceAttributes(any(UserI.class), eq(projectId), eq(studyUID),
                 eq(seriesUID), eq(instanceUID)))
             .thenReturn(mockAttrs);
 
@@ -270,7 +270,7 @@ public class WadoRsApiTest {
         String seriesUID = "1.2.3.4.5.100";
         String instanceUID = "1.2.3.4.5.6.999";
 
-        when(mockDicomService.retrieveMetadata(any(UserI.class), eq(projectId), eq(studyUID),
+        when(mockDicomService.getInstanceAttributes(any(UserI.class), eq(projectId), eq(studyUID),
                 eq(seriesUID), eq(instanceUID)))
             .thenReturn(null);
 

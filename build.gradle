@@ -47,6 +47,7 @@ compileJava {
 }
 
 configurations {
+    implementAndInclude
     all*.exclude group: 'edu.ucar', module: 'netcdf'
     all*.exclude group: 'jakarta-regexp'
     all*.exclude group: 'net.sf.saxon', module: 'Saxon-B'
@@ -67,6 +68,12 @@ dependencyManagement.imports {
 }
 
 dependencies {
+    // Shared DICOMweb core library (from mavenLocal)
+    implementAndInclude "org.nrg.xnatx:xnat-dicomweb-core:1.1.3"
+
+    // EtherJ for exception handling (used by DicomwebMetadataException)
+    implementAndInclude "icr.etherj:etherj-core:1.1.6"
+
     compileOnly "org.slf4j:slf4j-api"
     compileOnly "log4j:log4j"
     compileOnly 'javax.servlet:javax.servlet-api'
