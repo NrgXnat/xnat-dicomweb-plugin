@@ -11,7 +11,8 @@ import org.springframework.context.annotation.PropertySource;
     value = "dicomwebproxy",
     name = "DICOMweb Proxy Plugin",
     description = "Exposes XNAT projects as DICOMweb endpoints for OHIF and VolView",
-    entityPackages = "org.nrg.xnat.dicomweb",
+    logConfigurationFile = "META-INF/resources/dicomweb-logback.xml",
+    entityPackages = {"org.nrg.xnat.dicomweb", "org.nrg.xnatx.dicomweb.core.entity"},
     openUrls = {"/xapi/dicomweb/test"}
 )
 @ComponentScan({"org.nrg.xnat.dicomweb"})
