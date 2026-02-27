@@ -12,8 +12,10 @@ import java.util.Collections;
 import java.util.Iterator;
 import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Optional;
 import java.util.Set;
 import java.util.stream.Collectors;
+import java.util.stream.Stream;
 import javax.imageio.ImageIO;
 import javax.imageio.ImageReader;
 import javax.imageio.stream.ImageInputStream;
@@ -1170,74 +1172,71 @@ public class XnatDicomServiceImpl implements XnatDicomService {
     }
 
     /**
+     * Stream the DICOM resources for the provided scan
+     * @param scan scan that might represent a DICOM series
+     * @return DICOM resources for the scan
+     */
+    private Stream<XnatAbstractresource> dicomResourceStream(final XnatImagescandata scan) {
+        return Optional.ofNullable(scan.getFile())
+                .map(List::stream)
+                .orElse(Stream.of())    // Java 9: .stream().flatMap(List::stream)
+                .filter(XnatAbstractresource.class::isInstance)
+                .map(XnatAbstractresource.class::cast)
+                .filter(XnatDicomServiceImpl::isDicomResource);
+    }
+
+    /**
+     * Given a DICOM file, return the attributes used in an instance query response
+     * @param file File containing a DICOM part 10 dataset
+     * @return stream with a single (reduced) Attributes object, or empty if unreadable
+     */
+    private static Stream<Attributes> instanceResponse(final File file) {
+        // run Attributes through a DwInstance to standardize which attributes we return
+        try (DicomInputStream dis = new DicomInputStream(file)) {
+            dis.setIncludeBulkData(DicomInputStream.IncludeBulkData.NO);
+            final DwInstance inst = new DwInstance();
+            inst.setData(dis.readDataset());
+            return Stream.of(inst.getMetadata());
+        } catch (Exception e) {
+            logger.debug("Error reading DICOM candidate {}", file.getAbsolutePath(), e);
+            return Stream.of();
+        }
+    }
+
+    /**
      * Read DICOM files from scan resources (fallback when database cache unavailable)
      */
     private List<Attributes> readDicomFilesFromScan(XnatImagescandata scan) {
-        List<Attributes> results = new ArrayList<>();
-
+        // TODO: there's a reasonable argument that we should be building and storing DwInstances
+        // here, as this is a scan that didn't have metadata in the database.
         try {
-            // Get resources/files from the scan
-            List resources = scan.getFile();
-
-            if (resources != null) {
-                for (Object resourceObj : resources) {
-                    if (resourceObj instanceof XnatAbstractresource) {
-                        XnatAbstractresource resource = (XnatAbstractresource) resourceObj;
-
-                        if (!isDicomResource(resource)) {
-                            continue;
-                        }
-
-                        for (File dicomFile : resolveDicomFiles(resource, scan, null)) {
-                            try (DicomInputStream dis = new DicomInputStream(dicomFile)) {
-                                // Use URI mode to save memory - BulkData will reference file location
-                                dis.setIncludeBulkData(DicomInputStream.IncludeBulkData.URI);
-
-                                // Read FileMetaInformation
-                                Attributes fmi = dis.readFileMetaInformation();
-
-                                // Read dataset (bulk data replaced with BulkData objects containing file URI)
-                                Attributes attrs = dis.readDataset();
-
-                                // Merge FileMetaInformation
-                                if (fmi != null) {
-                                    attrs.addAll(fmi);
-                                }
-
-                                results.add(attrs);
-                            } catch (Exception e) {
-                                logger.debug("Error reading DICOM candidate {}", dicomFile.getAbsolutePath(), e);
-                            }
-                        }
-                    }
-                }
-            }
-
+            return dicomResourceStream(scan)
+                    .flatMap(resource -> resolveDicomFiles(resource, scan, null))
+                    .flatMap(XnatDicomServiceImpl::instanceResponse)
+                    .collect(Collectors.toList());
         } catch (Exception e) {
             logger.error("Error reading DICOM files from scan", e);
+            return Collections.emptyList();
         }
-
-        return results;
     }
 
-    private List<File> resolveDicomFiles(final XnatAbstractresource resource, final XnatImagescandata scan, final String fileSOPUID) {
+    private Stream<File> resolveDicomFiles(final XnatAbstractresource resource, final XnatImagescandata scan, final String fileSOPUID) {
         final XnatImagesessiondata session = (XnatImagesessiondata) scan.getImageSessionData();
         if (resource instanceof XnatResourcecatalog && session != null) {
             try {
                 final CatalogUtils.CatalogData catalogData = CatalogUtils.CatalogData.getOrCreate(session, (XnatResourcecatalog) resource);
                 return catalogData.catBean.getEntries_entry().stream()
-                        .filter(e -> e instanceof CatDcmentryBean)
+                        .filter(CatDcmentryBean.class::isInstance)
                         .map(CatDcmentryBean.class::cast)
                         .filter(e -> null == fileSOPUID || fileSOPUID.equals(e.getUid()))
-                        .map(e -> CatalogUtils.getFile(e, catalogData.catPath, session.getProject()))
-                        .collect(Collectors.toList());
+                        .map(e -> CatalogUtils.getFile(e, catalogData.catPath, session.getProject()));
             } catch (ServerException e) {
                 logger.error("Unable to resolve catalog for resource {}", resource.getXnatAbstractresourceId(), e);
             } catch (Exception e) {
                 logger.error("Unexpected error resolving catalog for resource {}", resource.getXnatAbstractresourceId(), e);
             }
         }
-        return Collections.emptyList();
+        return Stream.of();
     }
 
     private void collectFiles(File root, Set<File> sink) {
@@ -1260,13 +1259,13 @@ public class XnatDicomServiceImpl implements XnatDicomService {
         }
     }
 
-    private boolean isDicomResource(XnatAbstractresource resource) {
+    private static boolean isDicomResource(XnatAbstractresource resource) {
         return matchesDicomDescriptor(resource.getLabel())
                 || matchesDicomDescriptor(resource.getFormat())
                 || matchesDicomDescriptor(resource.getContent());
     }
 
-    private boolean matchesDicomDescriptor(String value) {
+    private static boolean matchesDicomDescriptor(String value) {
         if (value == null) {
             return false;
         }
@@ -1297,29 +1296,14 @@ public class XnatDicomServiceImpl implements XnatDicomService {
      */
     private File findDicomFileInScan(XnatImagescandata scan, String sopInstanceUID) {
         try {
-            List resources = scan.getFile();
-
-            if (resources != null) {
-                for (Object resourceObj : resources) {
-                    if (resourceObj instanceof XnatAbstractresource) {
-                        XnatAbstractresource resource = (XnatAbstractresource) resourceObj;
-
-                        if (!isDicomResource(resource)) {
-                            continue;
-                        }
-
-                        for (File dicomFile : resolveDicomFiles(resource, scan, sopInstanceUID)) {
-                            return dicomFile;
-                        }
-                    }
-                }
-            }
-
+            return dicomResourceStream(scan)
+                    .flatMap(resource -> resolveDicomFiles(resource, scan, sopInstanceUID))
+                    .findAny()
+                    .orElse(null);
         } catch (Exception e) {
             logger.error("Error finding DICOM file in scan", e);
+            return null;
         }
-
-        return null;
     }
 
     /**
