@@ -61,6 +61,7 @@ import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.stream.Collectors;
 
 /**
  * Implementation of STOW-RS service.
@@ -205,8 +206,15 @@ public class StowRsServiceImpl implements StowRsService {
                     successfulInstances, failedInstances);
 
             if (sessionUris.isEmpty()) {
-                logger.warn("No instances were successfully imported");
-                throw StowRsException.serverError("Failed to import any DICOM instances");
+                logger.warn("No instances were successfully imported, {} failures", failedInstances.size());
+                if (failedInstances.isEmpty()) {
+                    throw StowRsException.badRequest("No instances provided for storage");
+                } else {
+                    throw StowRsException.serverError("All provided instances failed: " + failedInstances.stream()
+                            .map(failed -> String.format("instance %d: reason=0x%04X (%s)",
+                                            failed.getInstanceIndex(), failed.getFailureReason(), failed.getErrorMessage()))
+                            .collect(Collectors.joining(",")));
+                }
             }
 
             logger.info("Successfully imported {} sessions via {}, {} failures",
