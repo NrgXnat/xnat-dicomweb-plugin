@@ -8,10 +8,12 @@ import java.io.FileInputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.Iterator;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Set;
+import java.util.stream.Collectors;
 import javax.imageio.ImageIO;
 import javax.imageio.ImageReader;
 import javax.imageio.stream.ImageInputStream;
@@ -1218,32 +1220,24 @@ public class XnatDicomServiceImpl implements XnatDicomService {
         return results;
     }
 
-    private List<File> resolveDicomFiles(XnatAbstractresource resource, XnatImagescandata scan, String fileSOPUID) {
-        Set<File> files = new LinkedHashSet<>();
-
-        XnatImagesessiondata session = (XnatImagesessiondata) scan.getImageSessionData();
-
+    private List<File> resolveDicomFiles(final XnatAbstractresource resource, final XnatImagescandata scan, final String fileSOPUID) {
+        final XnatImagesessiondata session = (XnatImagesessiondata) scan.getImageSessionData();
         if (resource instanceof XnatResourcecatalog && session != null) {
             try {
-                CatalogUtils.CatalogData catalogData = CatalogUtils.CatalogData.getOrCreate(session, (XnatResourcecatalog) resource);
-                String projectId = session.getProject();
-
-                for (CatEntryI entry : catalogData.catBean.getEntries_entry()) {
-                    if(entry instanceof CatDcmentryBean){
-                        if ((fileSOPUID == null || !fileSOPUID.equals(((CatDcmentryBean)entry).getUid()))) {
-                            File file = CatalogUtils.getFile(entry, catalogData.catPath, projectId);
-                            files.add(file);
-                        }
-                    }
-                }
+                final CatalogUtils.CatalogData catalogData = CatalogUtils.CatalogData.getOrCreate(session, (XnatResourcecatalog) resource);
+                return catalogData.catBean.getEntries_entry().stream()
+                        .filter(e -> e instanceof CatDcmentryBean)
+                        .map(CatDcmentryBean.class::cast)
+                        .filter(e -> null == fileSOPUID || fileSOPUID.equals(e.getUid()))
+                        .map(e -> CatalogUtils.getFile(e, catalogData.catPath, session.getProject()))
+                        .collect(Collectors.toList());
             } catch (ServerException e) {
                 logger.error("Unable to resolve catalog for resource {}", resource.getXnatAbstractresourceId(), e);
             } catch (Exception e) {
                 logger.error("Unexpected error resolving catalog for resource {}", resource.getXnatAbstractresourceId(), e);
             }
         }
-
-        return new ArrayList<>(files);
+        return Collections.emptyList();
     }
 
     private void collectFiles(File root, Set<File> sink) {
