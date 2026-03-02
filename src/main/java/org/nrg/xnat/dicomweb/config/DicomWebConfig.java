@@ -1,7 +1,6 @@
 package org.nrg.xnat.dicomweb.config;
 
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.context.annotation.ComponentScan;
 import org.springframework.context.annotation.Configuration;
@@ -22,15 +21,13 @@ import org.springframework.context.annotation.Configuration;
  */
 @Configuration
 @ComponentScan({"org.nrg.xnat.dicomweb", "org.nrg.xnatx.dicomweb.core"})
+@Slf4j
 public class DicomWebConfig {
-
-    private static final Logger logger = LoggerFactory.getLogger(DicomWebConfig.class);
-
     /**
      * Inject preference bean to ensure it's registered with XNAT's preference system
      */
     @Autowired
     public DicomWebConfig(DicomWebPreferenceBean preferenceBean) {
-        logger.info("DicomWebConfig initialized with preference bean: {}", preferenceBean.getClass().getSimpleName());
+        log.info("DicomWebConfig initialized with preference bean: {}", preferenceBean.getClass().getSimpleName());
     }
 }
