@@ -7,6 +7,7 @@ import java.io.File;
 import java.io.FileInputStream;
 import java.io.IOException;
 import java.io.InputStream;
+import java.text.SimpleDateFormat;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.Iterator;
@@ -29,6 +30,7 @@ import org.dcm4che3.io.DicomInputStream;
 import org.nrg.action.ServerException;
 import org.nrg.xdat.XDAT;
 import org.nrg.xdat.bean.CatDcmentryBean;
+import org.nrg.xdat.model.XnatAbstractresourceI;
 import org.nrg.xdat.model.XnatExperimentdataShareI;
 import org.nrg.xdat.model.XnatImagescandataI;
 import org.nrg.xdat.model.XnatImagescandataShareI;
@@ -197,6 +199,13 @@ public class XnatDicomServiceImpl implements XnatDicomService {
                                 subjectIdCol, subjectLabelCol, elementNameCol);
 
                             if (attrs != null) {
+                                // Augment with fields requiring session/subject data
+                                String sessionId = (String) row[idCol];
+                                XnatImagesessiondata session = XnatImagesessiondata
+                                    .getXnatImagesessiondatasById(sessionId, user, false);
+                                if (session != null) {
+                                    augmentStudyAttributes(attrs, session, projectId, studyUID);
+                                }
                                 results.add(attrs);
                             }
                         }
@@ -902,6 +911,69 @@ public class XnatDicomServiceImpl implements XnatDicomService {
     }
 
     /**
+     * Augment study attributes with fields that require loading the session and subject objects.
+     * Adds NumberOfStudyRelatedSeries/Instances, RetrieveURL, PatientSex, PatientBirthDate,
+     * and ReferringPhysicianName per PS3.18 Table 10.6.3-3.
+     */
+    private void augmentStudyAttributes(Attributes attrs, XnatImagesessiondata session,
+                                        String projectId, String studyUID) {
+        try {
+            // NumberOfStudyRelatedSeries and NumberOfStudyRelatedInstances
+            List<XnatImagescandataI> scans = session.getScans_scan();
+            int numberOfSeries = scans != null ? scans.size() : 0;
+            int numberOfInstances = 0;
+            if (scans != null) {
+                for (XnatImagescandataI scan : scans) {
+                    int fc = getFileCount(scan);
+                    if (fc >= 0) {
+                        numberOfInstances += fc;
+                    }
+                }
+            }
+            attrs.setInt(Tag.NumberOfStudyRelatedSeries, VR.IS, numberOfSeries);
+            attrs.setInt(Tag.NumberOfStudyRelatedInstances, VR.IS, numberOfInstances);
+
+            // RetrieveURL
+            final String prefBaseUrl = preferences.getBaseUrl();
+            final String baseUrl = (null == prefBaseUrl || prefBaseUrl.isEmpty())
+                    ? XDAT.getSiteConfigPreferences().getSiteUrl() : prefBaseUrl;
+            String retrieveUrl = String.format("%s/xapi/dicomweb/projects/%s/studies/%s",
+                    baseUrl, projectId, studyUID);
+            attrs.setString(Tag.RetrieveURL, VR.UR, retrieveUrl);
+
+            // Patient demographics from subject
+            XnatSubjectdata subject = session.getSubjectData();
+            if (subject != null) {
+                // PatientSex
+                String gender = subject.getGender();
+                String patientSex;
+                if ("m".equalsIgnoreCase(gender)) {
+                    patientSex = "M";
+                } else if ("f".equalsIgnoreCase(gender)) {
+                    patientSex = "F";
+                } else {
+                    patientSex = "O";
+                }
+                attrs.setString(Tag.PatientSex, VR.CS, patientSex);
+
+                // PatientBirthDate
+                java.util.Date dob = subject.getDOB();
+                if (dob != null) {
+                    SimpleDateFormat df = new SimpleDateFormat("yyyyMMdd");
+                    attrs.setString(Tag.PatientBirthDate, VR.DA, df.format(dob));
+                }
+            } else {
+                attrs.setString(Tag.PatientSex, VR.CS, "O");
+            }
+
+            // ReferringPhysicianName — not available in XNAT, set empty (PS3.18 requires tag presence)
+            attrs.setString(Tag.ReferringPhysicianName, VR.PN, "");
+        } catch (Exception e) {
+            logger.error("Error augmenting study attributes for session {}", session.getId(), e);
+        }
+    }
+
+    /**
      * Derive DICOM modality from XNAT element name
      * Maps element names like "xnat:mrSessionData" to "MR", "xnat:ctSessionData" to "CT", etc.
      */
@@ -997,7 +1069,7 @@ public class XnatDicomServiceImpl implements XnatDicomService {
             // attrs.setString(Tag.ReferringPhysicianName, VR.PN, "");
 
             // Count series and instances
-            List scans = session.getScans_scan();
+            List<XnatImagescandataI> scans = session.getScans_scan();
             int numberOfSeries = 0;
             int numberOfInstances = 0;
             List<String> modalities = new ArrayList<>();
@@ -1005,9 +1077,7 @@ public class XnatDicomServiceImpl implements XnatDicomService {
             if (scans != null && !scans.isEmpty()) {
                 numberOfSeries = scans.size();
 
-                for (Object scanObj : scans) {
-                    XnatImagescandata scan = (XnatImagescandata) scanObj;
-
+                for (XnatImagescandataI scan : scans) {
                     // Collect modalities
                     String modality = scan.getModality();
                     if (modality != null && !modality.isEmpty() && !modalities.contains(modality)) {
@@ -1104,11 +1174,9 @@ public class XnatDicomServiceImpl implements XnatDicomService {
             attrs.setString(Tag.SeriesNumber, VR.IS, scanId != null ? scanId : "1");
 
             // NumberOfSeriesRelatedInstances (Required per PS3.18 Table 10.6.3-4)
-            if (scan instanceof XnatImagescandata) {
-                int fileCount = getFileCount((XnatImagescandata) scan);
-                if (fileCount >= 0) {
-                    attrs.setInt(Tag.NumberOfSeriesRelatedInstances, VR.IS, fileCount);
-                }
+            int fileCount = getFileCount(scan);
+            if (fileCount >= 0) {
+                attrs.setInt(Tag.NumberOfSeriesRelatedInstances, VR.IS, fileCount);
             }
 
             // RetrieveURL (Required if retrievable, per PS3.18 Table 10.6.3-4)
@@ -1153,15 +1221,13 @@ public class XnatDicomServiceImpl implements XnatDicomService {
         return attrs;
     }
 
-    private Integer getFileCount(XnatImagescandata scan) {
-        List<XnatAbstractresource> resources = scan.getFile();
-        for(XnatAbstractresource resource : resources) {
-            if("DICOM".equals(resource.getLabel()) && resource instanceof XnatResourcecatalog){
-                return resource.getFileCount();
-            }
-        }
-
-        return -1;
+    private Integer getFileCount(XnatImagescandataI scan) {
+        return scan.getFile().stream()
+                .filter(XnatResourcecatalog.class::isInstance)
+                .filter(resource -> "DICOM".equals(resource.getLabel()))
+                .map(XnatAbstractresourceI::getFileCount)
+                .findAny()
+                .orElse(-1);
     }
 
     /**
