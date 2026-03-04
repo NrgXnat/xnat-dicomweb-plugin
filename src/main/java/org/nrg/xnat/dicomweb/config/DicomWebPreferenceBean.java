@@ -120,4 +120,11 @@ public class DicomWebPreferenceBean extends AbstractPreferenceBean {
     public void setDefaultStrategy(final String defaultStrategy) throws InvalidPreferenceName {
         set(defaultStrategy, "dicomweb.defaultStrategy");
     }
+
+    @NrgPreference(property = "dicomweb.baseUrl")
+    public String getBaseUrl() { return getValue("dicomweb.baseUrl"); }
+
+    public void setBaseUrl(final String baseUrl) throws InvalidPreferenceName {
+        set(baseUrl, "dicomweb.baseUrl");
+    }
 }

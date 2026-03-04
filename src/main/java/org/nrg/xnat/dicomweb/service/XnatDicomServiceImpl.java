@@ -29,8 +29,8 @@ import org.dcm4che3.io.DicomInputStream;
 import org.nrg.action.ServerException;
 import org.nrg.xdat.XDAT;
 import org.nrg.xdat.bean.CatDcmentryBean;
-import org.nrg.xdat.model.CatEntryI;
 import org.nrg.xdat.model.XnatExperimentdataShareI;
+import org.nrg.xdat.model.XnatImagescandataI;
 import org.nrg.xdat.model.XnatImagescandataShareI;
 import org.nrg.xdat.model.XnatProjectparticipantI;
 import org.nrg.xdat.om.XnatAbstractresource;
@@ -44,6 +44,7 @@ import org.nrg.xft.XFTTable;
 import org.nrg.xft.search.CriteriaCollection;
 import org.nrg.xft.search.QueryOrganizer;
 import org.nrg.xft.security.UserI;
+import org.nrg.xnat.dicomweb.config.DicomWebPreferenceBean;
 import org.nrg.xnat.dicomweb.utils.DicomWebUtils;
 import org.nrg.xnat.utils.CatalogUtils;
 import org.nrg.xnatx.dicomweb.core.entity.DwInstance;
@@ -68,6 +69,26 @@ public class XnatDicomServiceImpl implements XnatDicomService {
 
   private final DicomwebDataService dicomwebDataService;
   private final DwInstanceDataService dwInstanceDataService;
+  private final DicomWebPreferenceBean preferences;
+
+  // Allowed values for (0008,0056) Instance Availability; see PS 3.3 C.4.23.1
+  public enum InstanceAvailability {
+      // The Instances are immediately available from the Retrieve AE Title (0008,0054), and if a C-MOVE were to be
+      // requested, it would succeed in a reasonably short time.
+      ONLINE,
+
+      // The Instances need to be retrieved from relatively slow media such as optical disk or tape, and if a C-MOVE
+      // were to be requested from the Retrieve AE Title (0008,0054), it would succeed, but may take a considerable time.
+      NEARLINE,
+
+      // A manual intervention is needed before the Instances may be retrieved, and if a C-MOVE were to be requested
+      // from the Retrieve AE Title (0008,0054), it would fail (e.g., by timeout) without such manual intervention.
+      OFFLINE,
+
+      // The Instances cannot be retrieved from the Retrieve AE Title (0008,0054), and if a C-MOVE were to be
+      // requested, it would fail.
+      UNAVAILABLE
+  }
 
   /**
    * Constructs XnatDicomServiceImpl with injected services.
@@ -77,9 +98,13 @@ public class XnatDicomServiceImpl implements XnatDicomService {
    */
   @Inject
   public XnatDicomServiceImpl(
-      DicomwebDataService dicomwebDataService, DwInstanceDataService dwInstanceDataService) {
+      DicomwebDataService dicomwebDataService,
+      DwInstanceDataService dwInstanceDataService,
+      DicomWebPreferenceBean preferences
+  ) {
     this.dicomwebDataService = dicomwebDataService;
     this.dwInstanceDataService = dwInstanceDataService;
+    this.preferences = preferences;
     logger.info("XnatDicomServiceImpl initialized with database-backed metadata queries");
   }
 
@@ -217,16 +242,15 @@ public class XnatDicomServiceImpl implements XnatDicomService {
             // Aggregate all scans (series) from all matching sessions
             int totalScans = 0;
             for (XnatImagesessiondata session : targetSessions) {
-                if(!Permissions.canRead(user,session)){
+                if(!Permissions.canRead(user, session)){
                     continue;
                 }
 
-                List scans = session.getScans_scan();
+                List<XnatImagescandataI> scans = session.getScans_scan();
                 totalScans += scans.size();
 
-                for (Object scanObj : scans) {
-                    XnatImagescandata scan = (XnatImagescandata) scanObj;
-                    Attributes attrs = createSeriesAttributes(scan, studyInstanceUID);
+                for (XnatImagescandataI scan : scans) {
+                    Attributes attrs = createSeriesAttributes(scan, studyInstanceUID, projectId);
                     results.add(attrs);
                 }
             }
@@ -252,7 +276,10 @@ public class XnatDicomServiceImpl implements XnatDicomService {
     public Attributes getInstanceAttributes(UserI user, String projectId, String studyInstanceUID,
                                             String seriesInstanceUID, String sopInstanceUID) {
         try {
-            File dicomFile = getInstance(user, projectId, studyInstanceUID, seriesInstanceUID, sopInstanceUID);
+            final File dicomFile = getInstance(user, projectId, studyInstanceUID, seriesInstanceUID, sopInstanceUID);
+            if (null == dicomFile)  {
+                return null;
+            }
             try (DicomInputStream dis = new DicomInputStream(dicomFile)) {
                 // Use URI mode to save memory - BulkData will reference file location
                 dis.setIncludeBulkData(DicomInputStream.IncludeBulkData.URI);
@@ -308,20 +335,20 @@ public class XnatDicomServiceImpl implements XnatDicomService {
                 }
 
                 // Find the scan directly by SeriesInstanceUID using efficient SQL query
-                XnatImagescandata targetScan = findScanBySeriesUIDDirect(session.getScans_scan(), seriesInstanceUID);
+                XnatImagescandataI targetScan = findScanBySeriesUIDDirect(session.getScans_scan(), seriesInstanceUID);
 
                 if (targetScan == null) {
                     continue;
                 }
 
                 // Try database cache first for performance
-                results = queryInstancesFromDatabase(targetScan);
+                results = queryInstancesFromDatabase(session.getUid(), targetScan);
 
                 // Fallback to reading DICOM files if database cache is empty
                 if (results.isEmpty()) {
                     logger.debug("Database cache empty for series {}, falling back to file reading",
                             seriesInstanceUID);
-                    results = readDicomFilesFromScan(targetScan);
+                    results = readDicomFilesFromScan(session.getUid(), targetScan);
                 }
 
                 // Apply query filters if provided
@@ -363,7 +390,7 @@ public class XnatDicomServiceImpl implements XnatDicomService {
                 }
 
                 // Find the scan directly by SeriesInstanceUID using efficient SQL query
-                final XnatImagescandata targetScan = findScanBySeriesUIDDirect(session.getScans_scan(), seriesInstanceUID);
+                final XnatImagescandataI targetScan = findScanBySeriesUIDDirect(session.getScans_scan(), seriesInstanceUID);
 
                 if (targetScan == null) {
                     continue;
@@ -429,22 +456,21 @@ public class XnatDicomServiceImpl implements XnatDicomService {
                 Set<String> allModalities = new LinkedHashSet<>();
 
                 for (XnatImagesessiondata session : sessions) {
-                    List scans = session.getScans_scan();
+                    List<XnatImagescandataI> scans = session.getScans_scan();
                     if (scans != null) {
                         totalSeries += scans.size();
-                        for (Object scanObj : scans) {
-                            XnatImagescandata scan = (XnatImagescandata) scanObj;
+                        for (XnatImagescandataI scan : scans) {
                             String modality = scan.getModality();
                             if (modality != null && !modality.isEmpty()) {
                                 allModalities.add(modality);
                             }
 
                             // Try database cache first
-                            List<Attributes> instances = queryInstancesFromDatabase(scan);
+                            List<Attributes> instances = queryInstancesFromDatabase(session.getUid(), scan);
 
                             // Fallback to file reading if database cache is empty
                             if (instances.isEmpty()) {
-                                instances = readDicomFilesFromScan(scan);
+                                instances = readDicomFilesFromScan(session.getUid(), scan);
                             }
 
                             totalInstances += instances.size();
@@ -490,20 +516,18 @@ public class XnatDicomServiceImpl implements XnatDicomService {
             // Collect instances from all series across all sessions
             int totalScans = 0;
             for (XnatImagesessiondata session : sessions) {
-                List scans = session.getScans_scan();
+                List<XnatImagescandataI> scans = session.getScans_scan();
                 totalScans += scans.size();
 
-                for (Object scanObj : scans) {
-                    XnatImagescandata scan = (XnatImagescandata) scanObj;
-
+                for (XnatImagescandataI scan : scans) {
                     // Try database cache first
-                    List<Attributes> instances = queryInstancesFromDatabase(scan);
+                    List<Attributes> instances = queryInstancesFromDatabase(session.getUid(), scan);
 
                     // Fallback to file reading if database cache is empty
                     if (instances.isEmpty()) {
                         logger.debug("Database cache empty for scan {}, falling back to file reading",
                                 scan.getId());
-                        instances = readDicomFilesFromScan(scan);
+                        instances = readDicomFilesFromScan(session.getUid(), scan);
                     }
 
                     allInstances.addAll(instances);
@@ -581,7 +605,7 @@ public class XnatDicomServiceImpl implements XnatDicomService {
 
             for(XnatImagesessiondata session : sessions) {
                 // Find the scan directly by SeriesInstanceUID using efficient SQL query
-                XnatImagescandata targetScan = findScanBySeriesUIDDirect(session.getScans_scan(), seriesInstanceUID);
+                XnatImagescandataI targetScan = findScanBySeriesUIDDirect(session.getScans_scan(), seriesInstanceUID);
 
                 if (targetScan == null) {
                     continue;
@@ -786,11 +810,10 @@ public class XnatDicomServiceImpl implements XnatDicomService {
             attrs.setString(Tag.StudyID, VR.SH, id != null ? id : "");
 
             // Add modalities in study
-            List scans = session.getScans_scan();
+            final List<XnatImagescandataI> scans = session.getScans_scan();
             if (scans != null && !scans.isEmpty()) {
                 List<String> modalities = new ArrayList<>();
-                for (Object scanObj : scans) {
-                    XnatImagescandata scan = (XnatImagescandata) scanObj;
+                for (XnatImagescandataI scan : scans) {
                     String modality = scan.getModality();
                     if (modality != null && !modality.isEmpty() && !modalities.contains(modality)) {
                         modalities.add(modality);
@@ -800,7 +823,6 @@ public class XnatDicomServiceImpl implements XnatDicomService {
                     attrs.setString(Tag.ModalitiesInStudy, VR.CS, String.join("\\", modalities));
                 }
             }
-
         } catch (Exception e) {
             logger.error("Error creating study attributes", e);
         }
@@ -1062,13 +1084,14 @@ public class XnatDicomServiceImpl implements XnatDicomService {
     }
 
     /**
-     * Create series-level DICOM attributes from scan
+     * Create series-level DICOM attributes from scan.
+     * Populates return keys per PS3.18 Table 10.6.3-4.
      */
-    private Attributes createSeriesAttributes(XnatImagescandata scan, String studyUID) {
+    private Attributes createSeriesAttributes(XnatImagescandataI scan, String studyUID, String projectId) {
         Attributes attrs = new Attributes();
 
         try {
-            // Series-level attributes
+            // Series-level attributes (Required)
             String seriesUID = scan.getUid();
             if (seriesUID != null && !seriesUID.isEmpty()) {
                 attrs.setString(Tag.SeriesInstanceUID, VR.UI, seriesUID);
@@ -1080,8 +1103,45 @@ public class XnatDicomServiceImpl implements XnatDicomService {
             String scanId = scan.getId();
             attrs.setString(Tag.SeriesNumber, VR.IS, scanId != null ? scanId : "1");
 
+            // NumberOfSeriesRelatedInstances (Required per PS3.18 Table 10.6.3-4)
+            if (scan instanceof XnatImagescandata) {
+                int fileCount = getFileCount((XnatImagescandata) scan);
+                if (fileCount >= 0) {
+                    attrs.setInt(Tag.NumberOfSeriesRelatedInstances, VR.IS, fileCount);
+                }
+            }
+
+            // RetrieveURL (Required if retrievable, per PS3.18 Table 10.6.3-4)
+            if (seriesUID != null && !seriesUID.isEmpty()) {
+                final String prefBaseUrl = preferences.getBaseUrl();
+                final String baseUrl = (null == prefBaseUrl || prefBaseUrl.isEmpty())
+                        ? XDAT.getSiteConfigPreferences().getSiteUrl() : prefBaseUrl;
+                String retrieveUrl = String.format("%s/xapi/dicomweb/projects/%s/studies/%s/series/%s",
+                        baseUrl, projectId, studyUID, seriesUID);
+                attrs.setString(Tag.RetrieveURL, VR.UR, retrieveUrl);
+            }
+
+            // Conditional attributes (Type C — present if known)
             String description = scan.getSeriesDescription();
             attrs.setString(Tag.SeriesDescription, VR.LO, description != null ? description : "");
+
+            // PerformedProcedureStepStartDate (Type C per PS3.18 Table 10.6.3-4)
+            Object startDate = scan.getStartDate();
+            if (startDate != null) {
+                String dateStr = startDate.toString().replaceAll("-", "");
+                if (!dateStr.isEmpty()) {
+                    attrs.setString(Tag.PerformedProcedureStepStartDate, VR.DA, dateStr);
+                }
+            }
+
+            // PerformedProcedureStepStartTime (Type C per PS3.18 Table 10.6.3-4)
+            Object startTime = scan.getStarttime();
+            if (startTime != null) {
+                String timeStr = startTime.toString().replaceAll(":", "");
+                if (!timeStr.isEmpty()) {
+                    attrs.setString(Tag.PerformedProcedureStepStartTime, VR.TM, timeStr);
+                }
+            }
 
             // Add study-level attributes
             attrs.setString(Tag.StudyInstanceUID, VR.UI, studyUID);
@@ -1113,7 +1173,7 @@ public class XnatDicomServiceImpl implements XnatDicomService {
      * @param scan the XNAT scan to query instances for
      * @return list of DICOM Attributes from database, or empty list if not found or on error
      */
-    private List<Attributes> queryInstancesFromDatabase(XnatImagescandata scan) {
+    private List<Attributes> queryInstancesFromDatabase(String studyInstanceUid, XnatImagescandataI scan) {
         List<Attributes> results = new ArrayList<>();
 
         try {
@@ -1140,11 +1200,19 @@ public class XnatDicomServiceImpl implements XnatDicomService {
 
             logger.debug("Found {} instances in database for series {}", instances.size(), seriesUid);
 
+            final String prefBaseUrl = preferences.getBaseUrl();
+            final String baseUrl = (null == prefBaseUrl || prefBaseUrl.isEmpty()) ? XDAT.getSiteConfigPreferences().getSiteUrl() : prefBaseUrl;
+
             // Convert DwInstance entities to DICOM Attributes
             for (DwInstance instance : instances) {
                 try {
                     Attributes attrs = instance.getMetadata();
                     if (attrs != null) {
+                        // These fields only belong in QIDO-RS instance level response
+                        final String url = String.format("%s/xapi/dicomweb/projects/%s/studies/%s/series/%s/instances/%s",
+                                baseUrl, scan.getProject(), studyInstanceUid, seriesUid, instance.getSopInstanceUid());
+                        attrs.setString(Tag.InstanceAvailability, VR.CS, InstanceAvailability.ONLINE.name());
+                        attrs.setString(Tag.RetrieveURL, VR.UR, url);
                         results.add(attrs);
                     }
                 } catch (IOException e) {
@@ -1176,7 +1244,7 @@ public class XnatDicomServiceImpl implements XnatDicomService {
      * @param scan scan that might represent a DICOM series
      * @return DICOM resources for the scan
      */
-    private Stream<XnatAbstractresource> dicomResourceStream(final XnatImagescandata scan) {
+    private Stream<XnatAbstractresource> dicomResourceStream(final XnatImagescandataI scan) {
         return Optional.ofNullable(scan.getFile())
                 .map(List::stream)
                 .orElse(Stream.of())    // Java 9: .stream().flatMap(List::stream)
@@ -1186,33 +1254,36 @@ public class XnatDicomServiceImpl implements XnatDicomService {
     }
 
     /**
-     * Given a DICOM file, return the attributes used in an instance query response
-     * @param file File containing a DICOM part 10 dataset
-     * @return stream with a single (reduced) Attributes object, or empty if unreadable
-     */
-    private static Stream<Attributes> instanceResponse(final File file) {
-        // run Attributes through a DwInstance to standardize which attributes we return
-        try (DicomInputStream dis = new DicomInputStream(file)) {
-            dis.setIncludeBulkData(DicomInputStream.IncludeBulkData.NO);
-            final DwInstance inst = new DwInstance();
-            inst.setData(dis.readDataset());
-            return Stream.of(inst.getMetadata());
-        } catch (Exception e) {
-            logger.debug("Error reading DICOM candidate {}", file.getAbsolutePath(), e);
-            return Stream.of();
-        }
-    }
-
-    /**
      * Read DICOM files from scan resources (fallback when database cache unavailable)
      */
-    private List<Attributes> readDicomFilesFromScan(XnatImagescandata scan) {
+    private List<Attributes> readDicomFilesFromScan(final String studyInstanceUid, final XnatImagescandataI scan) {
         // TODO: there's a reasonable argument that we should be building and storing DwInstances
-        // here, as this is a scan that didn't have metadata in the database.
+        //       here, as this is a scan that didn't have metadata in the database.
         try {
+            final String prefBaseUrl = preferences.getBaseUrl();
+            final String baseUrl = (null == prefBaseUrl || prefBaseUrl.isEmpty()) ? XDAT.getSiteConfigPreferences().getSiteUrl() : prefBaseUrl;
+            final String sessionId = scan.getImageSessionId();
+            final String scanId = scan.getId();
+            final String seriesInstanceUid = scan.getUid();
             return dicomResourceStream(scan)
                     .flatMap(resource -> resolveDicomFiles(resource, scan, null))
-                    .flatMap(XnatDicomServiceImpl::instanceResponse)
+                    .flatMap(file -> {
+                        try (DicomInputStream dis = new DicomInputStream(file)) {
+                            // run Attributes through a DwInstance to standardize which attributes we return
+                            // dis.setIncludeBulkData(DicomInputStream.IncludeBulkData.NO);
+                            final DwInstance inst = new DwInstance();
+                            inst.setData(dis.readDataset());
+                            final Attributes attrs = inst.getMetadata();
+                            final String url = String.format("%s/xapi/dicomweb/projects/%s/studies/%s/series/%s/instances/%s",
+                                    baseUrl, scan.getProject(), studyInstanceUid, seriesInstanceUid, inst.getSopInstanceUid());
+                            attrs.setString(Tag.InstanceAvailability, VR.CS, InstanceAvailability.ONLINE.name());
+                            attrs.setString(Tag.RetrieveURL, VR.UR, url);
+                            return Stream.of(attrs);
+                        } catch (Exception e) {
+                            logger.debug("Error reading DICOM candidate {}", file.getAbsolutePath(), e);
+                            return Stream.of();
+                        }
+                    })
                     .collect(Collectors.toList());
         } catch (Exception e) {
             logger.error("Error reading DICOM files from scan", e);
@@ -1220,8 +1291,8 @@ public class XnatDicomServiceImpl implements XnatDicomService {
         }
     }
 
-    private Stream<File> resolveDicomFiles(final XnatAbstractresource resource, final XnatImagescandata scan, final String fileSOPUID) {
-        final XnatImagesessiondata session = (XnatImagesessiondata) scan.getImageSessionData();
+    private Stream<File> resolveDicomFiles(final XnatAbstractresource resource, final XnatImagescandataI scan, final String fileSOPUID) {
+        final XnatImagesessiondata session = ((XnatImagescandata) scan).getImageSessionData();
         if (resource instanceof XnatResourcecatalog && session != null) {
             try {
                 final CatalogUtils.CatalogData catalogData = CatalogUtils.CatalogData.getOrCreate(session, (XnatResourcecatalog) resource);
@@ -1280,11 +1351,11 @@ public class XnatDicomServiceImpl implements XnatDicomService {
      * Find scan by SeriesInstanceUID.
      * First tries to match scan.getUid(), then falls back to reading DICOM files.
      */
-    private XnatImagescandata findScanBySeriesUIDDirect(List<XnatImagescandata> scans, String seriesInstanceUID) {
+    private XnatImagescandata findScanBySeriesUIDDirect(List<XnatImagescandataI> scans, String seriesInstanceUID) {
         // First pass: try to match scan.getUid()
-        for (XnatImagescandata scan : scans) {
-            if (seriesInstanceUID.equals(scan.getUid())) {
-                return scan;
+        for (XnatImagescandataI scan : scans) {
+            if (scan instanceof XnatImagescandata && seriesInstanceUID.equals(scan.getUid())) {
+                return (XnatImagescandata) scan;
             }
         }
 
@@ -1294,7 +1365,7 @@ public class XnatDicomServiceImpl implements XnatDicomService {
     /**
      * Find specific DICOM file by SOPInstanceUID
      */
-    private File findDicomFileInScan(XnatImagescandata scan, String sopInstanceUID) {
+    private File findDicomFileInScan(XnatImagescandataI scan, String sopInstanceUID) {
         try {
             return dicomResourceStream(scan)
                     .flatMap(resource -> resolveDicomFiles(resource, scan, sopInstanceUID))
@@ -2359,9 +2430,7 @@ public class XnatDicomServiceImpl implements XnatDicomService {
 
     @Override
     public StowRsResponse storeInstances(UserI user, String projectId, List<InputStream> dicomInstances) {
-        System.out.println("=== STOW-RS SERVICE CALLED ===");
-        System.out.println("=== User: " + user.getLogin() + ", Project: " + projectId + ", Instances: " + dicomInstances.size());
-        logger.info("STOW-RS: Storing {} DICOM instances for user {} in project {}",
+        logger.debug("STOW-RS: Storing {} DICOM instances for user {} in project {}",
             dicomInstances.size(), user.getLogin(), projectId);
 
         List<InstanceStatus> statuses = new ArrayList<>();
@@ -2369,23 +2438,18 @@ public class XnatDicomServiceImpl implements XnatDicomService {
         int failureCount = 0;
 
         try {
-            System.out.println("=== Verifying project access...");
             // Verify project access
             XnatProjectdata project = XnatProjectdata.getXnatProjectdatasById(projectId, user, false);
-            System.out.println("=== Project: " + project);
             if (project == null) {
-                System.out.println("=== ERROR: No project access!");
-                logger.error("User {} does not have access to project: {}", user.getLogin(), projectId);
+                logger.info("User {} does not have access to project: {}", user.getLogin(), projectId);
                 throw new SecurityException("No access to project: " + projectId);
             }
 
             // Group instances by StudyInstanceUID to create proper sessions
             java.util.Map<String, java.util.List<DicomInstance>> instancesByStudy = new java.util.HashMap<>();
 
-            System.out.println("=== First pass: Reading " + dicomInstances.size() + " DICOM instances...");
             // First pass: Read DICOM metadata and group by StudyInstanceUID
             for (int i = 0; i < dicomInstances.size(); i++) {
-                System.out.println("=== Processing instance " + (i+1) + " of " + dicomInstances.size());
                 InputStream stream = dicomInstances.get(i);
 
                 try {
@@ -2409,8 +2473,6 @@ public class XnatDicomServiceImpl implements XnatDicomService {
                         .add(new DicomInstance(attrs, sopInstanceUID, sopClassUID, seriesNumber));
 
                 } catch (Exception e) {
-                    System.out.println("=== ERROR reading instance " + (i+1) + ": " + e.getClass().getName() + ": " + e.getMessage());
-                    e.printStackTrace(System.out);
                     logger.error("STOW-RS: Error reading DICOM instance " + (i + 1), e);
                     statuses.add(new InstanceStatus(null, null, false,
                         "Error reading DICOM: " + e.getMessage(), 0xC000));
@@ -2418,10 +2480,8 @@ public class XnatDicomServiceImpl implements XnatDicomService {
                 }
             }
 
-            System.out.println("=== First pass complete. Grouped into " + instancesByStudy.size() + " studies");
             // Second pass: Process each study group using PrearcDatabase
             for (java.util.Map.Entry<String, java.util.List<DicomInstance>> entry : instancesByStudy.entrySet()) {
-                System.out.println("=== Processing study: " + entry.getKey() + " with " + entry.getValue().size() + " instances");
                 String studyInstanceUID = entry.getKey();
                 java.util.List<DicomInstance> instances = entry.getValue();
 
@@ -2531,11 +2591,8 @@ public class XnatDicomServiceImpl implements XnatDicomService {
 
         org.nrg.xnat.helpers.prearchive.SessionData session = getOrCreate.isLeft() ? getOrCreate.getLeft() : getOrCreate.getRight();
 
-        String action = getOrCreate.isLeft() ? "Created new" : "Using existing";
-        System.out.println("=== " + action + " session for StudyInstanceUID: " + studyInstanceUID);
-        System.out.println("=== Session URL: " + session.getUrl());
-        logger.info("STOW-RS: {} session for StudyInstanceUID {}: {}",
-            action, studyInstanceUID, session.getUrl());
+        logger.debug("STOW-RS: {} session for StudyInstanceUID {}: {}",
+                getOrCreate.isLeft() ? "Created new" : "Using existing", studyInstanceUID, session.getUrl());
 
         return session;
     }

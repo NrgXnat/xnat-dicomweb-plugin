@@ -4,6 +4,7 @@ import org.junit.Before;
 import org.junit.Test;
 import org.mockito.Mock;
 import org.mockito.MockitoAnnotations;
+import org.nrg.xnat.dicomweb.config.DicomWebPreferenceBean;
 import org.nrg.xnatx.dicomweb.core.service.query.DicomwebDataService;
 import org.nrg.xnatx.dicomweb.core.service.query.DwInstanceDataService;
 
@@ -27,6 +28,9 @@ public class XnatDicomServiceImplTest {
     @Mock
     private DwInstanceDataService dwInstanceDataService;
 
+    @Mock
+    private DicomWebPreferenceBean dwPreferenceBean;
+
     private XnatDicomServiceImpl service;
     private Method matchesDescriptor;
     private Method buildFallbackArchivePath;
@@ -38,7 +42,7 @@ public class XnatDicomServiceImplTest {
     @Before
     public void setUp() throws Exception {
         MockitoAnnotations.openMocks(this);
-        service = new XnatDicomServiceImpl(dicomwebDataService, dwInstanceDataService);
+        service = new XnatDicomServiceImpl(dicomwebDataService, dwInstanceDataService, dwPreferenceBean);
 
         matchesDescriptor = XnatDicomServiceImpl.class.getDeclaredMethod("matchesDicomDescriptor", String.class);
         matchesDescriptor.setAccessible(true);

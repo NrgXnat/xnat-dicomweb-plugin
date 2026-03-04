@@ -47,9 +47,11 @@ configurations {
     all*.exclude group: 'javax.sql', module: 'jdbc-stdext'
     all*.exclude group: 'javax.transaction', module: 'jta'
     all*.exclude group: 'javax.servlet', module: 'servlet-api'
-    all*.exclude group: 'com.sun.media', module: 'jai_imageio'
 
     implementation.extendsFrom(implementAndInclude)
+    all {
+    	exclude group: 'com.sun.media', module: 'jai_imageio'
+    }
 }
 
 dependencyManagement.imports {
@@ -94,33 +96,33 @@ dependencies {
     // EtherJ for exception handling (used by DicomwebMetadataException)
     implementAndInclude "icr.etherj:etherj-core:1.1.6"
 
-    implementation "org.slf4j:slf4j-api"
-    implementation "log4j:log4j"
-    implementation 'javax.servlet:javax.servlet-api'
-    implementation 'com.google.guava:guava'
-    implementation 'commons-lang:commons-lang'
-    implementation 'com.fasterxml.jackson.core:jackson-core'
-    implementation 'com.fasterxml.jackson.core:jackson-annotations'
-    implementation 'com.fasterxml.jackson.core:jackson-databind'
-    implementation 'org.hibernate.javax.persistence:hibernate-jpa-2.1-api'
-    implementation 'javax.inject:javax.inject'
-    implementation "org.nrg.xnat:web"
-    implementation "org.nrg.xnat:xnat-data-models"
-    implementation "org.nrg.xdat:core"
-    implementation "org.nrg:framework"
-    implementation "org.nrg:config"
-    implementation "org.springframework:spring-beans"
-    implementation "org.springframework:spring-context"
-    implementation "org.springframework:spring-web"
-    implementation "org.springframework:spring-webmvc"
-    implementation "io.springfox:springfox-swagger2"
-    implementation "io.springfox:springfox-swagger-ui"
+    compileOnly "org.slf4j:slf4j-api"
+    compileOnly "log4j:log4j"
+    compileOnly 'javax.servlet:javax.servlet-api'
+    compileOnly 'com.google.guava:guava'
+    compileOnly 'commons-lang:commons-lang'
+    compileOnly 'com.fasterxml.jackson.core:jackson-core'
+    compileOnly 'com.fasterxml.jackson.core:jackson-annotations'
+    compileOnly 'com.fasterxml.jackson.core:jackson-databind'
+    compileOnly 'org.hibernate.javax.persistence:hibernate-jpa-2.1-api'
+    compileOnly 'javax.inject:javax.inject'
+    compileOnly "org.nrg.xnat:web"
+    compileOnly "org.nrg.xnat:xnat-data-models"
+    compileOnly "org.nrg.xdat:core"
+    compileOnly "org.nrg:framework"
+    compileOnly "org.nrg:config"
+    compileOnly "org.springframework:spring-beans"
+    compileOnly "org.springframework:spring-context"
+    compileOnly "org.springframework:spring-web"
+    compileOnly "org.springframework:spring-webmvc"
+    compileOnly "io.springfox:springfox-swagger2"
+    compileOnly "io.springfox:springfox-swagger-ui"
 
     // DCM4CHE for DICOMweb support (packaged in plugin)
-    implementation "org.dcm4che:dcm4che-core"
-    implementation "org.dcm4che:dcm4che-imageio"
-    implementation "org.dcm4che:dcm4che-image"
-    implementAndInclude "org.dcm4che:dcm4che-net"
+    compileOnly "org.dcm4che:dcm4che-core"
+    compileOnly "org.dcm4che:dcm4che-imageio"
+    compileOnly "org.dcm4che:dcm4che-image"
+    compileOnly "org.dcm4che:dcm4che-net"
     implementAndInclude "org.dcm4che:dcm4che-json"
     // OpenCV image I/O for advanced compression formats (JPEG-LS, JPEG 2000)
     implementAndInclude "org.dcm4che:dcm4che-imageio-opencv:5.31.0"

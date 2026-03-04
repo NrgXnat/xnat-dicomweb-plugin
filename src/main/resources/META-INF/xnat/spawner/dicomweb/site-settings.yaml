@@ -18,9 +18,20 @@ dicomwebConfigPanel:
                 Configure the DICOMweb plugin settings. Changes take effect immediately without restart.
                 Note: STOW-RS memory threshold (dicomweb.memoryThreshold) must be configured in properties file and requires restart.
 
-        paginationHeader:
+        qidoBehaviorHeader:
             tag: h3
-            contents: "QIDO-RS Pagination Settings"
+            contents: "QIDO-RS Response Settings"
+
+        dicomWebUrl:
+            kind: panel.input.text
+            name: baseUrl
+            label: DICOMweb Base URL
+            validation: "onblur"
+            element:
+                title: Base URL for Retrieve URL entries in QIDO-RS responses
+            description: >
+                Base URL used to set Retrieve URL attribute values in QIDO-RS Instance-level responses.
+                Defaults to the XNAT Site URL, which is usually correct.
 
         defaultPageSize:
             kind: panel.input.text
