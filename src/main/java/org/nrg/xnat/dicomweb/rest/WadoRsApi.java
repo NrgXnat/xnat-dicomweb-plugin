@@ -12,6 +12,7 @@ import org.nrg.xdat.security.services.RoleHolder;
 import org.nrg.xdat.security.services.UserManagementServiceI;
 import org.nrg.xft.security.UserI;
 import org.nrg.xnat.dicomweb.exceptions.BadRequestException;
+import org.nrg.xnat.dicomweb.exceptions.DicomWebException;
 import org.nrg.xnat.dicomweb.exceptions.ResourceNotFoundException;
 import org.nrg.xnat.dicomweb.service.XnatDicomService;
 import org.nrg.xnat.dicomweb.utils.BulkDataHandler;
@@ -79,10 +80,14 @@ public class WadoRsApi extends AbstractXapiRestController {
                                                                 @PathVariable String seriesUID,
                                                                 @PathVariable String instanceUID) {
         UserI user = getSessionUser();
-        InputStream stream = dicomService.retrieveInstance(user, projectId, studyUID, seriesUID, instanceUID);
-
-        if (stream == null) {
+        final InputStream stream;
+        try {
+            stream = dicomService.retrieveInstance(user, projectId, studyUID, seriesUID, instanceUID);
+        } catch (FileNotFoundException e) {
             throw new ResourceNotFoundException("Instance", instanceUID);
+        } catch (IOException e) {
+            // ### FIXME: better response
+            throw new DicomWebException("Instance " + instanceUID, HttpStatus.INTERNAL_SERVER_ERROR.value(), HttpStatus.INTERNAL_SERVER_ERROR.name());
         }
 
         HttpHeaders headers = new HttpHeaders();
@@ -115,7 +120,7 @@ public class WadoRsApi extends AbstractXapiRestController {
                                                            @PathVariable String instanceUID,
                                                            HttpServletRequest request) throws Exception {
         UserI user = getSessionUser();
-        Attributes attrs = dicomService.getInstanceAttributes(user, projectId, studyUID, seriesUID, instanceUID);
+        Attributes attrs = dicomService.retrieveMetadata(user, projectId, studyUID, seriesUID, instanceUID);
 
         if (attrs == null) {
             throw new ResourceNotFoundException("Instance metadata", instanceUID);

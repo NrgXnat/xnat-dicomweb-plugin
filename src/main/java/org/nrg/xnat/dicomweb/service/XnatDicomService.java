@@ -4,6 +4,7 @@ import org.dcm4che3.data.Attributes;
 import org.dcm4che3.data.Tag;
 import org.nrg.xft.security.UserI;
 
+import java.io.IOException;
 import java.io.InputStream;
 import java.util.List;
 
@@ -11,32 +12,52 @@ import java.util.List;
  * Service interface for accessing DICOM data from XNAT
  */
 public interface XnatDicomService {
-
     /**
      * Search for studies in a project
+     * @param user calling user
+     * @param projectId project to search
+     * @param queryAttributes search constraints as specified in PS 3.18 10.6.1.2.3 Required Matching Attributes
+     * @return study resource search results as specified in PS 3.18 Table 10.6.3-3
      */
     List<Attributes> searchStudies(UserI user, String projectId, Attributes queryAttributes);
 
     /**
      * Search for series within a study
+     * @param user calling user
+     * @param projectId project to search
+     * @param studyInstanceUID Study Instance UID of containing study
+     * @param queryAttributes search constraints as specified in PS 3.18 10.6.1.2.3 Required Matching Attributes
+     * @return series resource search results as specified in PS 3.18 Table 10.6.3-4
      */
     List<Attributes> searchSeries(UserI user, String projectId, String studyInstanceUID, Attributes queryAttributes);
 
-    Attributes getInstanceAttributes(UserI user, String projectId, String studyInstanceUID,
-                                     String seriesInstanceUID, String sopInstanceUID);
-
     /**
      * Search for instances within a series
+     * @param user calling user
+     * @param projectId project to search
+     * @param studyInstanceUID Study Instance UID of containing study
+     * @param seriesInstanceUID Series Instance UID of containing series
+     * @param queryAttributes search constraints as specified in PS 3.18 10.6.1.2.3 Required Matching Attributes
+     * @return instance resource search results as specified in PS 3.18 Table 10.6.3-5
      */
     List<Attributes> searchInstances(UserI user, String projectId, String studyInstanceUID, String seriesInstanceUID, Attributes queryAttributes);
 
     /**
      * Retrieve a DICOM instance
+     * PS 3.18 is vague about what's included, but examples in Appendix B include Transfer Syntax UID, suggesting
+     * that the intended response is FMI + full dataset.
+     * @param user calling user
+     * @param projectId project to search
+     * @param studyInstanceUID Study Instance UID of containing study
+     * @param seriesInstanceUID Series Instance UID of containing series
+     * @param sopInstanceUID SOP Instance UID of instance to be retrieved
+     * @return byte stream of DICOM instance in Part 10 format, or null in case of failure
      */
-    InputStream retrieveInstance(UserI user, String projectId, String studyInstanceUID, String seriesInstanceUID, String sopInstanceUID);
+    InputStream retrieveInstance(UserI user, String projectId, String studyInstanceUID, String seriesInstanceUID, String sopInstanceUID) throws IOException;
 
     /**
      * Retrieve metadata for an instance
+     * Per PS 3.18 3.9 Web Services Definitions, this is the full instance, no FMI, with bulk data as URIs
      */
     Attributes retrieveMetadata(UserI user, String projectId, String studyInstanceUID, String seriesInstanceUID, String sopInstanceUID);
 
