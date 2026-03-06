@@ -55,6 +55,7 @@ public class DicomWebPrefsApi extends AbstractXapiRestController {
         prefs.put("maxPageSize", preferenceBean.getMaxPageSize());
         prefs.put("bulkDataThreshold", preferenceBean.getBulkDataThreshold());
         prefs.put("defaultStrategy", preferenceBean.getDefaultStrategy());
+        prefs.put("enableMetadataCache", preferenceBean.getEnableMetadataCache());
         // Note: memoryThreshold is not exposed here as it requires restart to take effect
 
         return new ResponseEntity<>(prefs, HttpStatus.OK);
@@ -87,6 +88,12 @@ public class DicomWebPrefsApi extends AbstractXapiRestController {
                 int value = getIntValue(preferences, "bulkDataThreshold");
                 preferenceBean.setBulkDataThreshold(value);
                 logger.info("Updated bulkDataThreshold to: {}", value);
+            }
+
+            if (preferences.containsKey("enableMetadataCache")) {
+                boolean value = Boolean.parseBoolean(preferences.get("enableMetadataCache").toString());
+                preferenceBean.setEnableMetadataCache(value);
+                logger.info("Updated enableMetadataCache to: {}", value);
             }
 
             if (preferences.containsKey("defaultStrategy")) {

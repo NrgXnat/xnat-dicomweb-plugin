@@ -45,6 +45,7 @@ import org.nrg.xft.event.persist.PersistentWorkflowUtils;
 import org.nrg.xft.exception.ElementNotFoundException;
 import org.nrg.xft.exception.XFTInitException;
 import org.nrg.xft.security.UserI;
+import org.nrg.xnat.dicomweb.config.DicomWebPreferenceBean;
 import org.nrg.xnat.helpers.merge.AnonUtils;
 import org.nrg.xnat.turbine.utils.ArchivableItem;
 import org.nrg.xnatx.dicomweb.core.inputcreator.DicomwebInputHandler;
@@ -78,12 +79,14 @@ public class DicomwebProxyEventListener implements Consumer<Event<WorkflowStatus
 
     private final AnonUtils anonUtils;
     private final DicomwebInputHandler dwInputHandler;
+    private final DicomWebPreferenceBean preferences;
     private final Map<String, Boolean> triggerPipelines = new HashMap<>();
     private final Map<String, Boolean> triggerPipelinesSubject = new HashMap<>();
 
     @Inject
     public DicomwebProxyEventListener(
-            EventBus eventBus, AnonUtils anonUtils, DicomwebInputHandler dwInputHandler) {
+            EventBus eventBus, AnonUtils anonUtils, DicomwebInputHandler dwInputHandler,
+            DicomWebPreferenceBean preferences) {
         eventBus.on(
                 R(
                         WorkflowStatusEvent.class.getName()
@@ -93,6 +96,7 @@ public class DicomwebProxyEventListener implements Consumer<Event<WorkflowStatus
                 this);
         this.anonUtils = anonUtils;
         this.dwInputHandler = dwInputHandler;
+        this.preferences = preferences;
         createTriggers();
         logger.debug("DICOMweb Proxy event listener initialized");
     }
@@ -213,6 +217,10 @@ public class DicomwebProxyEventListener implements Consumer<Event<WorkflowStatus
     }
 
     private void generateMetadata(XnatImagesessiondata item) {
+        if (!preferences.getEnableMetadataCache()) {
+            logger.debug("Metadata caching is disabled, skipping metadata extraction for session {}", item.getId());
+            return;
+        }
         try {
             if (DicomwebUtils.isSessionValidForDicomweb(item)) {
                 dwInputHandler.createDicomwebData(item, true);

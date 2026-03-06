@@ -121,6 +121,15 @@ public class DicomWebPreferenceBean extends AbstractPreferenceBean {
         set(defaultStrategy, "dicomweb.defaultStrategy");
     }
 
+    @NrgPreference(property = "dicomweb.enableMetadataCache")
+    public boolean getEnableMetadataCache() {
+        return getBooleanValue("dicomweb.enableMetadataCache");
+    }
+
+    public void setEnableMetadataCache(final boolean enableMetadataCache) throws InvalidPreferenceName {
+        setBooleanValue(enableMetadataCache, "dicomweb.enableMetadataCache");
+    }
+
     @NrgPreference(property = "dicomweb.baseUrl")
     public String getBaseUrl() { return getValue("dicomweb.baseUrl"); }
 

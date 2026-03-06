@@ -18,6 +18,22 @@ dicomwebConfigPanel:
                 Configure the DICOMweb plugin settings. Changes take effect immediately without restart.
                 Note: STOW-RS memory threshold (dicomweb.memoryThreshold) must be configured in properties file and requires restart.
 
+        performanceHeader:
+            tag: h3
+            contents: "Performance Settings"
+
+        enableMetadataCache:
+            kind: panel.input.switchbox
+            name: enableMetadataCache
+            label: Enable Database Metadata Caching
+            description: >
+                When enabled, DICOM metadata is extracted and cached in the database
+                when sessions are archived, providing faster DICOMweb query responses.
+                When disabled, DICOMweb queries read metadata directly from DICOM files,
+                which avoids caching overhead but results in slower query responses.
+                Changes take effect for newly archived sessions; existing cached data
+                is not affected.
+
         qidoBehaviorHeader:
             tag: h3
             contents: "QIDO-RS Response Settings"
