@@ -141,9 +141,15 @@ dependencies {
 
     testImplementation 'junit:junit'
     testImplementation "org.springframework:spring-test"
+    testImplementation "org.springframework:spring-web"
+    testImplementation "org.springframework:spring-webmvc"
     testImplementation "org.mockito:mockito-core"
     testImplementation "javax.servlet:javax.servlet-api"
     testImplementation "org.slf4j:slf4j-simple"
+    testImplementation "org.nrg:framework"
+    testImplementation "org.nrg.xdat:core"
+    testImplementation "org.nrg.xnat:xnat-data-models"
+    testImplementation "org.nrg.xnat:web"
 }
 
 // Pulls in the Jenkins BUILD_NUMBER environment variable if available.
