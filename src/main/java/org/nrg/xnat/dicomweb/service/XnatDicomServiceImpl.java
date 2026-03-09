@@ -46,6 +46,9 @@ import org.nrg.xft.search.CriteriaCollection;
 import org.nrg.xft.search.QueryOrganizer;
 import org.nrg.xft.security.UserI;
 import org.nrg.xnat.dicomweb.config.DicomWebPreferenceBean;
+import org.nrg.xnat.dicomweb.exceptions.BadRequestException;
+import org.nrg.xnat.dicomweb.exceptions.DicomWebException;
+import org.nrg.xnat.dicomweb.exceptions.ResourceNotFoundException;
 import org.nrg.xnat.dicomweb.utils.DicomWebUtils;
 import org.nrg.xnat.utils.CatalogUtils;
 import org.nrg.xnatx.dicomweb.core.entity.DwInstance;
@@ -283,38 +286,20 @@ public class XnatDicomServiceImpl implements XnatDicomService {
     @Override
     public Attributes retrieveMetadata(UserI user, String projectId, String studyInstanceUID,
                                             String seriesInstanceUID, String sopInstanceUID) {
-        try {
-            final File dicomFile = getInstance(user, projectId, studyInstanceUID, seriesInstanceUID, sopInstanceUID);
-            if (null == dicomFile)  {
-                return null;
+        final File dicomFile = getInstance(user, projectId, studyInstanceUID, seriesInstanceUID, sopInstanceUID);
+        try (DicomInputStream dis = new DicomInputStream(dicomFile)) {
+            dis.setIncludeBulkData(DicomInputStream.IncludeBulkData.URI);
+            Attributes fmi = dis.readFileMetaInformation();
+            Attributes attrs = dis.readDataset();
+            if (fmi != null) {
+                attrs.addAll(fmi);
             }
-            try (DicomInputStream dis = new DicomInputStream(dicomFile)) {
-                // Use URI mode to save memory - BulkData will reference file location
-                dis.setIncludeBulkData(DicomInputStream.IncludeBulkData.URI);
-
-                // Read FileMetaInformation
-                Attributes fmi = dis.readFileMetaInformation();
-
-                // Read dataset (bulk data replaced with BulkData objects containing file URI)
-                Attributes attrs = dis.readDataset();
-
-                // Merge FileMetaInformation
-                if (fmi != null) {
-                    attrs.addAll(fmi);
-                }
-
-                return attrs;
-            } catch (Exception e) {
-                logger.debug("Error reading DICOM candidate {}", dicomFile.getAbsolutePath(), e);
-            }
-
-            logger.info("Instance search for series {} returned 0 instances", seriesInstanceUID);
-
-        } catch (Exception e) {
-            logger.error("Error searching instances in series: " + seriesInstanceUID, e);
+            return attrs;
+        } catch (IOException e) {
+            logger.error("Error reading DICOM file {}", dicomFile.getAbsolutePath(), e);
+            throw new DicomWebException("Error reading instance " + sopInstanceUID, e,
+                    500, "ReadError");
         }
-
-        return null;
     }
 
     @Override
@@ -383,60 +368,48 @@ public class XnatDicomServiceImpl implements XnatDicomService {
         return results;
     }
 
+    /**
+     * Locate the DICOM file for a specific instance.
+     *
+     * @throws ResourceNotFoundException if the project, study, series, or instance cannot be found
+     */
     private File getInstance(UserI user, String projectId, String studyInstanceUID,
                                         String seriesInstanceUID, String sopInstanceUID) {
-        try {
-            XnatProjectdata project = XnatProjectdata.getXnatProjectdatasById(projectId, user, false);
-            if (project == null) {
-                logger.warn("Project not found or user does not have access: {}", projectId);
-                return null;
-            }
-
-            // Find all sessions with matching StudyInstanceUID (XNAT allows multiple sessions with same UID)
-            List<XnatImagesessiondata> targetSessions = findSessionsByUID(user, projectId, studyInstanceUID);
-
-            if (targetSessions.isEmpty()) {
-                logger.warn("Study not found: {}", studyInstanceUID);
-                return null;
-            }
-
-            for(XnatImagesessiondata session : targetSessions){
-                if(!Permissions.canRead(user,session)){
-                    continue;
-                }
-
-                // Find the scan directly by SeriesInstanceUID using efficient SQL query
-                final XnatImagescandataI targetScan = findScanBySeriesUIDDirect(session.getScans_scan(), seriesInstanceUID);
-
-                if (targetScan == null) {
-                    continue;
-                }
-
-                // Find the specific DICOM file
-                return findDicomFileInScan(targetScan, sopInstanceUID);
-            }
-        } catch (Exception e) {
-            logger.error("Error retrieving instance: " + sopInstanceUID, e);
+        XnatProjectdata project = XnatProjectdata.getXnatProjectdatasById(projectId, user, false);
+        if (project == null) {
+            throw new ResourceNotFoundException("Project", projectId);
         }
 
-        return null;
+        List<XnatImagesessiondata> targetSessions = findSessionsByUID(user, projectId, studyInstanceUID);
+        if (targetSessions.isEmpty()) {
+            throw new ResourceNotFoundException("Study", studyInstanceUID);
+        }
+
+        for (XnatImagesessiondata session : targetSessions) {
+            if (!Permissions.canRead(user, session)) {
+                continue;
+            }
+
+            final XnatImagescandataI targetScan = findScanBySeriesUIDDirect(session.getScans_scan(), seriesInstanceUID);
+            if (targetScan == null) {
+                continue;
+            }
+
+            File dicomFile = findDicomFileInScan(targetScan, sopInstanceUID);
+            if (dicomFile != null) {
+                return dicomFile;
+            }
+        }
+
+        throw new ResourceNotFoundException("Instance", sopInstanceUID);
     }
 
     @Override
     public InputStream retrieveInstance(UserI user, String projectId, String studyInstanceUID,
-                                       String seriesInstanceUID, String sopInstanceUID) {
-        try {
-            File dicomFile = getInstance(user, projectId, studyInstanceUID, seriesInstanceUID, sopInstanceUID);
-
-            if (dicomFile != null) {
-                logger.info("Retrieved instance: {}", sopInstanceUID);
-                return new FileInputStream(dicomFile);
-            }
-        } catch (Exception e) {
-            logger.error("Error retrieving instance: " + sopInstanceUID, e);
-        }
-
-        return null;
+                                       String seriesInstanceUID, String sopInstanceUID) throws IOException {
+        File dicomFile = getInstance(user, projectId, studyInstanceUID, seriesInstanceUID, sopInstanceUID);
+        logger.info("Retrieved instance: {}", sopInstanceUID);
+        return new FileInputStream(dicomFile);
     }
 
     @Override
@@ -579,49 +552,20 @@ public class XnatDicomServiceImpl implements XnatDicomService {
     public RenderedInstanceResult retrieveRenderedInstance(UserI user, String projectId, String studyInstanceUID,
                                           String seriesInstanceUID, String sopInstanceUID,
                                           Integer frameNumber, ImageFormat format) {
+        File dicomFile = getInstance(user, projectId, studyInstanceUID, seriesInstanceUID, sopInstanceUID);
+
+        logger.info("Rendering instance: {} (frame: {}, format: {})", sopInstanceUID,
+                frameNumber != null ? frameNumber : "default", format);
+
         try {
-            XnatProjectdata project = XnatProjectdata.getXnatProjectdatasById(projectId, user, false);
-            if (project == null) {
-                return null;
+            if (format == ImageFormat.GIF) {
+                return renderDicomToGif(dicomFile, frameNumber);
+            } else {
+                return renderDicomToJpeg(dicomFile, frameNumber);
             }
-
-            // Find all sessions with matching StudyInstanceUID (XNAT allows multiple sessions with same UID)
-            List<XnatImagesessiondata> sessions = findSessionsByUID(user, projectId, studyInstanceUID);
-            if (sessions.isEmpty()) {
-                logger.warn("Study not found: {}", studyInstanceUID);
-                return null;
-            }
-
-            for(XnatImagesessiondata session : sessions) {
-                // Find the scan directly by SeriesInstanceUID using efficient SQL query
-                XnatImagescandataI targetScan = findScanBySeriesUIDDirect(session.getScans_scan(), seriesInstanceUID);
-
-                if (targetScan == null) {
-                    continue;
-                }
-
-                // Find the specific DICOM file
-                File dicomFile = findDicomFileInScan(targetScan, sopInstanceUID);
-
-                if (dicomFile != null) {
-                    logger.info("Rendering instance: {} (frame: {}, format: {})", sopInstanceUID,
-                            frameNumber != null ? frameNumber : "default", format);
-
-                    // For GIF format with multi-frame, render as animated GIF
-                    if (format == ImageFormat.GIF) {
-                        return renderDicomToGif(dicomFile, frameNumber);
-                    } else {
-                        return renderDicomToJpeg(dicomFile, frameNumber);
-                    }
-                }
-            }
-
         } catch (UnsupportedOperationException e) {
-            // Re-throw UnsupportedOperationException (from missing OpenCV)
             throw e;
         } catch (Throwable e) {
-            // Catch both Exception and Error (e.g., UnsatisfiedLinkError, NoClassDefFoundError)
-            // Check if this is due to missing native libraries
             if (e instanceof UnsatisfiedLinkError || e instanceof NoClassDefFoundError) {
                 logger.error("Failed to render instance due to missing native libraries: {}", e.getMessage());
                 throw new UnsupportedOperationException(
@@ -630,10 +574,9 @@ public class XnatDicomServiceImpl implements XnatDicomService {
                         "Install OpenCV (macOS: 'brew install opencv', Ubuntu: 'apt-get install libopencv-dev') " +
                         "or use the retrieveInstance endpoint to download the original DICOM file.");
             }
-            logger.error("Error rendering instance: " + sopInstanceUID, e);
+            throw new DicomWebException("Error rendering instance " + sopInstanceUID, e,
+                    500, "RenderError");
         }
-
-        return null;
     }
 
     // Helper methods
@@ -1872,75 +1815,39 @@ public class XnatDicomServiceImpl implements XnatDicomService {
     @Override
     public List<byte[]> retrieveFrames(UserI user, String projectId, String studyInstanceUID,
                                       String seriesInstanceUID, String sopInstanceUID, String frameNumbers) {
-        List<byte[]> frames = new ArrayList<>();
+        File dicomFile = getInstance(user, projectId, studyInstanceUID, seriesInstanceUID, sopInstanceUID);
 
-        try {
-            XnatProjectdata project = XnatProjectdata.getXnatProjectdatasById(projectId, user, false);
-            if (project == null) {
-                return frames;
-            }
-
-            // Find all sessions with matching StudyInstanceUID (XNAT allows multiple sessions with same UID)
-            List<XnatImagesessiondata> targetSessions = findSessionsByUID(user, projectId, studyInstanceUID);
-
-            if (targetSessions.isEmpty()) {
-                logger.warn("Study not found: {}", studyInstanceUID);
-                return frames;
-            }
-
-            for(XnatImagesessiondata session : targetSessions) {
-                // Find the scan directly by SeriesInstanceUID using efficient SQL query
-                XnatImagescandata targetScan = findScanBySeriesUIDDirect(session.getScans_scan(), seriesInstanceUID);
-
-                if (targetScan == null) {
-                    continue;
-                }
-
-                // Find the specific DICOM file
-                File dicomFile = findDicomFileInScan(targetScan, sopInstanceUID);
-
-                if (dicomFile == null) {
-                    continue;
-                }
-
-                // Parse frame numbers
-                List<Integer> frameList = parseFrameNumbers(frameNumbers);
-                if (frameList.isEmpty()) {
-                    continue;
-                }
-
-                // Read DICOM file and extract frames
-                try (DicomInputStream dis = new DicomInputStream(dicomFile)) {
-                    Attributes attrs = dis.readDataset(-1, -1);
-
-                    // Check if this is a multi-frame image
-                    int numberOfFrames = attrs.getInt(Tag.NumberOfFrames, 1);
-
-                    logger.info("Retrieving frames {} from instance {} (total frames: {})",
-                            frameNumbers, sopInstanceUID, numberOfFrames);
-
-                    // Validate requested frames
-                    for (Integer frameNumber : frameList) {
-                        if (frameNumber < 1 || frameNumber > numberOfFrames) {
-                            logger.warn("Frame number {} out of range (1-{})", frameNumber, numberOfFrames);
-                            continue;
-                        }
-
-                        // Extract pixel data for the frame
-                        byte[] frameData = extractFramePixelData(dicomFile, frameNumber - 1); // Convert to 0-based
-                        if (frameData != null) {
-                            frames.add(frameData);
-                        }
-                    }
-                }
-            }
-
-            logger.info("Retrieved {} frame(s) from instance: {}", frames.size(), sopInstanceUID);
-
-        } catch (Exception e) {
-            logger.error("Error retrieving frames from instance: " + sopInstanceUID, e);
+        List<Integer> frameList = parseFrameNumbers(frameNumbers);
+        if (frameList.isEmpty()) {
+            throw new BadRequestException("frameList", "no valid frame numbers provided");
         }
 
+        List<byte[]> frames = new ArrayList<>();
+
+        try (DicomInputStream dis = new DicomInputStream(dicomFile)) {
+            Attributes attrs = dis.readDataset(-1, -1);
+            int numberOfFrames = attrs.getInt(Tag.NumberOfFrames, 1);
+
+            logger.info("Retrieving frames {} from instance {} (total frames: {})",
+                    frameNumbers, sopInstanceUID, numberOfFrames);
+
+            for (Integer frameNumber : frameList) {
+                if (frameNumber < 1 || frameNumber > numberOfFrames) {
+                    logger.warn("Frame number {} out of range (1-{})", frameNumber, numberOfFrames);
+                    continue;
+                }
+
+                byte[] frameData = extractFramePixelData(dicomFile, frameNumber - 1);
+                if (frameData != null) {
+                    frames.add(frameData);
+                }
+            }
+        } catch (IOException e) {
+            throw new DicomWebException("Error reading frames from instance " + sopInstanceUID, e,
+                    500, "ReadError");
+        }
+
+        logger.info("Retrieved {} frame(s) from instance: {}", frames.size(), sopInstanceUID);
         return frames;
     }
 
