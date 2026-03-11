@@ -18,6 +18,7 @@ import org.nrg.xnat.dicomweb.service.ImageFormat;
 import org.nrg.xnat.dicomweb.service.RenderedInstanceResult;
 import org.nrg.xnat.dicomweb.service.XnatDicomService;
 import org.nrg.xnat.dicomweb.utils.BulkDataHandler;
+import org.nrg.xnat.dicomweb.utils.BulkDataHandler.BulkDataItem;
 import org.nrg.xnat.dicomweb.utils.DicomWebUtils;
 import org.nrg.xnat.dicomweb.utils.MediaTypeNegotiator;
 import org.slf4j.Logger;
@@ -505,8 +506,13 @@ public class WadoRsApi extends AbstractXapiRestController {
             logger.info("Retrieved bulk data for tag {}: {} bytes", tag, bulkData.length);
         }
 
+        String contentLocation = BulkDataHandler.generateBulkDataURI(
+                request != null ? BulkDataHandler.extractBaseUri(request.getRequestURL().toString(), projectId) : "",
+                studyUID, seriesUID, instanceUID, tagInt);
+
         response.setContentType(MediaType.APPLICATION_OCTET_STREAM_VALUE);
         response.setContentLength(bulkData.length);
+        response.setHeader("Content-Location", contentLocation);
         response.getOutputStream().write(bulkData);
         response.getOutputStream().flush();
     }
@@ -516,6 +522,240 @@ public class WadoRsApi extends AbstractXapiRestController {
             String projectId, String studyUID, String seriesUID, String instanceUID,
             String tag, HttpServletResponse response) throws Exception {
         retrieveBulkData(projectId, studyUID, seriesUID, instanceUID, tag, null, null, response);
+    }
+
+    // ---- Instance bulk data (all tags) ----
+
+    @XapiRequestMapping(
+            value = "/dicomweb/projects/{projectId}/studies/{studyUID}/series/{seriesUID}/instances/{instanceUID}/bulkdata",
+            method = RequestMethod.GET,
+            produces = "multipart/related"
+    )
+    @ApiOperation(value = "Retrieve all bulk data from an instance (WADO-RS)", response = byte[].class)
+    @ApiResponses({
+            @ApiResponse(code = 200, message = "Bulk data retrieved"),
+            @ApiResponse(code = 404, message = "Instance not found"),
+            @ApiResponse(code = 406, message = "Requested media type not supported")
+    })
+    public ResponseEntity<InputStreamResource> retrieveInstanceBulkData(
+            @PathVariable String projectId,
+            @PathVariable String studyUID,
+            @PathVariable String seriesUID,
+            @PathVariable String instanceUID,
+            @RequestParam(value = "accept", required = false) String acceptParam,
+            HttpServletRequest request) {
+        negotiateMultipartOctetStream(request, acceptParam);
+
+        UserI user = getSessionUser();
+        String baseUri = extractBaseUri(request, projectId);
+        List<BulkDataItem> items = dicomService.retrieveInstanceBulkData(
+                user, projectId, studyUID, seriesUID, instanceUID, baseUri);
+
+        if (items == null || items.isEmpty()) {
+            throw new ResourceNotFoundException("Instance bulk data", instanceUID);
+        }
+
+        return buildMultipartBulkDataResponse(items);
+    }
+
+    // backward-compatible overload used by tests
+    public ResponseEntity<InputStreamResource> retrieveInstanceBulkData(
+            String projectId, String studyUID, String seriesUID, String instanceUID) {
+        return retrieveInstanceBulkData(projectId, studyUID, seriesUID, instanceUID, null, null);
+    }
+
+    // ---- Series bulk data ----
+
+    @XapiRequestMapping(
+            value = "/dicomweb/projects/{projectId}/studies/{studyUID}/series/{seriesUID}/bulkdata",
+            method = RequestMethod.GET,
+            produces = "multipart/related"
+    )
+    @ApiOperation(value = "Retrieve all bulk data from a series (WADO-RS)", response = byte[].class)
+    @ApiResponses({
+            @ApiResponse(code = 200, message = "Bulk data retrieved"),
+            @ApiResponse(code = 404, message = "Series not found"),
+            @ApiResponse(code = 406, message = "Requested media type not supported")
+    })
+    public ResponseEntity<InputStreamResource> retrieveSeriesBulkData(
+            @PathVariable String projectId,
+            @PathVariable String studyUID,
+            @PathVariable String seriesUID,
+            @RequestParam(value = "accept", required = false) String acceptParam,
+            HttpServletRequest request) {
+        negotiateMultipartOctetStream(request, acceptParam);
+
+        UserI user = getSessionUser();
+        String baseUri = extractBaseUri(request, projectId);
+        List<BulkDataItem> items = dicomService.retrieveSeriesBulkData(
+                user, projectId, studyUID, seriesUID, baseUri);
+
+        if (items == null || items.isEmpty()) {
+            throw new ResourceNotFoundException("Series bulk data", seriesUID);
+        }
+
+        return buildMultipartBulkDataResponse(items);
+    }
+
+    // backward-compatible overload used by tests
+    public ResponseEntity<InputStreamResource> retrieveSeriesBulkData(
+            String projectId, String studyUID, String seriesUID) {
+        return retrieveSeriesBulkData(projectId, studyUID, seriesUID, null, null);
+    }
+
+    // ---- Study bulk data ----
+
+    @XapiRequestMapping(
+            value = "/dicomweb/projects/{projectId}/studies/{studyUID}/bulkdata",
+            method = RequestMethod.GET,
+            produces = "multipart/related"
+    )
+    @ApiOperation(value = "Retrieve all bulk data from a study (WADO-RS)", response = byte[].class)
+    @ApiResponses({
+            @ApiResponse(code = 200, message = "Bulk data retrieved"),
+            @ApiResponse(code = 404, message = "Study not found"),
+            @ApiResponse(code = 406, message = "Requested media type not supported")
+    })
+    public ResponseEntity<InputStreamResource> retrieveStudyBulkData(
+            @PathVariable String projectId,
+            @PathVariable String studyUID,
+            @RequestParam(value = "accept", required = false) String acceptParam,
+            HttpServletRequest request) {
+        negotiateMultipartOctetStream(request, acceptParam);
+
+        UserI user = getSessionUser();
+        String baseUri = extractBaseUri(request, projectId);
+        List<BulkDataItem> items = dicomService.retrieveStudyBulkData(
+                user, projectId, studyUID, baseUri);
+
+        if (items == null || items.isEmpty()) {
+            throw new ResourceNotFoundException("Study bulk data", studyUID);
+        }
+
+        return buildMultipartBulkDataResponse(items);
+    }
+
+    // backward-compatible overload used by tests
+    public ResponseEntity<InputStreamResource> retrieveStudyBulkData(
+            String projectId, String studyUID) {
+        return retrieveStudyBulkData(projectId, studyUID, null, null);
+    }
+
+    // ---- Instance pixel data ----
+
+    @XapiRequestMapping(
+            value = "/dicomweb/projects/{projectId}/studies/{studyUID}/series/{seriesUID}/instances/{instanceUID}/pixeldata",
+            method = RequestMethod.GET,
+            produces = "multipart/related"
+    )
+    @ApiOperation(value = "Retrieve pixel data from an instance (WADO-RS)", response = byte[].class)
+    @ApiResponses({
+            @ApiResponse(code = 200, message = "Pixel data retrieved"),
+            @ApiResponse(code = 404, message = "Instance not found or has no pixel data"),
+            @ApiResponse(code = 406, message = "Requested media type not supported")
+    })
+    public ResponseEntity<InputStreamResource> retrieveInstancePixelData(
+            @PathVariable String projectId,
+            @PathVariable String studyUID,
+            @PathVariable String seriesUID,
+            @PathVariable String instanceUID,
+            @RequestParam(value = "accept", required = false) String acceptParam,
+            HttpServletRequest request) {
+        negotiateMultipartOctetStream(request, acceptParam);
+
+        UserI user = getSessionUser();
+        String baseUri = extractBaseUri(request, projectId);
+        List<BulkDataItem> items = dicomService.retrieveInstancePixelData(
+                user, projectId, studyUID, seriesUID, instanceUID, baseUri);
+
+        if (items == null || items.isEmpty()) {
+            throw new ResourceNotFoundException("Instance pixel data", instanceUID);
+        }
+
+        return buildMultipartBulkDataResponse(items);
+    }
+
+    // backward-compatible overload used by tests
+    public ResponseEntity<InputStreamResource> retrieveInstancePixelData(
+            String projectId, String studyUID, String seriesUID, String instanceUID) {
+        return retrieveInstancePixelData(projectId, studyUID, seriesUID, instanceUID, null, null);
+    }
+
+    // ---- Series pixel data ----
+
+    @XapiRequestMapping(
+            value = "/dicomweb/projects/{projectId}/studies/{studyUID}/series/{seriesUID}/pixeldata",
+            method = RequestMethod.GET,
+            produces = "multipart/related"
+    )
+    @ApiOperation(value = "Retrieve pixel data from a series (WADO-RS)", response = byte[].class)
+    @ApiResponses({
+            @ApiResponse(code = 200, message = "Pixel data retrieved"),
+            @ApiResponse(code = 404, message = "Series not found or has no pixel data"),
+            @ApiResponse(code = 406, message = "Requested media type not supported")
+    })
+    public ResponseEntity<InputStreamResource> retrieveSeriesPixelData(
+            @PathVariable String projectId,
+            @PathVariable String studyUID,
+            @PathVariable String seriesUID,
+            @RequestParam(value = "accept", required = false) String acceptParam,
+            HttpServletRequest request) {
+        negotiateMultipartOctetStream(request, acceptParam);
+
+        UserI user = getSessionUser();
+        String baseUri = extractBaseUri(request, projectId);
+        List<BulkDataItem> items = dicomService.retrieveSeriesPixelData(
+                user, projectId, studyUID, seriesUID, baseUri);
+
+        if (items == null || items.isEmpty()) {
+            throw new ResourceNotFoundException("Series pixel data", seriesUID);
+        }
+
+        return buildMultipartBulkDataResponse(items);
+    }
+
+    // backward-compatible overload used by tests
+    public ResponseEntity<InputStreamResource> retrieveSeriesPixelData(
+            String projectId, String studyUID, String seriesUID) {
+        return retrieveSeriesPixelData(projectId, studyUID, seriesUID, null, null);
+    }
+
+    // ---- Study pixel data ----
+
+    @XapiRequestMapping(
+            value = "/dicomweb/projects/{projectId}/studies/{studyUID}/pixeldata",
+            method = RequestMethod.GET,
+            produces = "multipart/related"
+    )
+    @ApiOperation(value = "Retrieve pixel data from a study (WADO-RS)", response = byte[].class)
+    @ApiResponses({
+            @ApiResponse(code = 200, message = "Pixel data retrieved"),
+            @ApiResponse(code = 404, message = "Study not found or has no pixel data"),
+            @ApiResponse(code = 406, message = "Requested media type not supported")
+    })
+    public ResponseEntity<InputStreamResource> retrieveStudyPixelData(
+            @PathVariable String projectId,
+            @PathVariable String studyUID,
+            @RequestParam(value = "accept", required = false) String acceptParam,
+            HttpServletRequest request) {
+        negotiateMultipartOctetStream(request, acceptParam);
+
+        UserI user = getSessionUser();
+        String baseUri = extractBaseUri(request, projectId);
+        List<BulkDataItem> items = dicomService.retrieveStudyPixelData(
+                user, projectId, studyUID, baseUri);
+
+        if (items == null || items.isEmpty()) {
+            throw new ResourceNotFoundException("Study pixel data", studyUID);
+        }
+
+        return buildMultipartBulkDataResponse(items);
+    }
+
+    // backward-compatible overload used by tests
+    public ResponseEntity<InputStreamResource> retrieveStudyPixelData(
+            String projectId, String studyUID) {
+        return retrieveStudyPixelData(projectId, studyUID, null, null);
     }
 
     // ---- Series metadata ----
@@ -673,6 +913,60 @@ public class WadoRsApi extends AbstractXapiRestController {
 
         output.write(("--" + boundary + "--\r\n").getBytes());
         return output;
+    }
+
+    /**
+     * Negotiate for multipart/related bulk data responses.
+     * Accepts multipart/related, application/octet-stream, or wildcards.
+     */
+    private void negotiateMultipartOctetStream(HttpServletRequest request, String acceptParam) {
+        if (request == null) return;
+        String acceptHeader = request.getHeader("Accept");
+        if (acceptHeader == null && acceptParam == null) return;
+
+        List<String> supported = Arrays.asList("multipart/related", MT_OCTET_STREAM);
+        MediaTypeNegotiator.negotiate(acceptHeader, acceptParam, supported, "multipart/related");
+    }
+
+    /**
+     * Extract base URI from request for BulkDataURI generation.
+     */
+    private String extractBaseUri(HttpServletRequest request, String projectId) {
+        if (request == null) return "";
+        return BulkDataHandler.extractBaseUri(request.getRequestURL().toString(), projectId);
+    }
+
+    /**
+     * Build a multipart/related response containing bulk data items with Content-Location headers.
+     */
+    private ResponseEntity<InputStreamResource> buildMultipartBulkDataResponse(List<BulkDataItem> items) {
+        String boundary = UUID.randomUUID().toString();
+
+        try {
+            ByteArrayOutputStream output = new ByteArrayOutputStream();
+
+            for (BulkDataItem item : items) {
+                output.write(("--" + boundary + "\r\n").getBytes());
+                output.write(("Content-Type: application/octet-stream\r\n").getBytes());
+                output.write(("Content-Location: " + item.getContentLocation() + "\r\n").getBytes());
+                output.write("\r\n".getBytes());
+                output.write(item.getData());
+                output.write("\r\n".getBytes());
+            }
+
+            output.write(("--" + boundary + "--\r\n").getBytes());
+
+            HttpHeaders headers = new HttpHeaders();
+            headers.setContentType(MediaType.parseMediaType(
+                    "multipart/related; type=\"application/octet-stream\"; boundary=" + boundary));
+
+            return ResponseEntity.ok()
+                    .headers(headers)
+                    .body(new InputStreamResource(new ByteArrayInputStream(output.toByteArray())));
+        } catch (IOException e) {
+            throw new DicomWebException("Error building multipart bulk data response", e,
+                    HttpStatus.INTERNAL_SERVER_ERROR.value(), HttpStatus.INTERNAL_SERVER_ERROR.name());
+        }
     }
 
     private ByteArrayOutputStream createMultipartFrameResponse(List<byte[]> frames,

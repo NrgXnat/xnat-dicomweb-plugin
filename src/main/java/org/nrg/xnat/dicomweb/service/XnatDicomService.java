@@ -4,6 +4,8 @@ import org.dcm4che3.data.Attributes;
 import org.dcm4che3.data.Tag;
 import org.nrg.xft.security.UserI;
 
+import org.nrg.xnat.dicomweb.utils.BulkDataHandler;
+
 import java.io.IOException;
 import java.io.InputStream;
 import java.util.List;
@@ -106,6 +108,107 @@ public interface XnatDicomService {
      * @return StowRsResponse containing success/failure status for each instance
      */
     StowRsResponse storeInstances(UserI user, String projectId, List<InputStream> dicomInstances);
+
+    /**
+     * Retrieve all bulk data elements from a single DICOM instance.
+     * <p>
+     * Returns every attribute whose value representation and size qualify it as bulk data
+     * (per {@link BulkDataHandler#shouldUseBulkDataURI}), packaged as {@link BulkDataHandler.BulkDataItem}
+     * objects with Content-Location URIs suitable for multipart response parts.
+     *
+     * @param user the authenticated user
+     * @param projectId XNAT project identifier
+     * @param studyUID Study Instance UID of the containing study
+     * @param seriesUID Series Instance UID of the containing series
+     * @param instanceUID SOP Instance UID of the instance
+     * @param baseUri base URI for generating BulkDataURI Content-Location values
+     *                (e.g. {@code "http://host/xapi/dicomweb/projects/P"})
+     * @return list of bulk data items; empty if the instance contains no bulk data
+     * @throws org.nrg.xnat.dicomweb.exceptions.ResourceNotFoundException if the instance is not found
+     */
+    List<BulkDataHandler.BulkDataItem> retrieveInstanceBulkData(UserI user, String projectId,
+        String studyUID, String seriesUID, String instanceUID, String baseUri);
+
+    /**
+     * Retrieve all bulk data elements from every instance in a series.
+     * <p>
+     * Aggregates bulk data across all instances belonging to the specified series,
+     * returning one {@link BulkDataHandler.BulkDataItem} per bulk data attribute per instance.
+     *
+     * @param user the authenticated user
+     * @param projectId XNAT project identifier
+     * @param studyUID Study Instance UID of the containing study
+     * @param seriesUID Series Instance UID of the series to retrieve bulk data from
+     * @param baseUri base URI for generating BulkDataURI Content-Location values
+     * @return list of bulk data items aggregated across all instances in the series; empty if none found
+     */
+    List<BulkDataHandler.BulkDataItem> retrieveSeriesBulkData(UserI user, String projectId,
+        String studyUID, String seriesUID, String baseUri);
+
+    /**
+     * Retrieve all bulk data elements from every instance in a study.
+     * <p>
+     * Aggregates bulk data across all series and instances belonging to the specified study,
+     * returning one {@link BulkDataHandler.BulkDataItem} per bulk data attribute per instance.
+     *
+     * @param user the authenticated user
+     * @param projectId XNAT project identifier
+     * @param studyUID Study Instance UID of the study to retrieve bulk data from
+     * @param baseUri base URI for generating BulkDataURI Content-Location values
+     * @return list of bulk data items aggregated across all instances in the study; empty if none found
+     */
+    List<BulkDataHandler.BulkDataItem> retrieveStudyBulkData(UserI user, String projectId,
+        String studyUID, String baseUri);
+
+    /**
+     * Retrieve pixel data from a single DICOM instance.
+     * <p>
+     * Returns only pixel data attributes: PixelData (7FE0,0010), FloatPixelData (7FE0,0008),
+     * and DoubleFloatPixelData (7FE0,0009). This is a filtered subset of what
+     * {@link #retrieveInstanceBulkData} returns.
+     *
+     * @param user the authenticated user
+     * @param projectId XNAT project identifier
+     * @param studyUID Study Instance UID of the containing study
+     * @param seriesUID Series Instance UID of the containing series
+     * @param instanceUID SOP Instance UID of the instance
+     * @param baseUri base URI for generating BulkDataURI Content-Location values
+     * @return list of pixel data items; empty if the instance contains no pixel data
+     * @throws org.nrg.xnat.dicomweb.exceptions.ResourceNotFoundException if the instance is not found
+     */
+    List<BulkDataHandler.BulkDataItem> retrieveInstancePixelData(UserI user, String projectId,
+        String studyUID, String seriesUID, String instanceUID, String baseUri);
+
+    /**
+     * Retrieve pixel data from every instance in a series.
+     * <p>
+     * Aggregates pixel data (PixelData, FloatPixelData, DoubleFloatPixelData) across all
+     * instances belonging to the specified series.
+     *
+     * @param user the authenticated user
+     * @param projectId XNAT project identifier
+     * @param studyUID Study Instance UID of the containing study
+     * @param seriesUID Series Instance UID of the series to retrieve pixel data from
+     * @param baseUri base URI for generating BulkDataURI Content-Location values
+     * @return list of pixel data items aggregated across all instances in the series; empty if none found
+     */
+    List<BulkDataHandler.BulkDataItem> retrieveSeriesPixelData(UserI user, String projectId,
+        String studyUID, String seriesUID, String baseUri);
+
+    /**
+     * Retrieve pixel data from every instance in a study.
+     * <p>
+     * Aggregates pixel data (PixelData, FloatPixelData, DoubleFloatPixelData) across all
+     * series and instances belonging to the specified study.
+     *
+     * @param user the authenticated user
+     * @param projectId XNAT project identifier
+     * @param studyUID Study Instance UID of the study to retrieve pixel data from
+     * @param baseUri base URI for generating BulkDataURI Content-Location values
+     * @return list of pixel data items aggregated across all instances in the study; empty if none found
+     */
+    List<BulkDataHandler.BulkDataItem> retrieveStudyPixelData(UserI user, String projectId,
+        String studyUID, String baseUri);
 
     /**
      * STOW-RS response model

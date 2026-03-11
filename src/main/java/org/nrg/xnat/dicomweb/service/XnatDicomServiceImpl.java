@@ -49,6 +49,7 @@ import org.nrg.xnat.dicomweb.config.DicomWebPreferenceBean;
 import org.nrg.xnat.dicomweb.exceptions.BadRequestException;
 import org.nrg.xnat.dicomweb.exceptions.DicomWebException;
 import org.nrg.xnat.dicomweb.exceptions.ResourceNotFoundException;
+import org.nrg.xnat.dicomweb.utils.BulkDataHandler;
 import org.nrg.xnat.dicomweb.utils.DicomWebUtils;
 import org.nrg.xnat.utils.CatalogUtils;
 import org.nrg.xnatx.dicomweb.core.entity.DwInstance;
@@ -386,7 +387,13 @@ public class XnatDicomServiceImpl implements XnatDicomService {
         }
 
         for (XnatImagesessiondata session : targetSessions) {
-            if (!Permissions.canRead(user, session)) {
+            try {
+                if (!Permissions.canRead(user, session)) {
+                    continue;
+                }
+            } catch (Exception e) {
+                logger.error("unable to check permissions for user {} on session {}, skipping",
+                        user.getLogin(), session.getId());
                 continue;
             }
 
@@ -2530,6 +2537,130 @@ public class XnatDicomServiceImpl implements XnatDicomService {
                 getOrCreate.isLeft() ? "Created new" : "Using existing", studyInstanceUID, session.getUrl());
 
         return session;
+    }
+
+    // ==================== Bulk Data & Pixel Data Methods ====================
+
+    /**
+     * Extract bulk data items from a DICOM file.
+     *
+     * @param dicomFile the DICOM file
+     * @param baseUri base URI for generating BulkDataURI
+     * @param studyUID Study Instance UID
+     * @param seriesUID Series Instance UID
+     * @param instanceUID SOP Instance UID
+     * @param pixelDataOnly if true, only include pixel data tags
+     * @return list of BulkDataItem
+     */
+    private List<BulkDataHandler.BulkDataItem> extractBulkDataItems(
+            File dicomFile, String baseUri, String studyUID, String seriesUID,
+            String instanceUID, boolean pixelDataOnly) {
+        List<BulkDataHandler.BulkDataItem> items = new ArrayList<>();
+        try (DicomInputStream dis = new DicomInputStream(dicomFile)) {
+            dis.setIncludeBulkData(DicomInputStream.IncludeBulkData.YES);
+            Attributes attrs = dis.readDataset();
+
+            attrs.accept(new Attributes.Visitor() {
+                @Override
+                public boolean visit(Attributes attrs, int tag, VR vr, Object value) throws Exception {
+                    if (!BulkDataHandler.shouldUseBulkDataURI(tag, vr, value)) {
+                        return true;
+                    }
+                    if (pixelDataOnly && !BulkDataHandler.isPixelDataTag(tag)) {
+                        return true;
+                    }
+                    byte[] data = attrs.getBytes(tag);
+                    if (data != null && data.length > 0) {
+                        String contentLocation = BulkDataHandler.generateBulkDataURI(
+                                baseUri, studyUID, seriesUID, instanceUID, tag);
+                        items.add(new BulkDataHandler.BulkDataItem(contentLocation, data));
+                    }
+                    return true;
+                }
+            }, false);
+        } catch (Exception e) {
+            logger.error("Error extracting bulk data from file {}", dicomFile.getAbsolutePath(), e);
+        }
+        return items;
+    }
+
+    /** {@inheritDoc} */
+    @Override
+    public List<BulkDataHandler.BulkDataItem> retrieveInstanceBulkData(
+            UserI user, String projectId, String studyUID, String seriesUID,
+            String instanceUID, String baseUri) {
+        File dicomFile = getInstance(user, projectId, studyUID, seriesUID, instanceUID);
+        return extractBulkDataItems(dicomFile, baseUri, studyUID, seriesUID, instanceUID, false);
+    }
+
+    /** {@inheritDoc} */
+    @Override
+    public List<BulkDataHandler.BulkDataItem> retrieveSeriesBulkData(
+            UserI user, String projectId, String studyUID, String seriesUID, String baseUri) {
+        return retrieveBulkDataAcrossInstances(user, projectId, studyUID, seriesUID, baseUri, false);
+    }
+
+    /** {@inheritDoc} */
+    @Override
+    public List<BulkDataHandler.BulkDataItem> retrieveStudyBulkData(
+            UserI user, String projectId, String studyUID, String baseUri) {
+        List<BulkDataHandler.BulkDataItem> items = new ArrayList<>();
+        List<Attributes> seriesList = searchSeries(user, projectId, studyUID, null);
+        for (Attributes seriesAttrs : seriesList) {
+            String seriesUID = seriesAttrs.getString(Tag.SeriesInstanceUID);
+            items.addAll(retrieveBulkDataAcrossInstances(user, projectId, studyUID, seriesUID, baseUri, false));
+        }
+        return items;
+    }
+
+    /** {@inheritDoc} */
+    @Override
+    public List<BulkDataHandler.BulkDataItem> retrieveInstancePixelData(
+            UserI user, String projectId, String studyUID, String seriesUID,
+            String instanceUID, String baseUri) {
+        File dicomFile = getInstance(user, projectId, studyUID, seriesUID, instanceUID);
+        return extractBulkDataItems(dicomFile, baseUri, studyUID, seriesUID, instanceUID, true);
+    }
+
+    /** {@inheritDoc} */
+    @Override
+    public List<BulkDataHandler.BulkDataItem> retrieveSeriesPixelData(
+            UserI user, String projectId, String studyUID, String seriesUID, String baseUri) {
+        return retrieveBulkDataAcrossInstances(user, projectId, studyUID, seriesUID, baseUri, true);
+    }
+
+    /** {@inheritDoc} */
+    @Override
+    public List<BulkDataHandler.BulkDataItem> retrieveStudyPixelData(
+            UserI user, String projectId, String studyUID, String baseUri) {
+        List<BulkDataHandler.BulkDataItem> items = new ArrayList<>();
+        List<Attributes> seriesList = searchSeries(user, projectId, studyUID, null);
+        for (Attributes seriesAttrs : seriesList) {
+            String seriesUID = seriesAttrs.getString(Tag.SeriesInstanceUID);
+            items.addAll(retrieveBulkDataAcrossInstances(user, projectId, studyUID, seriesUID, baseUri, true));
+        }
+        return items;
+    }
+
+    private List<BulkDataHandler.BulkDataItem> retrieveBulkDataAcrossInstances(
+            UserI user, String projectId, String studyUID, String seriesUID,
+            String baseUri, boolean pixelDataOnly) {
+        List<BulkDataHandler.BulkDataItem> items = new ArrayList<>();
+        try {
+            List<Attributes> instances = searchInstances(user, projectId, studyUID, seriesUID, null);
+            for (Attributes attrs : instances) {
+                String sopUID = attrs.getString(Tag.SOPInstanceUID);
+                try {
+                    File dicomFile = getInstance(user, projectId, studyUID, seriesUID, sopUID);
+                    items.addAll(extractBulkDataItems(dicomFile, baseUri, studyUID, seriesUID, sopUID, pixelDataOnly));
+                } catch (ResourceNotFoundException e) {
+                    logger.debug("Instance {} not found while retrieving bulk data", sopUID);
+                }
+            }
+        } catch (Exception e) {
+            logger.error("Error retrieving bulk data for series {}", seriesUID, e);
+        }
+        return items;
     }
 
     /**

@@ -41,7 +41,7 @@ public class XnatDicomServiceImplTest {
 
     @Before
     public void setUp() throws Exception {
-        MockitoAnnotations.openMocks(this);
+        MockitoAnnotations.initMocks(this);
         service = new XnatDicomServiceImpl(dicomwebDataService, dwInstanceDataService, dwPreferenceBean);
 
         matchesDescriptor = XnatDicomServiceImpl.class.getDeclaredMethod("matchesDicomDescriptor", String.class);
