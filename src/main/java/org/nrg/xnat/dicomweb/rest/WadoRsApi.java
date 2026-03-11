@@ -16,6 +16,7 @@ import org.nrg.xnat.dicomweb.exceptions.DicomWebException;
 import org.nrg.xnat.dicomweb.exceptions.ResourceNotFoundException;
 import org.nrg.xnat.dicomweb.service.ImageFormat;
 import org.nrg.xnat.dicomweb.service.RenderedInstanceResult;
+import org.nrg.xnat.dicomweb.service.RenderingParams;
 import org.nrg.xnat.dicomweb.service.XnatDicomService;
 import org.nrg.xnat.dicomweb.utils.BulkDataHandler;
 import org.nrg.xnat.dicomweb.utils.BulkDataHandler.BulkDataItem;
@@ -335,45 +336,336 @@ public class WadoRsApi extends AbstractXapiRestController {
             @PathVariable String instanceUID,
             @RequestParam(required = false) Integer frame,
             @RequestParam(value = "accept", required = false) String acceptParam,
+            @RequestParam(required = false) String viewport,
+            @RequestParam(required = false) String window,
+            @RequestParam(required = false) String quality,
             HttpServletRequest request,
             HttpServletResponse response) throws IOException {
         String selected = negotiateMediaType(request, acceptParam, RENDERED_TYPES, RENDERED_DEFAULT);
 
         UserI user = getSessionUser();
         ImageFormat format = ImageFormat.fromMimeType(selected);
+        RenderingParams params = RenderingParams.parse(viewport, window, quality);
 
         logger.debug("Rendered request: Accept={}, selected={}, format={}",
                 request != null ? request.getHeader("Accept") : null, selected, format);
 
         RenderedInstanceResult result =
                 dicomService.retrieveRenderedInstance(user, projectId, studyUID, seriesUID,
-                        instanceUID, frame, format);
+                        instanceUID, frame, format, params);
 
-        if (result.getImageData() == null) {
-            throw new ResourceNotFoundException("Rendered instance", instanceUID);
-        }
-
-        response.setContentType(result.getMimeType());
-        response.setContentLength(result.getImageData().length);
-
-        response.setHeader("X-Frame-Count", String.valueOf(result.getTotalFrames()));
-        response.setHeader("X-Frame-Number", String.valueOf(result.getRenderedFrame()));
-        if (result.getFrameRate() != null) {
-            response.setHeader("X-Frame-Rate", String.format("%.2f", result.getFrameRate()));
-        }
-        if (result.isMultiFrame()) {
-            response.setHeader("X-Multi-Frame", "true");
-        }
-
-        response.getOutputStream().write(result.getImageData());
-        response.getOutputStream().flush();
+        writeRenderedResponse(result, instanceUID, response);
     }
 
     // backward-compatible overload used by tests
     public void retrieveInstanceRendered(
             String projectId, String studyUID, String seriesUID, String instanceUID,
             Integer frame, HttpServletRequest request, HttpServletResponse response) throws IOException {
-        retrieveInstanceRendered(projectId, studyUID, seriesUID, instanceUID, frame, null, request, response);
+        retrieveInstanceRendered(projectId, studyUID, seriesUID, instanceUID, frame, null,
+                null, null, null, request, response);
+    }
+
+    // ---- Study rendered ----
+
+    @XapiRequestMapping(
+            value = "/dicomweb/projects/{projectId}/studies/{studyUID}/rendered",
+            method = RequestMethod.GET,
+            produces = {MT_IMAGE_JPEG, MT_IMAGE_PNG, MT_IMAGE_GIF}
+    )
+    @ApiOperation(value = "Retrieve rendered study image (WADO-RS)", response = byte[].class)
+    @ApiResponses({
+            @ApiResponse(code = 200, message = "Rendered image retrieved"),
+            @ApiResponse(code = 404, message = "Study not found"),
+            @ApiResponse(code = 406, message = "Requested media type not supported")
+    })
+    public void retrieveStudyRendered(
+            @PathVariable String projectId,
+            @PathVariable String studyUID,
+            @RequestParam(required = false) Integer frame,
+            @RequestParam(value = "accept", required = false) String acceptParam,
+            @RequestParam(required = false) String viewport,
+            @RequestParam(required = false) String window,
+            @RequestParam(required = false) String quality,
+            HttpServletRequest request,
+            HttpServletResponse response) throws IOException {
+        String selected = negotiateMediaType(request, acceptParam, RENDERED_TYPES, RENDERED_DEFAULT);
+
+        UserI user = getSessionUser();
+        ImageFormat format = ImageFormat.fromMimeType(selected);
+        RenderingParams params = RenderingParams.parse(viewport, window, quality);
+
+        RenderedInstanceResult result =
+                dicomService.retrieveRenderedStudy(user, projectId, studyUID, frame, format, params);
+
+        writeRenderedResponse(result, studyUID, response);
+    }
+
+    // backward-compatible overload used by tests
+    public void retrieveStudyRendered(
+            String projectId, String studyUID,
+            HttpServletRequest request, HttpServletResponse response) throws IOException {
+        retrieveStudyRendered(projectId, studyUID, null, null, null, null, null, request, response);
+    }
+
+    // ---- Series rendered ----
+
+    @XapiRequestMapping(
+            value = "/dicomweb/projects/{projectId}/studies/{studyUID}/series/{seriesUID}/rendered",
+            method = RequestMethod.GET,
+            produces = {MT_IMAGE_JPEG, MT_IMAGE_PNG, MT_IMAGE_GIF}
+    )
+    @ApiOperation(value = "Retrieve rendered series image (WADO-RS)", response = byte[].class)
+    @ApiResponses({
+            @ApiResponse(code = 200, message = "Rendered image retrieved"),
+            @ApiResponse(code = 404, message = "Series not found"),
+            @ApiResponse(code = 406, message = "Requested media type not supported")
+    })
+    public void retrieveSeriesRendered(
+            @PathVariable String projectId,
+            @PathVariable String studyUID,
+            @PathVariable String seriesUID,
+            @RequestParam(required = false) Integer frame,
+            @RequestParam(value = "accept", required = false) String acceptParam,
+            @RequestParam(required = false) String viewport,
+            @RequestParam(required = false) String window,
+            @RequestParam(required = false) String quality,
+            HttpServletRequest request,
+            HttpServletResponse response) throws IOException {
+        String selected = negotiateMediaType(request, acceptParam, RENDERED_TYPES, RENDERED_DEFAULT);
+
+        UserI user = getSessionUser();
+        ImageFormat format = ImageFormat.fromMimeType(selected);
+        RenderingParams params = RenderingParams.parse(viewport, window, quality);
+
+        RenderedInstanceResult result =
+                dicomService.retrieveRenderedSeries(user, projectId, studyUID, seriesUID,
+                        frame, format, params);
+
+        writeRenderedResponse(result, seriesUID, response);
+    }
+
+    // backward-compatible overload used by tests
+    public void retrieveSeriesRendered(
+            String projectId, String studyUID, String seriesUID,
+            HttpServletRequest request, HttpServletResponse response) throws IOException {
+        retrieveSeriesRendered(projectId, studyUID, seriesUID, null, null,
+                null, null, null, request, response);
+    }
+
+    // ---- Frame rendered ----
+
+    @XapiRequestMapping(
+            value = "/dicomweb/projects/{projectId}/studies/{studyUID}/series/{seriesUID}/instances/{instanceUID}/frames/{frameList}/rendered",
+            method = RequestMethod.GET,
+            produces = {MT_IMAGE_JPEG, MT_IMAGE_PNG, MT_IMAGE_GIF}
+    )
+    @ApiOperation(value = "Retrieve rendered frame (WADO-RS)", response = byte[].class)
+    @ApiResponses({
+            @ApiResponse(code = 200, message = "Rendered frame retrieved"),
+            @ApiResponse(code = 404, message = "Instance or frame not found"),
+            @ApiResponse(code = 406, message = "Requested media type not supported")
+    })
+    public void retrieveFrameRendered(
+            @PathVariable String projectId,
+            @PathVariable String studyUID,
+            @PathVariable String seriesUID,
+            @PathVariable String instanceUID,
+            @PathVariable String frameList,
+            @RequestParam(value = "accept", required = false) String acceptParam,
+            @RequestParam(required = false) String viewport,
+            @RequestParam(required = false) String window,
+            @RequestParam(required = false) String quality,
+            HttpServletRequest request,
+            HttpServletResponse response) throws IOException {
+        String selected = negotiateMediaType(request, acceptParam, RENDERED_TYPES, RENDERED_DEFAULT);
+
+        UserI user = getSessionUser();
+        ImageFormat format = ImageFormat.fromMimeType(selected);
+        RenderingParams params = RenderingParams.parse(viewport, window, quality);
+
+        // Use the first frame number from the list
+        Integer frameNumber = null;
+        if (frameList != null && !frameList.isEmpty()) {
+            try {
+                frameNumber = Integer.parseInt(frameList.split(",")[0].trim());
+            } catch (NumberFormatException e) {
+                throw new BadRequestException("frameList", "invalid frame number");
+            }
+        }
+
+        RenderedInstanceResult result =
+                dicomService.retrieveRenderedInstance(user, projectId, studyUID, seriesUID,
+                        instanceUID, frameNumber, format, params);
+
+        writeRenderedResponse(result, instanceUID, response);
+    }
+
+    // backward-compatible overload used by tests
+    public void retrieveFrameRendered(
+            String projectId, String studyUID, String seriesUID,
+            String instanceUID, String frameList,
+            HttpServletRequest request, HttpServletResponse response) throws IOException {
+        retrieveFrameRendered(projectId, studyUID, seriesUID, instanceUID, frameList,
+                null, null, null, null, request, response);
+    }
+
+    // ---- Study thumbnail ----
+
+    @XapiRequestMapping(
+            value = "/dicomweb/projects/{projectId}/studies/{studyUID}/thumbnail",
+            method = RequestMethod.GET,
+            produces = {MT_IMAGE_JPEG, MT_IMAGE_PNG, MT_IMAGE_GIF}
+    )
+    @ApiOperation(value = "Retrieve study thumbnail (WADO-RS)", response = byte[].class)
+    @ApiResponses({
+            @ApiResponse(code = 200, message = "Thumbnail retrieved"),
+            @ApiResponse(code = 404, message = "Study not found")
+    })
+    public void retrieveStudyThumbnail(
+            @PathVariable String projectId,
+            @PathVariable String studyUID,
+            @RequestParam(required = false) String viewport,
+            @RequestParam(value = "accept", required = false) String acceptParam,
+            HttpServletRequest request,
+            HttpServletResponse response) throws IOException {
+        negotiateMediaType(request, acceptParam, RENDERED_TYPES, RENDERED_DEFAULT);
+
+        UserI user = getSessionUser();
+        RenderingParams params = RenderingParams.parse(viewport, null, null);
+
+        RenderedInstanceResult result =
+                dicomService.retrieveThumbnailStudy(user, projectId, studyUID, params);
+
+        writeRenderedResponse(result, studyUID, response);
+    }
+
+    // backward-compatible overload used by tests
+    public void retrieveStudyThumbnail(
+            String projectId, String studyUID,
+            HttpServletResponse response) throws IOException {
+        retrieveStudyThumbnail(projectId, studyUID, null, null, null, response);
+    }
+
+    // ---- Series thumbnail ----
+
+    @XapiRequestMapping(
+            value = "/dicomweb/projects/{projectId}/studies/{studyUID}/series/{seriesUID}/thumbnail",
+            method = RequestMethod.GET,
+            produces = {MT_IMAGE_JPEG, MT_IMAGE_PNG, MT_IMAGE_GIF}
+    )
+    @ApiOperation(value = "Retrieve series thumbnail (WADO-RS)", response = byte[].class)
+    @ApiResponses({
+            @ApiResponse(code = 200, message = "Thumbnail retrieved"),
+            @ApiResponse(code = 404, message = "Series not found")
+    })
+    public void retrieveSeriesThumbnail(
+            @PathVariable String projectId,
+            @PathVariable String studyUID,
+            @PathVariable String seriesUID,
+            @RequestParam(required = false) String viewport,
+            @RequestParam(value = "accept", required = false) String acceptParam,
+            HttpServletRequest request,
+            HttpServletResponse response) throws IOException {
+        negotiateMediaType(request, acceptParam, RENDERED_TYPES, RENDERED_DEFAULT);
+
+        UserI user = getSessionUser();
+        RenderingParams params = RenderingParams.parse(viewport, null, null);
+
+        RenderedInstanceResult result =
+                dicomService.retrieveThumbnailSeries(user, projectId, studyUID, seriesUID, params);
+
+        writeRenderedResponse(result, seriesUID, response);
+    }
+
+    // backward-compatible overload used by tests
+    public void retrieveSeriesThumbnail(
+            String projectId, String studyUID, String seriesUID,
+            HttpServletResponse response) throws IOException {
+        retrieveSeriesThumbnail(projectId, studyUID, seriesUID, null, null, null, response);
+    }
+
+    // ---- Instance thumbnail ----
+
+    @XapiRequestMapping(
+            value = "/dicomweb/projects/{projectId}/studies/{studyUID}/series/{seriesUID}/instances/{instanceUID}/thumbnail",
+            method = RequestMethod.GET,
+            produces = {MT_IMAGE_JPEG, MT_IMAGE_PNG, MT_IMAGE_GIF}
+    )
+    @ApiOperation(value = "Retrieve instance thumbnail (WADO-RS)", response = byte[].class)
+    @ApiResponses({
+            @ApiResponse(code = 200, message = "Thumbnail retrieved"),
+            @ApiResponse(code = 404, message = "Instance not found")
+    })
+    public void retrieveInstanceThumbnail(
+            @PathVariable String projectId,
+            @PathVariable String studyUID,
+            @PathVariable String seriesUID,
+            @PathVariable String instanceUID,
+            @RequestParam(required = false) String viewport,
+            @RequestParam(value = "accept", required = false) String acceptParam,
+            HttpServletRequest request,
+            HttpServletResponse response) throws IOException {
+        negotiateMediaType(request, acceptParam, RENDERED_TYPES, RENDERED_DEFAULT);
+
+        UserI user = getSessionUser();
+        RenderingParams params = RenderingParams.parse(viewport, null, null);
+
+        RenderedInstanceResult result =
+                dicomService.retrieveThumbnailInstance(user, projectId, studyUID, seriesUID,
+                        instanceUID, params);
+
+        writeRenderedResponse(result, instanceUID, response);
+    }
+
+    // backward-compatible overload used by tests
+    public void retrieveInstanceThumbnail(
+            String projectId, String studyUID, String seriesUID, String instanceUID,
+            HttpServletResponse response) throws IOException {
+        retrieveInstanceThumbnail(projectId, studyUID, seriesUID, instanceUID,
+                null, null, null, response);
+    }
+
+    // ---- Frame thumbnail ----
+
+    @XapiRequestMapping(
+            value = "/dicomweb/projects/{projectId}/studies/{studyUID}/series/{seriesUID}/instances/{instanceUID}/frames/{frameList}/thumbnail",
+            method = RequestMethod.GET,
+            produces = {MT_IMAGE_JPEG, MT_IMAGE_PNG, MT_IMAGE_GIF}
+    )
+    @ApiOperation(value = "Retrieve frame thumbnail (WADO-RS)", response = byte[].class)
+    @ApiResponses({
+            @ApiResponse(code = 200, message = "Thumbnail retrieved"),
+            @ApiResponse(code = 404, message = "Instance or frame not found")
+    })
+    public void retrieveFrameThumbnail(
+            @PathVariable String projectId,
+            @PathVariable String studyUID,
+            @PathVariable String seriesUID,
+            @PathVariable String instanceUID,
+            @PathVariable String frameList,
+            @RequestParam(required = false) String viewport,
+            @RequestParam(value = "accept", required = false) String acceptParam,
+            HttpServletRequest request,
+            HttpServletResponse response) throws IOException {
+        negotiateMediaType(request, acceptParam, RENDERED_TYPES, RENDERED_DEFAULT);
+
+        UserI user = getSessionUser();
+        RenderingParams params = RenderingParams.parse(viewport, null, null);
+
+        RenderedInstanceResult result =
+                dicomService.retrieveThumbnailFrame(user, projectId, studyUID, seriesUID,
+                        instanceUID, frameList, params);
+
+        writeRenderedResponse(result, instanceUID, response);
+    }
+
+    // backward-compatible overload used by tests
+    public void retrieveFrameThumbnail(
+            String projectId, String studyUID, String seriesUID,
+            String instanceUID, String frameList,
+            HttpServletResponse response) throws IOException {
+        retrieveFrameThumbnail(projectId, studyUID, seriesUID, instanceUID, frameList,
+                null, null, null, response);
     }
 
     // ---- Frame retrieval ----
@@ -802,6 +1094,31 @@ public class WadoRsApi extends AbstractXapiRestController {
     }
 
     // ==================== Helper methods ====================
+
+    /**
+     * Write a rendered image result to the HTTP response with appropriate headers.
+     */
+    private void writeRenderedResponse(RenderedInstanceResult result, String identifier,
+                                        HttpServletResponse response) throws IOException {
+        if (result == null || result.getImageData() == null) {
+            throw new ResourceNotFoundException("Rendered resource", identifier);
+        }
+
+        response.setContentType(result.getMimeType());
+        response.setContentLength(result.getImageData().length);
+
+        response.setHeader("X-Frame-Count", String.valueOf(result.getTotalFrames()));
+        response.setHeader("X-Frame-Number", String.valueOf(result.getRenderedFrame()));
+        if (result.getFrameRate() != null) {
+            response.setHeader("X-Frame-Rate", String.format("%.2f", result.getFrameRate()));
+        }
+        if (result.isMultiFrame()) {
+            response.setHeader("X-Multi-Frame", "true");
+        }
+
+        response.getOutputStream().write(result.getImageData());
+        response.getOutputStream().flush();
+    }
 
     /**
      * Run content negotiation for a request.

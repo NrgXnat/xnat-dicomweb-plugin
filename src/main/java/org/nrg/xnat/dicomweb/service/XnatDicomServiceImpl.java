@@ -1,6 +1,8 @@
 package org.nrg.xnat.dicomweb.service;
 
 import com.madgag.gif.fmsware.AnimatedGifEncoder;
+import java.awt.Graphics2D;
+import java.awt.RenderingHints;
 import java.awt.image.BufferedImage;
 import java.io.ByteArrayOutputStream;
 import java.io.File;
@@ -16,8 +18,11 @@ import java.util.Optional;
 import java.util.Set;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
+import javax.imageio.IIOImage;
 import javax.imageio.ImageIO;
 import javax.imageio.ImageReader;
+import javax.imageio.ImageWriteParam;
+import javax.imageio.ImageWriter;
 import javax.imageio.stream.ImageInputStream;
 import javax.inject.Inject;
 import org.apache.commons.lang3.StringUtils;
@@ -559,16 +564,91 @@ public class XnatDicomServiceImpl implements XnatDicomService {
     public RenderedInstanceResult retrieveRenderedInstance(UserI user, String projectId, String studyInstanceUID,
                                           String seriesInstanceUID, String sopInstanceUID,
                                           Integer frameNumber, ImageFormat format) {
-        File dicomFile = getInstance(user, projectId, studyInstanceUID, seriesInstanceUID, sopInstanceUID);
+        return retrieveRenderedInstance(user, projectId, studyInstanceUID, seriesInstanceUID,
+                sopInstanceUID, frameNumber, format, null);
+    }
 
-        logger.info("Rendering instance: {} (frame: {}, format: {})", sopInstanceUID,
+    @Override
+    public RenderedInstanceResult retrieveRenderedInstance(UserI user, String projectId, String studyInstanceUID,
+                                          String seriesInstanceUID, String sopInstanceUID,
+                                          Integer frameNumber, ImageFormat format,
+                                          RenderingParams params) {
+        File dicomFile = getInstance(user, projectId, studyInstanceUID, seriesInstanceUID, sopInstanceUID);
+        return renderInstance(dicomFile, sopInstanceUID, frameNumber, format, params);
+    }
+
+    @Override
+    public RenderedInstanceResult retrieveRenderedStudy(UserI user, String projectId,
+                                                         String studyInstanceUID, Integer frameNumber,
+                                                         ImageFormat format, RenderingParams params) {
+        File dicomFile = getRepresentativeInstance(user, projectId, studyInstanceUID, null);
+        return renderInstance(dicomFile, studyInstanceUID, frameNumber, format, params);
+    }
+
+    @Override
+    public RenderedInstanceResult retrieveRenderedSeries(UserI user, String projectId,
+                                                          String studyInstanceUID, String seriesInstanceUID,
+                                                          Integer frameNumber, ImageFormat format,
+                                                          RenderingParams params) {
+        File dicomFile = getRepresentativeInstance(user, projectId, studyInstanceUID, seriesInstanceUID);
+        return renderInstance(dicomFile, seriesInstanceUID, frameNumber, format, params);
+    }
+
+    @Override
+    public RenderedInstanceResult retrieveThumbnailStudy(UserI user, String projectId,
+                                                          String studyInstanceUID, RenderingParams params) {
+        RenderingParams effective = RenderingParams.withDefaultThumbnailSize(params);
+        return retrieveRenderedStudy(user, projectId, studyInstanceUID, null, ImageFormat.JPEG, effective);
+    }
+
+    @Override
+    public RenderedInstanceResult retrieveThumbnailSeries(UserI user, String projectId,
+                                                           String studyInstanceUID, String seriesInstanceUID,
+                                                           RenderingParams params) {
+        RenderingParams effective = RenderingParams.withDefaultThumbnailSize(params);
+        return retrieveRenderedSeries(user, projectId, studyInstanceUID, seriesInstanceUID,
+                null, ImageFormat.JPEG, effective);
+    }
+
+    @Override
+    public RenderedInstanceResult retrieveThumbnailInstance(UserI user, String projectId,
+                                                            String studyInstanceUID, String seriesInstanceUID,
+                                                            String sopInstanceUID, RenderingParams params) {
+        RenderingParams effective = RenderingParams.withDefaultThumbnailSize(params);
+        return retrieveRenderedInstance(user, projectId, studyInstanceUID, seriesInstanceUID,
+                sopInstanceUID, null, ImageFormat.JPEG, effective);
+    }
+
+    @Override
+    public RenderedInstanceResult retrieveThumbnailFrame(UserI user, String projectId,
+                                                          String studyInstanceUID, String seriesInstanceUID,
+                                                          String sopInstanceUID, String frameList,
+                                                          RenderingParams params) {
+        RenderingParams effective = RenderingParams.withDefaultThumbnailSize(params);
+        // Use the first frame number from the list
+        Integer frameNumber = null;
+        if (frameList != null && !frameList.isEmpty()) {
+            try {
+                frameNumber = Integer.parseInt(frameList.split(",")[0].trim());
+            } catch (NumberFormatException e) {
+                throw new BadRequestException("frameList", "invalid frame number");
+            }
+        }
+        return retrieveRenderedInstance(user, projectId, studyInstanceUID, seriesInstanceUID,
+                sopInstanceUID, frameNumber, ImageFormat.JPEG, effective);
+    }
+
+    private RenderedInstanceResult renderInstance(File dicomFile, String identifier,
+                                                   Integer frameNumber, ImageFormat format,
+                                                   RenderingParams params) {
+        logger.info("Rendering instance: {} (frame: {}, format: {})", identifier,
                 frameNumber != null ? frameNumber : "default", format);
 
         try {
             if (format == ImageFormat.GIF) {
-                return renderDicomToGif(dicomFile, frameNumber);
+                return renderDicomToGif(dicomFile, frameNumber, params);
             } else {
-                return renderDicomToJpeg(dicomFile, frameNumber);
+                return renderDicomToJpeg(dicomFile, frameNumber, params);
             }
         } catch (UnsupportedOperationException e) {
             throw e;
@@ -581,9 +661,35 @@ public class XnatDicomServiceImpl implements XnatDicomService {
                         "Install OpenCV (macOS: 'brew install opencv', Ubuntu: 'apt-get install libopencv-dev') " +
                         "or use the retrieveInstance endpoint to download the original DICOM file.");
             }
-            throw new DicomWebException("Error rendering instance " + sopInstanceUID, e,
+            throw new DicomWebException("Error rendering instance " + identifier, e,
                     500, "RenderError");
         }
+    }
+
+    /**
+     * Select a representative DICOM file for study or series level rendering.
+     * Picks the middle instance of the specified (or first) series.
+     */
+    private File getRepresentativeInstance(UserI user, String projectId,
+                                            String studyUID, String seriesUID) {
+        String effectiveSeriesUID = seriesUID;
+
+        if (effectiveSeriesUID == null) {
+            List<Attributes> seriesList = searchSeries(user, projectId, studyUID, null);
+            if (seriesList.isEmpty()) {
+                throw new ResourceNotFoundException("Study", studyUID);
+            }
+            effectiveSeriesUID = seriesList.get(0).getString(Tag.SeriesInstanceUID);
+        }
+
+        List<Attributes> instances = searchInstances(user, projectId, studyUID, effectiveSeriesUID, null);
+        if (instances.isEmpty()) {
+            throw new ResourceNotFoundException("Series", effectiveSeriesUID);
+        }
+
+        int midIndex = instances.size() / 2;
+        String sopUID = instances.get(midIndex).getString(Tag.SOPInstanceUID);
+        return getInstance(user, projectId, studyUID, effectiveSeriesUID, sopUID);
     }
 
     // Helper methods
@@ -1418,7 +1524,7 @@ public class XnatDicomServiceImpl implements XnatDicomService {
      * @param requestedFrame requested frame number (1-based), null for default (middle frame)
      * @return RenderedInstanceResult with image data and metadata
      */
-    private RenderedInstanceResult renderDicomToJpeg(File dicomFile, Integer requestedFrame) {
+    private RenderedInstanceResult renderDicomToJpeg(File dicomFile, Integer requestedFrame, RenderingParams params) {
         try {
             // First, read DICOM metadata to determine frame count, frame rate, and transfer syntax
             int totalFrames = 1;
@@ -1471,6 +1577,13 @@ public class XnatDicomServiceImpl implements XnatDicomService {
             reader.setInput(iis, false);
 
             DicomImageReadParam param = (DicomImageReadParam) reader.getDefaultReadParam();
+
+            // Apply window center/width if specified
+            if (params != null && params.hasWindow()) {
+                param.setWindowCenter(params.getWindowCenter().floatValue());
+                param.setWindowWidth(params.getWindowWidth().floatValue());
+                param.setAutoWindowing(false);
+            }
 
             // Read the selected frame
             BufferedImage bufferedImage;
@@ -1532,9 +1645,25 @@ public class XnatDicomServiceImpl implements XnatDicomService {
                 return null;
             }
 
+            // Apply viewport scaling if specified
+            if (params != null && params.hasViewport()) {
+                bufferedImage = scaleImage(bufferedImage,
+                        params.getViewportWidth(), params.getViewportHeight());
+            }
+
             // Convert to JPEG
             ByteArrayOutputStream baos = new ByteArrayOutputStream();
-            ImageIO.write(bufferedImage, "JPEG", baos);
+            if (params != null && params.getQuality() != null) {
+                ImageWriter jpegWriter = ImageIO.getImageWritersByFormatName("JPEG").next();
+                ImageWriteParam writeParam = jpegWriter.getDefaultWriteParam();
+                writeParam.setCompressionMode(ImageWriteParam.MODE_EXPLICIT);
+                writeParam.setCompressionQuality(params.getQuality() / 100f);
+                jpegWriter.setOutput(ImageIO.createImageOutputStream(baos));
+                jpegWriter.write(null, new IIOImage(bufferedImage, null, null), writeParam);
+                jpegWriter.dispose();
+            } else {
+                ImageIO.write(bufferedImage, "JPEG", baos);
+            }
 
             logger.debug("Successfully rendered DICOM to JPEG, size: {} bytes", baos.size());
 
@@ -1679,7 +1808,8 @@ public class XnatDicomServiceImpl implements XnatDicomService {
      * @param requestedFrame optional frame number (1-based) - if specified, renders single frame as static GIF
      * @return RenderedInstanceResult with GIF data and metadata
      */
-    private RenderedInstanceResult renderDicomToGif(File dicomFile, Integer requestedFrame) {
+    private RenderedInstanceResult renderDicomToGif(File dicomFile, Integer requestedFrame,
+                                                      RenderingParams params) {
         try {
             // First, read DICOM metadata to determine frame count and frame rate
             int totalFrames = 1;
@@ -1693,11 +1823,11 @@ public class XnatDicomServiceImpl implements XnatDicomService {
 
             // If single frame or specific frame requested, render as static GIF
             if (totalFrames == 1 || requestedFrame != null) {
-                return renderSingleFrameAsGif(dicomFile, requestedFrame, totalFrames, frameRate);
+                return renderSingleFrameAsGif(dicomFile, requestedFrame, totalFrames, frameRate, params);
             }
 
             // Multi-frame: render as animated GIF
-            return renderAnimatedGif(dicomFile, totalFrames, frameRate);
+            return renderAnimatedGif(dicomFile, totalFrames, frameRate, params);
 
         } catch (Exception e) {
             logger.error("Error rendering DICOM to GIF", e);
@@ -1709,7 +1839,8 @@ public class XnatDicomServiceImpl implements XnatDicomService {
      * Render a single frame as static GIF
      */
     private RenderedInstanceResult renderSingleFrameAsGif(File dicomFile, Integer requestedFrame,
-                                                          int totalFrames, Double frameRate) throws Exception {
+                                                          int totalFrames, Double frameRate,
+                                                          RenderingParams params) throws Exception {
         ImageInputStream iis = ImageIO.createImageInputStream(dicomFile);
         if (iis == null) {
             logger.error("Could not create ImageInputStream for DICOM file");
@@ -1746,6 +1877,11 @@ public class XnatDicomServiceImpl implements XnatDicomService {
             return null;
         }
 
+        // Apply viewport scaling if specified
+        if (params != null && params.hasViewport()) {
+            image = scaleImage(image, params.getViewportWidth(), params.getViewportHeight());
+        }
+
         // Encode as GIF
         ByteArrayOutputStream baos = new ByteArrayOutputStream();
         ImageIO.write(image, "GIF", baos);
@@ -1760,7 +1896,7 @@ public class XnatDicomServiceImpl implements XnatDicomService {
      * Render all frames as animated GIF
      */
     private RenderedInstanceResult renderAnimatedGif(File dicomFile, int totalFrames,
-                                                     Double frameRate) throws Exception {
+                                                     Double frameRate, RenderingParams params) throws Exception {
         ImageInputStream iis = ImageIO.createImageInputStream(dicomFile);
         if (iis == null) {
             logger.error("Could not create ImageInputStream for DICOM file");
@@ -1801,6 +1937,9 @@ public class XnatDicomServiceImpl implements XnatDicomService {
         for (int frameIndex = 0; frameIndex < totalFrames; frameIndex++) {
             BufferedImage image = reader.read(frameIndex, param);
             if (image != null) {
+                if (params != null && params.hasViewport()) {
+                    image = scaleImage(image, params.getViewportWidth(), params.getViewportHeight());
+                }
                 encoder.addFrame(image);
                 logger.trace("Added frame {} to animated GIF", frameIndex + 1);
             } else {
@@ -1817,6 +1956,20 @@ public class XnatDicomServiceImpl implements XnatDicomService {
 
         return new RenderedInstanceResult(baos.toByteArray(), totalFrames, totalFrames,
                 frameRate, ImageFormat.GIF);
+    }
+
+    /**
+     * Scale a BufferedImage to target dimensions using bilinear interpolation.
+     */
+    private BufferedImage scaleImage(BufferedImage src, int targetWidth, int targetHeight) {
+        int type = src.getType() != 0 ? src.getType() : BufferedImage.TYPE_INT_RGB;
+        BufferedImage scaled = new BufferedImage(targetWidth, targetHeight, type);
+        Graphics2D g = scaled.createGraphics();
+        g.setRenderingHint(RenderingHints.KEY_INTERPOLATION,
+                RenderingHints.VALUE_INTERPOLATION_BILINEAR);
+        g.drawImage(src, 0, 0, targetWidth, targetHeight, null);
+        g.dispose();
+        return scaled;
     }
 
     @Override

@@ -15,6 +15,7 @@ import org.nrg.xnat.dicomweb.exceptions.NotAcceptableException;
 import org.nrg.xnat.dicomweb.exceptions.ResourceNotFoundException;
 import org.nrg.xnat.dicomweb.service.ImageFormat;
 import org.nrg.xnat.dicomweb.service.RenderedInstanceResult;
+import org.nrg.xnat.dicomweb.service.RenderingParams;
 import org.nrg.xnat.dicomweb.service.XnatDicomService;
 import org.nrg.xnat.dicomweb.utils.BulkDataHandler;
 import org.nrg.xnat.dicomweb.utils.BulkDataHandler.BulkDataItem;
@@ -440,7 +441,7 @@ public class WadoRsApiTest {
                         mockImageData, 1, 1, null);
 
         when(mockDicomService.retrieveRenderedInstance(any(UserI.class), eq(projectId), eq(studyUID),
-                eq(seriesUID), eq(instanceUID), any(), any()))
+                eq(seriesUID), eq(instanceUID), any(), any(), any()))
             .thenReturn(mockResult);
 
         HttpServletRequest mockRequest = mock(HttpServletRequest.class);
@@ -467,7 +468,7 @@ public class WadoRsApiTest {
         String instanceUID = "1.2.3.4.5.6.999";
 
         when(mockDicomService.retrieveRenderedInstance(any(UserI.class), eq(projectId), eq(studyUID),
-                eq(seriesUID), eq(instanceUID), any(), any()))
+                eq(seriesUID), eq(instanceUID), any(), any(), any()))
             .thenThrow(new ResourceNotFoundException("Instance", instanceUID));
 
         HttpServletRequest mockRequest = mock(HttpServletRequest.class);
@@ -494,7 +495,7 @@ public class WadoRsApiTest {
                         mockImageData, 10, 5, 15.0);
 
         when(mockDicomService.retrieveRenderedInstance(any(UserI.class), eq(projectId), eq(studyUID),
-                eq(seriesUID), eq(instanceUID), eq(frameNumber), any()))
+                eq(seriesUID), eq(instanceUID), eq(frameNumber), any(), any()))
             .thenReturn(mockResult);
 
         HttpServletRequest mockRequest = mock(HttpServletRequest.class);
@@ -824,7 +825,7 @@ public class WadoRsApiTest {
                 new RenderedInstanceResult(mockImageData, 1, 1, null, ImageFormat.GIF);
 
         when(mockDicomService.retrieveRenderedInstance(any(UserI.class), anyString(), anyString(),
-                anyString(), anyString(), any(), eq(ImageFormat.GIF)))
+                anyString(), anyString(), any(), eq(ImageFormat.GIF), any()))
             .thenReturn(mockResult);
 
         HttpServletRequest mockRequest = mock(HttpServletRequest.class);
@@ -838,7 +839,7 @@ public class WadoRsApiTest {
 
         verify(mockDicomService).retrieveRenderedInstance(
                 any(UserI.class), eq("P"), eq("1"), eq("2"), eq("3"),
-                isNull(), eq(ImageFormat.GIF));
+                isNull(), eq(ImageFormat.GIF), any());
     }
 
     @Test
@@ -848,7 +849,7 @@ public class WadoRsApiTest {
                 new RenderedInstanceResult(mockImageData, 1, 1, null, ImageFormat.PNG);
 
         when(mockDicomService.retrieveRenderedInstance(any(UserI.class), anyString(), anyString(),
-                anyString(), anyString(), any(), eq(ImageFormat.PNG)))
+                anyString(), anyString(), any(), eq(ImageFormat.PNG), any()))
             .thenReturn(mockResult);
 
         HttpServletRequest mockRequest = mock(HttpServletRequest.class);
@@ -862,7 +863,7 @@ public class WadoRsApiTest {
 
         verify(mockDicomService).retrieveRenderedInstance(
                 any(UserI.class), eq("P"), eq("1"), eq("2"), eq("3"),
-                isNull(), eq(ImageFormat.PNG));
+                isNull(), eq(ImageFormat.PNG), any());
     }
 
     @Test
@@ -872,7 +873,7 @@ public class WadoRsApiTest {
                 new RenderedInstanceResult(mockImageData, 1, 1, null);
 
         when(mockDicomService.retrieveRenderedInstance(any(UserI.class), anyString(), anyString(),
-                anyString(), anyString(), any(), eq(ImageFormat.JPEG)))
+                anyString(), anyString(), any(), eq(ImageFormat.JPEG), any()))
             .thenReturn(mockResult);
 
         HttpServletRequest mockRequest = mock(HttpServletRequest.class);
@@ -886,7 +887,7 @@ public class WadoRsApiTest {
 
         verify(mockDicomService).retrieveRenderedInstance(
                 any(UserI.class), eq("P"), eq("1"), eq("2"), eq("3"),
-                isNull(), eq(ImageFormat.JPEG));
+                isNull(), eq(ImageFormat.JPEG), any());
     }
 
     @Test
@@ -896,7 +897,7 @@ public class WadoRsApiTest {
                 new RenderedInstanceResult(mockImageData, 1, 1, null, ImageFormat.GIF);
 
         when(mockDicomService.retrieveRenderedInstance(any(UserI.class), anyString(), anyString(),
-                anyString(), anyString(), any(), eq(ImageFormat.GIF)))
+                anyString(), anyString(), any(), eq(ImageFormat.GIF), any()))
             .thenReturn(mockResult);
 
         HttpServletRequest mockRequest = mock(HttpServletRequest.class);
@@ -910,7 +911,7 @@ public class WadoRsApiTest {
 
         verify(mockDicomService).retrieveRenderedInstance(
                 any(UserI.class), eq("P"), eq("1"), eq("2"), eq("3"),
-                isNull(), eq(ImageFormat.GIF));
+                isNull(), eq(ImageFormat.GIF), any());
     }
 
     @Test
@@ -920,7 +921,7 @@ public class WadoRsApiTest {
                 new RenderedInstanceResult(mockImageData, 1, 1, null, ImageFormat.GIF);
 
         when(mockDicomService.retrieveRenderedInstance(any(UserI.class), anyString(), anyString(),
-                anyString(), anyString(), any(), eq(ImageFormat.GIF)))
+                anyString(), anyString(), any(), eq(ImageFormat.GIF), any()))
             .thenReturn(mockResult);
 
         HttpServletRequest mockRequest = mock(HttpServletRequest.class);
@@ -932,11 +933,11 @@ public class WadoRsApiTest {
 
         // Header says JPEG, query param says GIF — param wins
         wadoRsApi.retrieveInstanceRendered("P", "1", "2", "3", null,
-                "image/gif", mockRequest, mockResponse);
+                "image/gif", null, null, null, mockRequest, mockResponse);
 
         verify(mockDicomService).retrieveRenderedInstance(
                 any(UserI.class), eq("P"), eq("1"), eq("2"), eq("3"),
-                isNull(), eq(ImageFormat.GIF));
+                isNull(), eq(ImageFormat.GIF), any());
     }
 
     @Test
@@ -947,7 +948,7 @@ public class WadoRsApiTest {
                 new RenderedInstanceResult(mockImageData, 1, 1, null);
 
         when(mockDicomService.retrieveRenderedInstance(any(UserI.class), anyString(), anyString(),
-                anyString(), anyString(), any(), eq(ImageFormat.JPEG)))
+                anyString(), anyString(), any(), eq(ImageFormat.JPEG), any()))
             .thenReturn(mockResult);
 
         HttpServletRequest mockRequest = mock(HttpServletRequest.class);
@@ -961,7 +962,7 @@ public class WadoRsApiTest {
 
         verify(mockDicomService).retrieveRenderedInstance(
                 any(UserI.class), eq("P"), eq("1"), eq("2"), eq("3"),
-                isNull(), eq(ImageFormat.JPEG));
+                isNull(), eq(ImageFormat.JPEG), any());
     }
 
     // ---- Instance retrieval: content negotiation ----
@@ -1323,5 +1324,287 @@ public class WadoRsApiTest {
         assertEquals(HttpStatus.OK, response.getStatusCode());
         assertEquals("application/octet-stream",
                 response.getHeaders().getContentType().toString());
+    }
+
+    // ========== Study Rendered Tests ==========
+
+    @Test
+    public void testRetrieveStudyRendered_Success() throws Exception {
+        byte[] mockImageData = new byte[]{(byte)0xFF, (byte)0xD8, (byte)0xFF, (byte)0xE0};
+        RenderedInstanceResult mockResult =
+                new RenderedInstanceResult(mockImageData, 1, 1, null);
+
+        when(mockDicomService.retrieveRenderedStudy(any(UserI.class), eq("P"), eq("1"),
+                any(), any(ImageFormat.class), any()))
+            .thenReturn(mockResult);
+
+        HttpServletRequest mockRequest = mock(HttpServletRequest.class);
+        when(mockRequest.getHeader("Accept")).thenReturn("image/jpeg");
+
+        HttpServletResponse mockResponse = mock(HttpServletResponse.class);
+        javax.servlet.ServletOutputStream mockOutputStream = mock(javax.servlet.ServletOutputStream.class);
+        when(mockResponse.getOutputStream()).thenReturn(mockOutputStream);
+
+        wadoRsApi.retrieveStudyRendered("P", "1", mockRequest, mockResponse);
+
+        verify(mockResponse).setContentType("image/jpeg");
+        verify(mockOutputStream).write(mockImageData);
+    }
+
+    @Test(expected = ResourceNotFoundException.class)
+    public void testRetrieveStudyRendered_NotFound() throws Exception {
+        when(mockDicomService.retrieveRenderedStudy(any(UserI.class), anyString(), anyString(),
+                any(), any(ImageFormat.class), any()))
+            .thenThrow(new ResourceNotFoundException("Study", "1.2.3"));
+
+        HttpServletRequest mockRequest = mock(HttpServletRequest.class);
+        when(mockRequest.getHeader("Accept")).thenReturn("image/jpeg");
+
+        HttpServletResponse mockResponse = mock(HttpServletResponse.class);
+
+        wadoRsApi.retrieveStudyRendered("P", "1.2.3", mockRequest, mockResponse);
+    }
+
+    // ========== Series Rendered Tests ==========
+
+    @Test
+    public void testRetrieveSeriesRendered_Success() throws Exception {
+        byte[] mockImageData = new byte[]{1, 2, 3, 4};
+        RenderedInstanceResult mockResult =
+                new RenderedInstanceResult(mockImageData, 1, 1, null);
+
+        when(mockDicomService.retrieveRenderedSeries(any(UserI.class), eq("P"), eq("1"), eq("2"),
+                any(), any(ImageFormat.class), any()))
+            .thenReturn(mockResult);
+
+        HttpServletRequest mockRequest = mock(HttpServletRequest.class);
+        when(mockRequest.getHeader("Accept")).thenReturn("image/jpeg");
+
+        HttpServletResponse mockResponse = mock(HttpServletResponse.class);
+        javax.servlet.ServletOutputStream mockOutputStream = mock(javax.servlet.ServletOutputStream.class);
+        when(mockResponse.getOutputStream()).thenReturn(mockOutputStream);
+
+        wadoRsApi.retrieveSeriesRendered("P", "1", "2", mockRequest, mockResponse);
+
+        verify(mockResponse).setContentType("image/jpeg");
+        verify(mockOutputStream).write(mockImageData);
+    }
+
+    @Test(expected = ResourceNotFoundException.class)
+    public void testRetrieveSeriesRendered_NotFound() throws Exception {
+        when(mockDicomService.retrieveRenderedSeries(any(UserI.class), anyString(), anyString(),
+                anyString(), any(), any(ImageFormat.class), any()))
+            .thenThrow(new ResourceNotFoundException("Series", "1.2.3"));
+
+        HttpServletRequest mockRequest = mock(HttpServletRequest.class);
+        when(mockRequest.getHeader("Accept")).thenReturn("image/jpeg");
+
+        HttpServletResponse mockResponse = mock(HttpServletResponse.class);
+
+        wadoRsApi.retrieveSeriesRendered("P", "1", "1.2.3", mockRequest, mockResponse);
+    }
+
+    // ========== Frame Rendered Tests ==========
+
+    @Test
+    public void testRetrieveFrameRendered_Success() throws Exception {
+        byte[] mockImageData = new byte[]{1, 2, 3, 4};
+        RenderedInstanceResult mockResult =
+                new RenderedInstanceResult(mockImageData, 10, 3, null);
+
+        when(mockDicomService.retrieveRenderedInstance(any(UserI.class), eq("P"), eq("1"), eq("2"),
+                eq("3"), eq(3), any(ImageFormat.class), any()))
+            .thenReturn(mockResult);
+
+        HttpServletRequest mockRequest = mock(HttpServletRequest.class);
+        when(mockRequest.getHeader("Accept")).thenReturn("image/jpeg");
+
+        HttpServletResponse mockResponse = mock(HttpServletResponse.class);
+        javax.servlet.ServletOutputStream mockOutputStream = mock(javax.servlet.ServletOutputStream.class);
+        when(mockResponse.getOutputStream()).thenReturn(mockOutputStream);
+
+        wadoRsApi.retrieveFrameRendered("P", "1", "2", "3", "3", mockRequest, mockResponse);
+
+        verify(mockResponse).setContentType("image/jpeg");
+        verify(mockResponse).setHeader("X-Frame-Count", "10");
+        verify(mockResponse).setHeader("X-Frame-Number", "3");
+    }
+
+    // ========== Thumbnail Tests ==========
+
+    @Test
+    public void testRetrieveStudyThumbnail_Success() throws Exception {
+        byte[] mockImageData = new byte[]{1, 2, 3};
+        RenderedInstanceResult mockResult =
+                new RenderedInstanceResult(mockImageData, 1, 1, null);
+
+        when(mockDicomService.retrieveThumbnailStudy(any(UserI.class), eq("P"), eq("1"), any()))
+            .thenReturn(mockResult);
+
+        HttpServletResponse mockResponse = mock(HttpServletResponse.class);
+        javax.servlet.ServletOutputStream mockOutputStream = mock(javax.servlet.ServletOutputStream.class);
+        when(mockResponse.getOutputStream()).thenReturn(mockOutputStream);
+
+        wadoRsApi.retrieveStudyThumbnail("P", "1", mockResponse);
+
+        verify(mockResponse).setContentType("image/jpeg");
+        verify(mockOutputStream).write(mockImageData);
+    }
+
+    @Test
+    public void testRetrieveSeriesThumbnail_Success() throws Exception {
+        byte[] mockImageData = new byte[]{1, 2, 3};
+        RenderedInstanceResult mockResult =
+                new RenderedInstanceResult(mockImageData, 1, 1, null);
+
+        when(mockDicomService.retrieveThumbnailSeries(any(UserI.class), eq("P"), eq("1"), eq("2"), any()))
+            .thenReturn(mockResult);
+
+        HttpServletResponse mockResponse = mock(HttpServletResponse.class);
+        javax.servlet.ServletOutputStream mockOutputStream = mock(javax.servlet.ServletOutputStream.class);
+        when(mockResponse.getOutputStream()).thenReturn(mockOutputStream);
+
+        wadoRsApi.retrieveSeriesThumbnail("P", "1", "2", mockResponse);
+
+        verify(mockResponse).setContentType("image/jpeg");
+        verify(mockOutputStream).write(mockImageData);
+    }
+
+    @Test
+    public void testRetrieveInstanceThumbnail_Success() throws Exception {
+        byte[] mockImageData = new byte[]{1, 2, 3};
+        RenderedInstanceResult mockResult =
+                new RenderedInstanceResult(mockImageData, 1, 1, null);
+
+        when(mockDicomService.retrieveThumbnailInstance(any(UserI.class), eq("P"), eq("1"),
+                eq("2"), eq("3"), any()))
+            .thenReturn(mockResult);
+
+        HttpServletResponse mockResponse = mock(HttpServletResponse.class);
+        javax.servlet.ServletOutputStream mockOutputStream = mock(javax.servlet.ServletOutputStream.class);
+        when(mockResponse.getOutputStream()).thenReturn(mockOutputStream);
+
+        wadoRsApi.retrieveInstanceThumbnail("P", "1", "2", "3", mockResponse);
+
+        verify(mockResponse).setContentType("image/jpeg");
+        verify(mockOutputStream).write(mockImageData);
+    }
+
+    @Test
+    public void testRetrieveFrameThumbnail_Success() throws Exception {
+        byte[] mockImageData = new byte[]{1, 2, 3};
+        RenderedInstanceResult mockResult =
+                new RenderedInstanceResult(mockImageData, 10, 5, null);
+
+        when(mockDicomService.retrieveThumbnailFrame(any(UserI.class), eq("P"), eq("1"),
+                eq("2"), eq("3"), eq("5"), any()))
+            .thenReturn(mockResult);
+
+        HttpServletResponse mockResponse = mock(HttpServletResponse.class);
+        javax.servlet.ServletOutputStream mockOutputStream = mock(javax.servlet.ServletOutputStream.class);
+        when(mockResponse.getOutputStream()).thenReturn(mockOutputStream);
+
+        wadoRsApi.retrieveFrameThumbnail("P", "1", "2", "3", "5", mockResponse);
+
+        verify(mockResponse).setContentType("image/jpeg");
+        verify(mockOutputStream).write(mockImageData);
+    }
+
+    @Test(expected = ResourceNotFoundException.class)
+    public void testRetrieveStudyThumbnail_NotFound() throws Exception {
+        when(mockDicomService.retrieveThumbnailStudy(any(UserI.class), anyString(), anyString(), any()))
+            .thenThrow(new ResourceNotFoundException("Study", "1.2.3"));
+
+        HttpServletResponse mockResponse = mock(HttpServletResponse.class);
+
+        wadoRsApi.retrieveStudyThumbnail("P", "1.2.3", mockResponse);
+    }
+
+    @Test(expected = ResourceNotFoundException.class)
+    public void testRetrieveInstanceThumbnail_NotFound() throws Exception {
+        when(mockDicomService.retrieveThumbnailInstance(any(UserI.class), anyString(), anyString(),
+                anyString(), anyString(), any()))
+            .thenThrow(new ResourceNotFoundException("Instance", "1.2.3"));
+
+        HttpServletResponse mockResponse = mock(HttpServletResponse.class);
+
+        wadoRsApi.retrieveInstanceThumbnail("P", "1", "2", "1.2.3", mockResponse);
+    }
+
+    // ========== Rendered with RenderingParams Tests ==========
+
+    @Test
+    public void testRetrieveInstanceRendered_WithRenderingParams() throws Exception {
+        byte[] mockImageData = new byte[]{1, 2, 3, 4};
+        RenderedInstanceResult mockResult =
+                new RenderedInstanceResult(mockImageData, 1, 1, null);
+
+        when(mockDicomService.retrieveRenderedInstance(any(UserI.class), eq("P"), eq("1"), eq("2"),
+                eq("3"), isNull(), eq(ImageFormat.JPEG), any(RenderingParams.class)))
+            .thenReturn(mockResult);
+
+        HttpServletRequest mockRequest = mock(HttpServletRequest.class);
+        when(mockRequest.getHeader("Accept")).thenReturn("image/jpeg");
+
+        HttpServletResponse mockResponse = mock(HttpServletResponse.class);
+        javax.servlet.ServletOutputStream mockOutputStream = mock(javax.servlet.ServletOutputStream.class);
+        when(mockResponse.getOutputStream()).thenReturn(mockOutputStream);
+
+        wadoRsApi.retrieveInstanceRendered("P", "1", "2", "3", null, null,
+                "640,480", "400,2000", "85", mockRequest, mockResponse);
+
+        verify(mockDicomService).retrieveRenderedInstance(
+                any(UserI.class), eq("P"), eq("1"), eq("2"), eq("3"),
+                isNull(), eq(ImageFormat.JPEG), any(RenderingParams.class));
+    }
+
+    @Test
+    public void testRetrieveStudyRendered_ContentNegotiation_Gif() throws Exception {
+        byte[] mockImageData = new byte[]{1, 2, 3, 4};
+        RenderedInstanceResult mockResult =
+                new RenderedInstanceResult(mockImageData, 1, 1, null, ImageFormat.GIF);
+
+        when(mockDicomService.retrieveRenderedStudy(any(UserI.class), anyString(), anyString(),
+                any(), eq(ImageFormat.GIF), any()))
+            .thenReturn(mockResult);
+
+        HttpServletRequest mockRequest = mock(HttpServletRequest.class);
+        when(mockRequest.getHeader("Accept")).thenReturn("image/gif");
+
+        HttpServletResponse mockResponse = mock(HttpServletResponse.class);
+        javax.servlet.ServletOutputStream mockOutputStream = mock(javax.servlet.ServletOutputStream.class);
+        when(mockResponse.getOutputStream()).thenReturn(mockOutputStream);
+
+        wadoRsApi.retrieveStudyRendered("P", "1", null, null,
+                null, null, null, mockRequest, mockResponse);
+
+        verify(mockDicomService).retrieveRenderedStudy(
+                any(UserI.class), eq("P"), eq("1"),
+                isNull(), eq(ImageFormat.GIF), isNull());
+    }
+
+    @Test
+    public void testRetrieveStudyRendered_NoAcceptHeader_DefaultsToJpeg() throws Exception {
+        byte[] mockImageData = new byte[]{1, 2, 3, 4};
+        RenderedInstanceResult mockResult =
+                new RenderedInstanceResult(mockImageData, 1, 1, null);
+
+        when(mockDicomService.retrieveRenderedStudy(any(UserI.class), anyString(), anyString(),
+                any(), eq(ImageFormat.JPEG), any()))
+            .thenReturn(mockResult);
+
+        HttpServletRequest mockRequest = mock(HttpServletRequest.class);
+        // No Accept header
+
+        HttpServletResponse mockResponse = mock(HttpServletResponse.class);
+        javax.servlet.ServletOutputStream mockOutputStream = mock(javax.servlet.ServletOutputStream.class);
+        when(mockResponse.getOutputStream()).thenReturn(mockOutputStream);
+
+        wadoRsApi.retrieveStudyRendered("P", "1", null, null,
+                null, null, null, mockRequest, mockResponse);
+
+        verify(mockDicomService).retrieveRenderedStudy(
+                any(UserI.class), eq("P"), eq("1"),
+                isNull(), eq(ImageFormat.JPEG), isNull());
     }
 }

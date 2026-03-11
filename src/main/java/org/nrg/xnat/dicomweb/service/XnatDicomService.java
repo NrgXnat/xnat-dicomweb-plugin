@@ -94,6 +94,116 @@ public interface XnatDicomService {
                                                    Integer frameNumber, ImageFormat format);
 
     /**
+     * Retrieve a rendered instance with rendering parameters.
+     *
+     * @param user the authenticated user
+     * @param projectId XNAT project identifier
+     * @param studyInstanceUID Study Instance UID
+     * @param seriesInstanceUID Series Instance UID
+     * @param sopInstanceUID SOP Instance UID
+     * @param frameNumber optional frame number (1-based), null for default
+     * @param format desired output format
+     * @param params rendering parameters (viewport, window, quality), may be null
+     * @return RenderedInstanceResult containing image data and metadata
+     */
+    RenderedInstanceResult retrieveRenderedInstance(UserI user, String projectId, String studyInstanceUID,
+                                                   String seriesInstanceUID, String sopInstanceUID,
+                                                   Integer frameNumber, ImageFormat format,
+                                                   RenderingParams params);
+
+    /**
+     * Retrieve a rendered representative image for a study.
+     * Selects a representative instance (middle instance of first series) and renders it.
+     *
+     * @param user the authenticated user
+     * @param projectId XNAT project identifier
+     * @param studyInstanceUID Study Instance UID
+     * @param frameNumber optional frame number (1-based), null for default
+     * @param format desired output format
+     * @param params rendering parameters, may be null
+     * @return RenderedInstanceResult containing image data and metadata
+     */
+    RenderedInstanceResult retrieveRenderedStudy(UserI user, String projectId,
+                                                 String studyInstanceUID, Integer frameNumber,
+                                                 ImageFormat format, RenderingParams params);
+
+    /**
+     * Retrieve a rendered representative image for a series.
+     * Selects a representative instance (middle instance) and renders it.
+     *
+     * @param user the authenticated user
+     * @param projectId XNAT project identifier
+     * @param studyInstanceUID Study Instance UID
+     * @param seriesInstanceUID Series Instance UID
+     * @param frameNumber optional frame number (1-based), null for default
+     * @param format desired output format
+     * @param params rendering parameters, may be null
+     * @return RenderedInstanceResult containing image data and metadata
+     */
+    RenderedInstanceResult retrieveRenderedSeries(UserI user, String projectId,
+                                                  String studyInstanceUID, String seriesInstanceUID,
+                                                  Integer frameNumber, ImageFormat format,
+                                                  RenderingParams params);
+
+    /**
+     * Retrieve a thumbnail for a study (small rendered image).
+     *
+     * @param user the authenticated user
+     * @param projectId XNAT project identifier
+     * @param studyInstanceUID Study Instance UID
+     * @param params rendering parameters (viewport defaults to 128x128 if not specified)
+     * @return RenderedInstanceResult containing thumbnail image data
+     */
+    RenderedInstanceResult retrieveThumbnailStudy(UserI user, String projectId,
+                                                  String studyInstanceUID, RenderingParams params);
+
+    /**
+     * Retrieve a thumbnail for a series.
+     *
+     * @param user the authenticated user
+     * @param projectId XNAT project identifier
+     * @param studyInstanceUID Study Instance UID
+     * @param seriesInstanceUID Series Instance UID
+     * @param params rendering parameters (viewport defaults to 128x128 if not specified)
+     * @return RenderedInstanceResult containing thumbnail image data
+     */
+    RenderedInstanceResult retrieveThumbnailSeries(UserI user, String projectId,
+                                                   String studyInstanceUID, String seriesInstanceUID,
+                                                   RenderingParams params);
+
+    /**
+     * Retrieve a thumbnail for an instance.
+     *
+     * @param user the authenticated user
+     * @param projectId XNAT project identifier
+     * @param studyInstanceUID Study Instance UID
+     * @param seriesInstanceUID Series Instance UID
+     * @param sopInstanceUID SOP Instance UID
+     * @param params rendering parameters (viewport defaults to 128x128 if not specified)
+     * @return RenderedInstanceResult containing thumbnail image data
+     */
+    RenderedInstanceResult retrieveThumbnailInstance(UserI user, String projectId,
+                                                    String studyInstanceUID, String seriesInstanceUID,
+                                                    String sopInstanceUID, RenderingParams params);
+
+    /**
+     * Retrieve a thumbnail for specific frame(s).
+     *
+     * @param user the authenticated user
+     * @param projectId XNAT project identifier
+     * @param studyInstanceUID Study Instance UID
+     * @param seriesInstanceUID Series Instance UID
+     * @param sopInstanceUID SOP Instance UID
+     * @param frameList comma-separated list of frame numbers (1-based)
+     * @param params rendering parameters (viewport defaults to 128x128 if not specified)
+     * @return RenderedInstanceResult containing thumbnail image data
+     */
+    RenderedInstanceResult retrieveThumbnailFrame(UserI user, String projectId,
+                                                  String studyInstanceUID, String seriesInstanceUID,
+                                                  String sopInstanceUID, String frameList,
+                                                  RenderingParams params);
+
+    /**
      * Retrieve specific frame(s) from a DICOM instance
      * @param frameNumbers comma-separated list of frame numbers (1-based)
      * @return list of byte arrays, one per requested frame
