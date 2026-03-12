@@ -11,13 +11,13 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.text.SimpleDateFormat;
 import java.util.ArrayList;
-import java.util.Iterator;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Optional;
 import java.util.Set;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
+import java.util.stream.StreamSupport;
 import javax.imageio.IIOImage;
 import javax.imageio.ImageIO;
 import javax.imageio.ImageReader;
@@ -1519,6 +1519,19 @@ public class XnatDicomServiceImpl implements XnatDicomService {
     }
 
     /**
+     * Get the dcm4che3 ImageReader for DICOM. This is a little complicated because we
+     * run in a context where there's also a dcm4che2 ImageReader.
+     * @return dcm4che3 ImageReader, or null if one can't be found
+     */
+    private ImageReader getDicomImageReader() {
+        final Iterable<ImageReader> readers = () -> ImageIO.getImageReadersByFormatName("DICOM");
+        return StreamSupport.stream(readers.spliterator(), false)
+                .filter(reader -> reader.getClass().getName().startsWith("org.dcm4che3"))
+                .findAny()
+                .orElse(null);
+    }
+
+    /**
      * Render a DICOM file to JPEG format with frame selection support
      * @param dicomFile DICOM file to render
      * @param requestedFrame requested frame number (1-based), null for default (middle frame)
@@ -1560,85 +1573,82 @@ public class XnatDicomServiceImpl implements XnatDicomService {
             logger.debug("Rendering frame {} of {} (frameRate: {})", frameIndex + 1, totalFrames, frameRate);
 
             // Use ImageIO with DICOM plugin to read the image
-            ImageInputStream iis = ImageIO.createImageInputStream(dicomFile);
-            if (iis == null) {
-                logger.error("Could not create ImageInputStream for DICOM file");
-                return null;
-            }
-
-            Iterator<ImageReader> readers = ImageIO.getImageReadersByFormatName("DICOM");
-            if (!readers.hasNext()) {
-                logger.error("No DICOM ImageReader found");
-                iis.close();
-                return null;
-            }
-
-            ImageReader reader = readers.next();
-            reader.setInput(iis, false);
-
-            DicomImageReadParam param = (DicomImageReadParam) reader.getDefaultReadParam();
-
-            // Apply window center/width if specified
-            if (params != null && params.hasWindow()) {
-                param.setWindowCenter(params.getWindowCenter().floatValue());
-                param.setWindowWidth(params.getWindowWidth().floatValue());
-                param.setAutoWindowing(false);
-            }
-
-            // Read the selected frame
             BufferedImage bufferedImage;
-            try {
-                bufferedImage = reader.read(frameIndex, param);
-            } catch (Throwable readEx) {  // Catch Error (NoClassDefFoundError) and Exception
-                reader.dispose();
-                iis.close();
-
-                // Check if this is due to missing codec support for advanced compression
-                if (isAdvancedCompressionFormat(transferSyntax) &&
-                    isNativeLibraryMissing(readEx)) {
-                    String tsName = getTransferSyntaxName(transferSyntax);
-
-                    // Determine specific error based on exception type
-                    String detailedMessage;
-                    if (hasUnsatisfiedLinkError(readEx)) {
-                        // dcm4che-imageio-opencv.jar is present, but native OpenCV library is missing
-                        logger.error("Failed to render image with transfer syntax {} ({}). " +
-                                "dcm4che-imageio-opencv is installed, but native OpenCV libraries are not found. " +
-                                "Please install OpenCV: " +
-                                "macOS: 'brew install opencv' | " +
-                                "Ubuntu: 'sudo apt-get install libopencv-dev' | " +
-                                "CentOS: 'sudo yum install opencv-devel'",
-                                transferSyntax, tsName);
-                        detailedMessage = String.format(
-                            "Cannot render image with transfer syntax: %s. " +
-                            "Native OpenCV libraries are not installed on the system. " +
-                            "To enable rendering of JPEG-LS and JPEG 2000 images, install OpenCV:\n" +
-                            "  • macOS: brew install opencv\n" +
-                            "  • Ubuntu/Debian: sudo apt-get install libopencv-dev\n" +
-                            "  • CentOS/RHEL: sudo yum install opencv-devel\n" +
-                            "Alternatively, use the retrieveInstance endpoint to download the original DICOM file.",
-                            tsName);
-                    } else {
-                        // Other codec-related errors (likely missing ImageReader)
-                        logger.error("Failed to render image with transfer syntax {} ({}). " +
-                                "This format requires additional codec support that is not available. " +
-                                "See plugin documentation for installation instructions.",
-                                transferSyntax, tsName);
-                        detailedMessage = String.format(
-                            "Cannot render image with transfer syntax: %s. " +
-                            "This compression format requires additional codec support (e.g., OpenCV libraries). " +
-                            "Most DICOM files use JPEG Baseline compression which is fully supported. " +
-                            "To access this file, use the retrieveInstance endpoint to download the original DICOM file.",
-                            tsName);
-                    }
-
-                    throw new UnsupportedOperationException(detailedMessage);
+            try (ImageInputStream iis = ImageIO.createImageInputStream(dicomFile)) {
+                if (iis == null) {
+                    logger.error("Could not create ImageInputStream for DICOM file");
+                    return null;
                 }
-                throw readEx; // Re-throw if not a native library issue
-            }
 
-            reader.dispose();
-            iis.close();
+                ImageReader reader = getDicomImageReader();
+                if (null == reader) {
+                    logger.error("No DICOM ImageReader found");
+                    return null;
+                }
+                reader.setInput(iis, false);
+
+                DicomImageReadParam param = (DicomImageReadParam) reader.getDefaultReadParam();
+
+                // Apply window center/width if specified
+                if (params != null && params.hasWindow()) {
+                    param.setWindowCenter(params.getWindowCenter().floatValue());
+                    param.setWindowWidth(params.getWindowWidth().floatValue());
+                    param.setAutoWindowing(false);
+                }
+
+                // Read the selected frame
+
+                try {
+                    bufferedImage = reader.read(frameIndex, param);
+                } catch (Throwable readEx) {  // Catch Error (NoClassDefFoundError) and Exception
+                    reader.dispose();
+
+                    // Check if this is due to missing codec support for advanced compression
+                    if (isAdvancedCompressionFormat(transferSyntax) &&
+                            isNativeLibraryMissing(readEx)) {
+                        String tsName = getTransferSyntaxName(transferSyntax);
+
+                        // Determine specific error based on exception type
+                        String detailedMessage;
+                        if (hasUnsatisfiedLinkError(readEx)) {
+                            // dcm4che-imageio-opencv.jar is present, but native OpenCV library is missing
+                            logger.error("Failed to render image with transfer syntax {} ({}). " +
+                                            "dcm4che-imageio-opencv is installed, but native OpenCV libraries are not found. " +
+                                            "Please install OpenCV: " +
+                                            "macOS: 'brew install opencv' | " +
+                                            "Ubuntu: 'sudo apt-get install libopencv-dev' | " +
+                                            "CentOS: 'sudo yum install opencv-devel'",
+                                    transferSyntax, tsName);
+                            detailedMessage = String.format(
+                                    "Cannot render image with transfer syntax: %s. " +
+                                            "Native OpenCV libraries are not installed on the system. " +
+                                            "To enable rendering of JPEG-LS and JPEG 2000 images, install OpenCV:\n" +
+                                            "  • macOS: brew install opencv\n" +
+                                            "  • Ubuntu/Debian: sudo apt-get install libopencv-dev\n" +
+                                            "  • CentOS/RHEL: sudo yum install opencv-devel\n" +
+                                            "Alternatively, use the retrieveInstance endpoint to download the original DICOM file.",
+                                    tsName);
+                        } else {
+                            // Other codec-related errors (likely missing ImageReader)
+                            logger.error("Failed to render image with transfer syntax {} ({}). " +
+                                            "This format requires additional codec support that is not available. " +
+                                            "See plugin documentation for installation instructions.",
+                                    transferSyntax, tsName);
+                            detailedMessage = String.format(
+                                    "Cannot render image with transfer syntax: %s. " +
+                                            "This compression format requires additional codec support (e.g., OpenCV libraries). " +
+                                            "Most DICOM files use JPEG Baseline compression which is fully supported. " +
+                                            "To access this file, use the retrieveInstance endpoint to download the original DICOM file.",
+                                    tsName);
+                        }
+
+                        throw new UnsupportedOperationException(detailedMessage);
+                    }
+                    throw readEx; // Re-throw if not a native library issue
+                }
+
+                reader.dispose();
+            }
 
             if (bufferedImage == null) {
                 logger.error("Could not read image from DICOM file");
@@ -1841,25 +1851,8 @@ public class XnatDicomServiceImpl implements XnatDicomService {
     private RenderedInstanceResult renderSingleFrameAsGif(File dicomFile, Integer requestedFrame,
                                                           int totalFrames, Double frameRate,
                                                           RenderingParams params) throws Exception {
-        ImageInputStream iis = ImageIO.createImageInputStream(dicomFile);
-        if (iis == null) {
-            logger.error("Could not create ImageInputStream for DICOM file");
-            return null;
-        }
-
-        Iterator<ImageReader> readers = ImageIO.getImageReadersByFormatName("DICOM");
-        if (!readers.hasNext()) {
-            logger.error("No DICOM ImageReader found");
-            iis.close();
-            return null;
-        }
-
-        ImageReader reader = readers.next();
-        reader.setInput(iis, false);
-        DicomImageReadParam param = (DicomImageReadParam) reader.getDefaultReadParam();
-
-        // Determine which frame to render
         int frameIndex = 0;
+        // Determine which frame to render
         if (requestedFrame != null) {
             frameIndex = requestedFrame - 1;
             if (frameIndex < 0 || frameIndex >= totalFrames) {
@@ -1869,9 +1862,24 @@ public class XnatDicomServiceImpl implements XnatDicomService {
             frameIndex = totalFrames > 1 ? totalFrames / 2 : 0;
         }
 
-        BufferedImage image = reader.read(frameIndex, param);
-        reader.dispose();
-        iis.close();
+        BufferedImage image;
+        try (ImageInputStream iis = ImageIO.createImageInputStream(dicomFile)) {
+            if (iis == null) {
+                logger.error("Could not create ImageInputStream for DICOM file");
+                return null;
+            }
+
+            ImageReader reader = getDicomImageReader();
+            if (null == reader) {
+                logger.error("No DICOM ImageReader found");
+                return null;
+            }
+
+            reader.setInput(iis, false);
+            DicomImageReadParam param = (DicomImageReadParam) reader.getDefaultReadParam();
+            image = reader.read(frameIndex, param);
+            reader.dispose();
+        }
 
         if (image == null) {
             return null;
@@ -1897,59 +1905,57 @@ public class XnatDicomServiceImpl implements XnatDicomService {
      */
     private RenderedInstanceResult renderAnimatedGif(File dicomFile, int totalFrames,
                                                      Double frameRate, RenderingParams params) throws Exception {
-        ImageInputStream iis = ImageIO.createImageInputStream(dicomFile);
-        if (iis == null) {
-            logger.error("Could not create ImageInputStream for DICOM file");
-            return null;
-        }
-
-        Iterator<ImageReader> readers = ImageIO.getImageReadersByFormatName("DICOM");
-        if (!readers.hasNext()) {
-            logger.error("No DICOM ImageReader found");
-            iis.close();
-            return null;
-        }
-
-        ImageReader reader = readers.next();
-        reader.setInput(iis, false);
-        DicomImageReadParam param = (DicomImageReadParam) reader.getDefaultReadParam();
-
-        // Calculate frame delay in centiseconds (1/100 second)
-        // Default to 10 fps (100ms = 10 centiseconds) if no frame rate available
-        int delayInCentiseconds = 10;  // Default
-        if (frameRate != null && frameRate > 0) {
-            // Convert FPS to delay in centiseconds
-            delayInCentiseconds = (int) Math.round(100.0 / frameRate);
-            if (delayInCentiseconds < 1) delayInCentiseconds = 1;  // Minimum 1 centisecond
-        }
-
-        logger.debug("Rendering {} frames as animated GIF, delay: {} centiseconds (frameRate: {})",
-                totalFrames, delayInCentiseconds, frameRate);
-
-        // Create animated GIF encoder
         ByteArrayOutputStream baos = new ByteArrayOutputStream();
-        AnimatedGifEncoder encoder = new AnimatedGifEncoder();
-        encoder.start(baos);
-        encoder.setDelay(delayInCentiseconds * 10);  // setDelay expects milliseconds
-        encoder.setRepeat(0);  // 0 = loop forever
-
-        // Read and encode all frames
-        for (int frameIndex = 0; frameIndex < totalFrames; frameIndex++) {
-            BufferedImage image = reader.read(frameIndex, param);
-            if (image != null) {
-                if (params != null && params.hasViewport()) {
-                    image = scaleImage(image, params.getViewportWidth(), params.getViewportHeight());
-                }
-                encoder.addFrame(image);
-                logger.trace("Added frame {} to animated GIF", frameIndex + 1);
-            } else {
-                logger.warn("Failed to read frame {}", frameIndex + 1);
+        try (ImageInputStream iis = ImageIO.createImageInputStream(dicomFile)) {
+            if (iis == null) {
+                logger.error("Could not create ImageInputStream for DICOM file");
+                return null;
             }
-        }
 
-        encoder.finish();
-        reader.dispose();
-        iis.close();
+            final ImageReader reader = getDicomImageReader();
+            if (null == reader) {
+                logger.error("No DICOM ImageReader found");
+                return null;
+            }
+            reader.setInput(iis, false);
+            DicomImageReadParam param = (DicomImageReadParam) reader.getDefaultReadParam();
+
+            // Calculate frame delay in centiseconds (1/100 second)
+            // Default to 10 fps (100ms = 10 centiseconds) if no frame rate available
+            int delayInCentiseconds = 10;  // Default
+            if (frameRate != null && frameRate > 0) {
+                // Convert FPS to delay in centiseconds
+                delayInCentiseconds = (int) Math.round(100.0 / frameRate);
+                if (delayInCentiseconds < 1) delayInCentiseconds = 1;  // Minimum 1 centisecond
+            }
+
+            logger.debug("Rendering {} frames as animated GIF, delay: {} centiseconds (frameRate: {})",
+                    totalFrames, delayInCentiseconds, frameRate);
+
+            // Create animated GIF encoder
+
+            AnimatedGifEncoder encoder = new AnimatedGifEncoder();
+            encoder.start(baos);
+            encoder.setDelay(delayInCentiseconds * 10);  // setDelay expects milliseconds
+            encoder.setRepeat(0);  // 0 = loop forever
+
+            // Read and encode all frames
+            for (int frameIndex = 0; frameIndex < totalFrames; frameIndex++) {
+                BufferedImage image = reader.read(frameIndex, param);
+                if (image != null) {
+                    if (params != null && params.hasViewport()) {
+                        image = scaleImage(image, params.getViewportWidth(), params.getViewportHeight());
+                    }
+                    encoder.addFrame(image);
+                    logger.trace("Added frame {} to animated GIF", frameIndex + 1);
+                } else {
+                    logger.warn("Failed to read frame {}", frameIndex + 1);
+                }
+            }
+
+            encoder.finish();
+            reader.dispose();
+        }
 
         logger.info("Successfully rendered {} frames as animated GIF, size: {} bytes",
                 totalFrames, baos.size());
@@ -2099,53 +2105,50 @@ public class XnatDicomServiceImpl implements XnatDicomService {
      */
     private byte[] extractFrameViaImageIO(File dicomFile, int frameIndex) {
         try {
-            ImageInputStream iis = ImageIO.createImageInputStream(dicomFile);
-            if (iis == null) {
-                logger.error("Could not create ImageInputStream");
-                return null;
-            }
-
-            Iterator<ImageReader> readers = ImageIO.getImageReadersByFormatName("DICOM");
-            if (!readers.hasNext()) {
-                logger.error("No DICOM ImageReader found");
-                iis.close();
-                return null;
-            }
-
-            ImageReader reader = readers.next();
-            reader.setInput(iis, false);
-
-            int numImages = reader.getNumImages(true);
-            if (frameIndex < 0 || frameIndex >= numImages) {
-                logger.error("Frame index {} out of range (0-{})", frameIndex, numImages - 1);
-                reader.dispose();
-                iis.close();
-                return null;
-            }
-
-            // Read and decompress the frame
-            DicomImageReadParam param = (DicomImageReadParam) reader.getDefaultReadParam();
             BufferedImage image;
-            try {
-                image = reader.read(frameIndex, param);
-            } catch (Throwable readEx) {
-                reader.dispose();
-                iis.close();
-
-                // Check if this is due to missing OpenCV native libraries
-                if (readEx instanceof NoClassDefFoundError || readEx instanceof UnsatisfiedLinkError) {
-                    logger.error("Failed to read frame due to missing native libraries: {}", readEx.getMessage());
-                    throw new UnsupportedOperationException(
-                            "Cannot extract frame data. This DICOM file uses compression formats (JPEG-LS or JPEG 2000) " +
-                            "that require OpenCV native libraries. " +
-                            "Install OpenCV (macOS: 'brew install opencv', Ubuntu: 'apt-get install libopencv-dev') " +
-                            "or use the retrieveInstance endpoint to download the original DICOM file.");
+            try (ImageInputStream iis = ImageIO.createImageInputStream(dicomFile)) {
+                if (iis == null) {
+                    logger.error("Could not create ImageInputStream");
+                    return null;
                 }
-                throw new RuntimeException("Failed to read frame: " + readEx.getMessage(), readEx);
-            }
 
-            reader.dispose();
-            iis.close();
+                ImageReader reader = getDicomImageReader();
+                if (null == reader) {
+                    logger.error("No DICOM ImageReader found");
+                    return null;
+                }
+
+                reader.setInput(iis, false);
+
+                int numImages = reader.getNumImages(true);
+                if (frameIndex < 0 || frameIndex >= numImages) {
+                    logger.error("Frame index {} out of range (0-{})", frameIndex, numImages - 1);
+                    reader.dispose();
+                    return null;
+                }
+
+                // Read and decompress the frame
+                DicomImageReadParam param = (DicomImageReadParam) reader.getDefaultReadParam();
+
+                try {
+                    image = reader.read(frameIndex, param);
+                } catch (Throwable readEx) {
+                    reader.dispose();
+
+                    // Check if this is due to missing OpenCV native libraries
+                    if (readEx instanceof NoClassDefFoundError || readEx instanceof UnsatisfiedLinkError) {
+                        logger.error("Failed to read frame due to missing native libraries: {}", readEx.getMessage());
+                        throw new UnsupportedOperationException(
+                                "Cannot extract frame data. This DICOM file uses compression formats (JPEG-LS or JPEG 2000) " +
+                                        "that require OpenCV native libraries. " +
+                                        "Install OpenCV (macOS: 'brew install opencv', Ubuntu: 'apt-get install libopencv-dev') " +
+                                        "or use the retrieveInstance endpoint to download the original DICOM file.");
+                    }
+                    throw new RuntimeException("Failed to read frame: " + readEx.getMessage(), readEx);
+                }
+
+                reader.dispose();
+            }
 
             if (image == null) {
                 logger.error("Could not read frame {} from DICOM file", frameIndex);
