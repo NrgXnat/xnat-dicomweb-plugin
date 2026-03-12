@@ -36,6 +36,7 @@ package org.nrg.xnat.dicomweb.event;
 
 import org.nrg.xdat.om.WrkWorkflowdata;
 import org.nrg.xdat.om.XnatImagesessiondata;
+import org.nrg.xdat.om.XnatProjectdata;
 import org.nrg.xdat.om.XnatSubjectassessordata;
 import org.nrg.xdat.om.XnatSubjectdata;
 import org.nrg.xdat.schema.SchemaElement;
@@ -117,6 +118,7 @@ public class DicomwebProxyEventListener implements Consumer<Event<WorkflowStatus
         triggerPipelines.put(EventUtils.TRANSFER, false); // Session created
         triggerPipelines.put("Merged", false); // Data added to existing session
         triggerPipelines.put("Removed scan", false);
+        triggerPipelines.put("Removed project", false);
         // Special conversion for DICOM uploaded outside of XNAT's normal
         // importers, it sets proper metadata and converts catalogs to DCM type.
         // It does NOT apply anon, but it will be the first we hear of these files
@@ -154,11 +156,16 @@ public class DicomwebProxyEventListener implements Consumer<Event<WorkflowStatus
         }
 
         // Session Deleted event
-        if (se.instanceOf(XnatImagesessiondata.SCHEMA_ELEMENT_NAME)
-                && pipelineName.equals("Deleted")) {
+        if (se.instanceOf(XnatImagesessiondata.SCHEMA_ELEMENT_NAME) && pipelineName.equals("Deleted")) {
             XnatImagesessiondata sessionData =
                     XnatImagesessiondata.getXnatImagesessiondatasById(id, user, false);
             removeDicomwebData(sessionData, id);
+            return;
+        }
+
+        if (XnatProjectdata.SCHEMA_ELEMENT_NAME.equals(dataType) && pipelineName.equals("Removed Project")) {
+            logger.trace("project {} deleted; removing cached metadata", id);
+            dwInputHandler.deleteDicomwebDataForProject(id);
             return;
         }
 
@@ -246,5 +253,4 @@ public class DicomwebProxyEventListener implements Consumer<Event<WorkflowStatus
                     "Error removing DICOMweb metadata for session {}: {}", id, ex.getMessage(), ex);
         }
     }
-
 }

@@ -292,6 +292,7 @@ public class XnatDicomServiceImpl implements XnatDicomService {
     @Override
     public Attributes retrieveMetadata(UserI user, String projectId, String studyInstanceUID,
                                             String seriesInstanceUID, String sopInstanceUID) {
+      // FIXME: DwInstance may cache metadata; check there first before going to the file system.
         final File dicomFile = getInstance(user, projectId, studyInstanceUID, seriesInstanceUID, sopInstanceUID);
         try (DicomInputStream dis = new DicomInputStream(dicomFile)) {
             dis.setIncludeBulkData(DicomInputStream.IncludeBulkData.URI);
@@ -341,7 +342,7 @@ public class XnatDicomServiceImpl implements XnatDicomService {
                 }
 
                 // Try database cache first
-                results = queryInstancesFromDatabase(targetScan).collect(Collectors.toList());
+                results = queryInstancesFromDatabase(targetScan, projectId).collect(Collectors.toList());
 
                 // Fallback to reading DICOM files if database cache is empty
                 if (results.isEmpty()) {
@@ -461,7 +462,7 @@ public class XnatDicomServiceImpl implements XnatDicomService {
                             }
 
                             // Try database cache first, otherwise walk the scan files.
-                            final long nCached = queryInstancesFromDatabase(scan).count();
+                            final long nCached = queryInstancesFromDatabase(scan, projectId).count();
                             totalInstances += nCached > 0 ? nCached: readInstanceSearchResponseFromScanFiles(scan).count();
                         }
                     }
@@ -1303,16 +1304,17 @@ public class XnatDicomServiceImpl implements XnatDicomService {
      * @param scan the XNAT scan to query instances for
      * @return stream of DICOM Attributes from database, or empty list if not found or on error
      */
-    private Stream<Attributes> queryInstancesFromDatabase(final XnatImagescandataI scan) {
+    private Stream<Attributes> queryInstancesFromDatabase(final XnatImagescandataI scan,
+                                                            final String projectId) {
         final String seriesUid = scan.getUid();
         if (seriesUid == null || seriesUid.isEmpty()) {
             logger.debug("Scan {} has no series UID, cannot query database", scan.getId());
             return Stream.of();
         }
         try {
-            // Query series by UID
-            final DwSeries series = dicomwebDataService.getSeriesByProperty(
-                    "seriesInstanceUid", seriesUid, true
+            // Query series by UID scoped to the project
+            final DwSeries series = dicomwebDataService.getSeriesByUidAndProject(
+                    seriesUid, projectId, true
             );
             if (series == null) {
                 logger.debug("Series {} not found in database cache", seriesUid);
@@ -1324,18 +1326,10 @@ public class XnatDicomServiceImpl implements XnatDicomService {
             exampleInstance.setSeries(series);
 
             return dwInstanceDataService.getAll(exampleInstance, true).stream()
-                    .flatMap(inst -> {
-                        try {
-                            return Optional.ofNullable(inst.getMetadata())
-                                    .map(Stream::of)
-                                    .orElse(Stream.of());
-                        } catch (IOException e) {
-                            logger.warn("Error deserializing metadata for instance {}: {}",
-                                    inst.getSopInstanceUid(),
-                                    e.getMessage());
-                            return Stream.of();
-                        }
-                    });
+                    .flatMap(inst -> Optional.ofNullable(inst.getInstanceResource())
+                            .map(Stream::of)
+                            .orElse(Stream.of())
+                    );
         } catch (Exception e) {
             logger.warn("Error querying instances from database for scan {}: {}",
                     scan.getId(), e.getMessage(), e);
@@ -1394,7 +1388,7 @@ public class XnatDicomServiceImpl implements XnatDicomService {
                         dis.setIncludeBulkData(DicomInputStream.IncludeBulkData.NO);
                         final DwInstance inst = new DwInstance();
                         inst.setData(dis.readDataset());
-                        final Attributes attrs = inst.getMetadata();
+                        final Attributes attrs = inst.getInstanceResource();
                         return Stream.of(attrs);
                     } catch (IOException e) {
                         logger.debug("Error reading DICOM candidate {}", file.getAbsolutePath(), e);
