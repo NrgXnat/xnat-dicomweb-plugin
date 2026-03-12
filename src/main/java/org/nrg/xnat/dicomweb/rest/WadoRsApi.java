@@ -528,13 +528,14 @@ public class WadoRsApi extends AbstractXapiRestController {
             @RequestParam(value = "accept", required = false) String acceptParam,
             HttpServletRequest request,
             HttpServletResponse response) throws IOException {
-        negotiateMediaType(request, acceptParam, RENDERED_TYPES, RENDERED_DEFAULT);
+        String selected = negotiateMediaType(request, acceptParam, RENDERED_TYPES, RENDERED_DEFAULT);
 
         UserI user = getSessionUser();
+        ImageFormat format = ImageFormat.fromMimeType(selected);
         RenderingParams params = RenderingParams.parse(viewport, null, null);
 
         RenderedInstanceResult result =
-                dicomService.retrieveThumbnailStudy(user, projectId, studyUID, params);
+                dicomService.retrieveThumbnailStudy(user, projectId, studyUID, params, format);
 
         writeRenderedResponse(result, studyUID, response);
     }
@@ -566,13 +567,15 @@ public class WadoRsApi extends AbstractXapiRestController {
             @RequestParam(value = "accept", required = false) String acceptParam,
             HttpServletRequest request,
             HttpServletResponse response) throws IOException {
-        negotiateMediaType(request, acceptParam, RENDERED_TYPES, RENDERED_DEFAULT);
+        String selected = negotiateMediaType(request, acceptParam, RENDERED_TYPES, RENDERED_DEFAULT);
 
         UserI user = getSessionUser();
+        ImageFormat format = ImageFormat.fromMimeType(selected);
         RenderingParams params = RenderingParams.parse(viewport, null, null);
 
         RenderedInstanceResult result =
-                dicomService.retrieveThumbnailSeries(user, projectId, studyUID, seriesUID, params);
+                dicomService.retrieveThumbnailSeries(user, projectId, studyUID, seriesUID,
+                        params, format);
 
         writeRenderedResponse(result, seriesUID, response);
     }
@@ -605,14 +608,15 @@ public class WadoRsApi extends AbstractXapiRestController {
             @RequestParam(value = "accept", required = false) String acceptParam,
             HttpServletRequest request,
             HttpServletResponse response) throws IOException {
-        negotiateMediaType(request, acceptParam, RENDERED_TYPES, RENDERED_DEFAULT);
+        String selected = negotiateMediaType(request, acceptParam, RENDERED_TYPES, RENDERED_DEFAULT);
 
         UserI user = getSessionUser();
+        ImageFormat format = ImageFormat.fromMimeType(selected);
         RenderingParams params = RenderingParams.parse(viewport, null, null);
 
         RenderedInstanceResult result =
                 dicomService.retrieveThumbnailInstance(user, projectId, studyUID, seriesUID,
-                        instanceUID, params);
+                        instanceUID, params, format);
 
         writeRenderedResponse(result, instanceUID, response);
     }
@@ -647,14 +651,15 @@ public class WadoRsApi extends AbstractXapiRestController {
             @RequestParam(value = "accept", required = false) String acceptParam,
             HttpServletRequest request,
             HttpServletResponse response) throws IOException {
-        negotiateMediaType(request, acceptParam, RENDERED_TYPES, RENDERED_DEFAULT);
+        String selected = negotiateMediaType(request, acceptParam, RENDERED_TYPES, RENDERED_DEFAULT);
 
         UserI user = getSessionUser();
+        ImageFormat format = ImageFormat.fromMimeType(selected);
         RenderingParams params = RenderingParams.parse(viewport, null, null);
 
         RenderedInstanceResult result =
                 dicomService.retrieveThumbnailFrame(user, projectId, studyUID, seriesUID,
-                        instanceUID, frameList, params);
+                        instanceUID, frameList, params, format);
 
         writeRenderedResponse(result, instanceUID, response);
     }

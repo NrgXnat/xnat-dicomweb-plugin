@@ -1438,7 +1438,7 @@ public class WadoRsApiTest {
         RenderedInstanceResult mockResult =
                 new RenderedInstanceResult(mockImageData, 1, 1, null);
 
-        when(mockDicomService.retrieveThumbnailStudy(any(UserI.class), eq("P"), eq("1"), any()))
+        when(mockDicomService.retrieveThumbnailStudy(any(UserI.class), eq("P"), eq("1"), any(), any()))
             .thenReturn(mockResult);
 
         HttpServletResponse mockResponse = mock(HttpServletResponse.class);
@@ -1457,7 +1457,7 @@ public class WadoRsApiTest {
         RenderedInstanceResult mockResult =
                 new RenderedInstanceResult(mockImageData, 1, 1, null);
 
-        when(mockDicomService.retrieveThumbnailSeries(any(UserI.class), eq("P"), eq("1"), eq("2"), any()))
+        when(mockDicomService.retrieveThumbnailSeries(any(UserI.class), eq("P"), eq("1"), eq("2"), any(), any()))
             .thenReturn(mockResult);
 
         HttpServletResponse mockResponse = mock(HttpServletResponse.class);
@@ -1477,7 +1477,7 @@ public class WadoRsApiTest {
                 new RenderedInstanceResult(mockImageData, 1, 1, null);
 
         when(mockDicomService.retrieveThumbnailInstance(any(UserI.class), eq("P"), eq("1"),
-                eq("2"), eq("3"), any()))
+                eq("2"), eq("3"), any(), any()))
             .thenReturn(mockResult);
 
         HttpServletResponse mockResponse = mock(HttpServletResponse.class);
@@ -1497,7 +1497,7 @@ public class WadoRsApiTest {
                 new RenderedInstanceResult(mockImageData, 10, 5, null);
 
         when(mockDicomService.retrieveThumbnailFrame(any(UserI.class), eq("P"), eq("1"),
-                eq("2"), eq("3"), eq("5"), any()))
+                eq("2"), eq("3"), eq("5"), any(), any()))
             .thenReturn(mockResult);
 
         HttpServletResponse mockResponse = mock(HttpServletResponse.class);
@@ -1512,7 +1512,7 @@ public class WadoRsApiTest {
 
     @Test(expected = ResourceNotFoundException.class)
     public void testRetrieveStudyThumbnail_NotFound() throws Exception {
-        when(mockDicomService.retrieveThumbnailStudy(any(UserI.class), anyString(), anyString(), any()))
+        when(mockDicomService.retrieveThumbnailStudy(any(UserI.class), anyString(), anyString(), any(), any()))
             .thenThrow(new ResourceNotFoundException("Study", "1.2.3"));
 
         HttpServletResponse mockResponse = mock(HttpServletResponse.class);
@@ -1523,7 +1523,7 @@ public class WadoRsApiTest {
     @Test(expected = ResourceNotFoundException.class)
     public void testRetrieveInstanceThumbnail_NotFound() throws Exception {
         when(mockDicomService.retrieveThumbnailInstance(any(UserI.class), anyString(), anyString(),
-                anyString(), anyString(), any()))
+                anyString(), anyString(), any(), any()))
             .thenThrow(new ResourceNotFoundException("Instance", "1.2.3"));
 
         HttpServletResponse mockResponse = mock(HttpServletResponse.class);

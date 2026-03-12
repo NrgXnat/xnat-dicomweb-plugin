@@ -228,7 +228,7 @@ public class XnatDicomServiceImpl implements XnatDicomService {
                 results = filterStudyResults(results, queryAttributes);
             }
 
-            logger.info("Study search for project {} returned {} studies", projectId, results.size());
+            logger.debug("Study search for project {} returned {} studies", projectId, results.size());
 
         } catch (Exception e) {
             logger.error("Error searching studies in project: " + projectId, e);
@@ -280,7 +280,7 @@ public class XnatDicomServiceImpl implements XnatDicomService {
                 results = filterSeriesResults(results, queryAttributes);
             }
 
-            logger.info("Series search for study {} returned {} series", studyInstanceUID, results.size());
+            logger.debug("Series search for study {} returned {} series", studyInstanceUID, results.size());
 
         } catch (Exception e) {
             logger.error("Error searching series in study: " + studyInstanceUID, e);
@@ -366,7 +366,7 @@ public class XnatDicomServiceImpl implements XnatDicomService {
                     results = filterInstanceResults(results, queryAttributes);
                 }
             }
-            logger.info("Instance search for series {} returned {} instances", seriesInstanceUID, results.size());
+            logger.debug("Instance search for series {} returned {} instances", seriesInstanceUID, results.size());
         } catch (Exception e) {
             logger.error("Error searching instances in series: " + seriesInstanceUID, e);
         }
@@ -420,7 +420,7 @@ public class XnatDicomServiceImpl implements XnatDicomService {
     public InputStream retrieveInstance(UserI user, String projectId, String studyInstanceUID,
                                        String seriesInstanceUID, String sopInstanceUID) throws IOException {
         File dicomFile = getInstance(user, projectId, studyInstanceUID, seriesInstanceUID, sopInstanceUID);
-        logger.info("Retrieved instance: {}", sopInstanceUID);
+        logger.trace("Retrieved instance: {}", sopInstanceUID);
         return new FileInputStream(dicomFile);
     }
 
@@ -475,7 +475,7 @@ public class XnatDicomServiceImpl implements XnatDicomService {
                 }
             }
 
-            logger.info("Retrieved study metadata for study: {} ({} sessions)", studyInstanceUID, sessions.size());
+            logger.debug("Retrieved study metadata for study: {} ({} sessions)", studyInstanceUID, sessions.size());
             return attrs;
 
         } catch (Exception e) {
@@ -511,7 +511,7 @@ public class XnatDicomServiceImpl implements XnatDicomService {
             }
 
             logger.debug("Found {} scans across {} sessions for study {}", totalScans, sessions.size(), studyInstanceUID);
-            logger.info("Retrieved metadata for {} instances in study {}", allInstances.size(), studyInstanceUID);
+            logger.debug("Retrieved metadata for {} instances in study {}", allInstances.size(), studyInstanceUID);
         } catch (Exception e) {
             logger.error("Error retrieving all instance metadata for study {}", studyInstanceUID, e);
         }
@@ -596,35 +596,41 @@ public class XnatDicomServiceImpl implements XnatDicomService {
 
     @Override
     public RenderedInstanceResult retrieveThumbnailStudy(UserI user, String projectId,
-                                                          String studyInstanceUID, RenderingParams params) {
+                                                          String studyInstanceUID, RenderingParams params,
+                                                          ImageFormat format) {
         RenderingParams effective = RenderingParams.withDefaultThumbnailSize(params);
-        return retrieveRenderedStudy(user, projectId, studyInstanceUID, null, ImageFormat.JPEG, effective);
+        ImageFormat effectiveFormat = format != null ? format : ImageFormat.JPEG;
+        return retrieveRenderedStudy(user, projectId, studyInstanceUID, null, effectiveFormat, effective);
     }
 
     @Override
     public RenderedInstanceResult retrieveThumbnailSeries(UserI user, String projectId,
                                                            String studyInstanceUID, String seriesInstanceUID,
-                                                           RenderingParams params) {
+                                                           RenderingParams params, ImageFormat format) {
         RenderingParams effective = RenderingParams.withDefaultThumbnailSize(params);
+        ImageFormat effectiveFormat = format != null ? format : ImageFormat.JPEG;
         return retrieveRenderedSeries(user, projectId, studyInstanceUID, seriesInstanceUID,
-                null, ImageFormat.JPEG, effective);
+                null, effectiveFormat, effective);
     }
 
     @Override
     public RenderedInstanceResult retrieveThumbnailInstance(UserI user, String projectId,
                                                             String studyInstanceUID, String seriesInstanceUID,
-                                                            String sopInstanceUID, RenderingParams params) {
+                                                            String sopInstanceUID, RenderingParams params,
+                                                            ImageFormat format) {
         RenderingParams effective = RenderingParams.withDefaultThumbnailSize(params);
+        ImageFormat effectiveFormat = format != null ? format : ImageFormat.JPEG;
         return retrieveRenderedInstance(user, projectId, studyInstanceUID, seriesInstanceUID,
-                sopInstanceUID, null, ImageFormat.JPEG, effective);
+                sopInstanceUID, null, effectiveFormat, effective);
     }
 
     @Override
     public RenderedInstanceResult retrieveThumbnailFrame(UserI user, String projectId,
                                                           String studyInstanceUID, String seriesInstanceUID,
                                                           String sopInstanceUID, String frameList,
-                                                          RenderingParams params) {
+                                                          RenderingParams params, ImageFormat format) {
         RenderingParams effective = RenderingParams.withDefaultThumbnailSize(params);
+        ImageFormat effectiveFormat = format != null ? format : ImageFormat.JPEG;
         // Use the first frame number from the list
         Integer frameNumber = null;
         if (frameList != null && !frameList.isEmpty()) {
@@ -635,20 +641,35 @@ public class XnatDicomServiceImpl implements XnatDicomService {
             }
         }
         return retrieveRenderedInstance(user, projectId, studyInstanceUID, seriesInstanceUID,
-                sopInstanceUID, frameNumber, ImageFormat.JPEG, effective);
+                sopInstanceUID, frameNumber, effectiveFormat, effective);
     }
 
+    /**
+     * Render a DICOM instance to the requested image format.
+     * Dispatches to the appropriate per-format rendering method.
+     *
+     * @param dicomFile the DICOM file to render
+     * @param identifier instance identifier for logging and error messages
+     * @param frameNumber requested frame number (1-based), or null for default
+     * @param format output image format (JPEG, PNG, or GIF)
+     * @param params rendering parameters (viewport, window, quality), may be null
+     * @return rendered image result, or null if rendering failed
+     */
     private RenderedInstanceResult renderInstance(File dicomFile, String identifier,
                                                    Integer frameNumber, ImageFormat format,
                                                    RenderingParams params) {
-        logger.info("Rendering instance: {} (frame: {}, format: {})", identifier,
+        logger.debug("Rendering instance: {} (frame: {}, format: {})", identifier,
                 frameNumber != null ? frameNumber : "default", format);
 
         try {
-            if (format == ImageFormat.GIF) {
-                return renderDicomToGif(dicomFile, frameNumber, params);
-            } else {
-                return renderDicomToJpeg(dicomFile, frameNumber, params);
+            switch (format) {
+                case GIF:
+                    return renderDicomToGif(dicomFile, frameNumber, params);
+                case PNG:
+                    return renderDicomToPng(dicomFile, frameNumber, params);
+                case JPEG:
+                default:
+                    return renderDicomToJpeg(dicomFile, frameNumber, params);
             }
         } catch (UnsupportedOperationException e) {
             throw e;
@@ -669,6 +690,13 @@ public class XnatDicomServiceImpl implements XnatDicomService {
     /**
      * Select a representative DICOM file for study or series level rendering.
      * Picks the middle instance of the specified (or first) series.
+     *
+     * @param user the authenticated user
+     * @param projectId XNAT project identifier
+     * @param studyUID Study Instance UID
+     * @param seriesUID Series Instance UID, or null to use the first series in the study
+     * @return the DICOM file for the representative instance
+     * @throws ResourceNotFoundException if the study or series contains no instances
      */
     private File getRepresentativeInstance(UserI user, String projectId,
                                             String studyUID, String seriesUID) {
@@ -1532,136 +1560,176 @@ public class XnatDicomServiceImpl implements XnatDicomService {
     }
 
     /**
-     * Render a DICOM file to JPEG format with frame selection support
-     * @param dicomFile DICOM file to render
-     * @param requestedFrame requested frame number (1-based), null for default (middle frame)
-     * @return RenderedInstanceResult with image data and metadata
+     * Intermediate result from reading and transforming a DICOM frame,
+     * before encoding to a specific image format.
      */
-    private RenderedInstanceResult renderDicomToJpeg(File dicomFile, Integer requestedFrame, RenderingParams params) {
-        try {
-            // First, read DICOM metadata to determine frame count, frame rate, and transfer syntax
-            int totalFrames = 1;
-            Double frameRate = null;
-            String transferSyntax = null;
+    private static class DecodedFrame {
+        final BufferedImage image;
+        final int totalFrames;
+        final int frameIndex; // 0-based
+        final Double frameRate;
 
-            try (DicomInputStream dis = new DicomInputStream(dicomFile)) {
-                // Read transfer syntax for logging
-                transferSyntax = dis.getTransferSyntax();
+        DecodedFrame(BufferedImage image, int totalFrames, int frameIndex, Double frameRate) {
+            this.image = image;
+            this.totalFrames = totalFrames;
+            this.frameIndex = frameIndex;
+            this.frameRate = frameRate;
+        }
+    }
 
-                Attributes attrs = dis.readDataset(-1, -1);
-                totalFrames = attrs.getInt(Tag.NumberOfFrames, 1);
+    /**
+     * Read a DICOM file and decode a single frame, applying window and viewport transforms.
+     * This is the shared pipeline for JPEG and PNG rendering.
+     *
+     * @param dicomFile DICOM file to read
+     * @param requestedFrame requested frame number (1-based), null for default (middle frame)
+     * @param params rendering parameters (window, viewport)
+     * @return decoded frame with metadata, or null if the image could not be read
+     */
+    private DecodedFrame decodeDicomFrame(File dicomFile, Integer requestedFrame,
+                                          RenderingParams params) throws Exception {
+        // Read DICOM metadata to determine frame count, frame rate, and transfer syntax
+        int totalFrames = 1;
+        Double frameRate = null;
+        String transferSyntax = null;
 
-                // Try to extract frame rate from various DICOM tags
-                frameRate = extractFrameRate(attrs);
+        try (DicomInputStream dis = new DicomInputStream(dicomFile)) {
+            transferSyntax = dis.getTransferSyntax();
+            Attributes attrs = dis.readDataset(-1, -1);
+            totalFrames = attrs.getInt(Tag.NumberOfFrames, 1);
+            frameRate = extractFrameRate(attrs);
+        }
+
+        // Determine which frame to render (0-based index)
+        int frameIndex;
+        if (requestedFrame != null) {
+            frameIndex = requestedFrame - 1;
+            if (frameIndex < 0 || frameIndex >= totalFrames) {
+                logger.warn("Requested frame {} out of range [1-{}], using middle frame",
+                        requestedFrame, totalFrames);
+                frameIndex = totalFrames / 2;
             }
+        } else {
+            frameIndex = totalFrames > 1 ? totalFrames / 2 : 0;
+        }
 
-            // Determine which frame to render (0-based index)
-            int frameIndex;
-            if (requestedFrame != null) {
-                // User specified a frame (convert from 1-based to 0-based)
-                frameIndex = requestedFrame - 1;
-                if (frameIndex < 0 || frameIndex >= totalFrames) {
-                    logger.warn("Requested frame {} out of range [1-{}], using middle frame",
-                            requestedFrame, totalFrames);
-                    frameIndex = totalFrames / 2;
-                }
-            } else {
-                // Default to middle frame for multi-frame, first frame for single-frame
-                frameIndex = totalFrames > 1 ? totalFrames / 2 : 0;
-            }
+        logger.debug("Rendering frame {} of {} (frameRate: {})", frameIndex + 1, totalFrames, frameRate);
 
-            logger.debug("Rendering frame {} of {} (frameRate: {})", frameIndex + 1, totalFrames, frameRate);
-
-            // Use ImageIO with DICOM plugin to read the image
-            BufferedImage bufferedImage;
-            try (ImageInputStream iis = ImageIO.createImageInputStream(dicomFile)) {
-                if (iis == null) {
-                    logger.error("Could not create ImageInputStream for DICOM file");
-                    return null;
-                }
-
-                ImageReader reader = getDicomImageReader();
-                if (null == reader) {
-                    logger.error("No DICOM ImageReader found");
-                    return null;
-                }
-                reader.setInput(iis, false);
-
-                DicomImageReadParam param = (DicomImageReadParam) reader.getDefaultReadParam();
-
-                // Apply window center/width if specified
-                if (params != null && params.hasWindow()) {
-                    param.setWindowCenter(params.getWindowCenter().floatValue());
-                    param.setWindowWidth(params.getWindowWidth().floatValue());
-                    param.setAutoWindowing(false);
-                }
-
-                // Read the selected frame
-
-                try {
-                    bufferedImage = reader.read(frameIndex, param);
-                } catch (Throwable readEx) {  // Catch Error (NoClassDefFoundError) and Exception
-                    reader.dispose();
-
-                    // Check if this is due to missing codec support for advanced compression
-                    if (isAdvancedCompressionFormat(transferSyntax) &&
-                            isNativeLibraryMissing(readEx)) {
-                        String tsName = getTransferSyntaxName(transferSyntax);
-
-                        // Determine specific error based on exception type
-                        String detailedMessage;
-                        if (hasUnsatisfiedLinkError(readEx)) {
-                            // dcm4che-imageio-opencv.jar is present, but native OpenCV library is missing
-                            logger.error("Failed to render image with transfer syntax {} ({}). " +
-                                            "dcm4che-imageio-opencv is installed, but native OpenCV libraries are not found. " +
-                                            "Please install OpenCV: " +
-                                            "macOS: 'brew install opencv' | " +
-                                            "Ubuntu: 'sudo apt-get install libopencv-dev' | " +
-                                            "CentOS: 'sudo yum install opencv-devel'",
-                                    transferSyntax, tsName);
-                            detailedMessage = String.format(
-                                    "Cannot render image with transfer syntax: %s. " +
-                                            "Native OpenCV libraries are not installed on the system. " +
-                                            "To enable rendering of JPEG-LS and JPEG 2000 images, install OpenCV:\n" +
-                                            "  • macOS: brew install opencv\n" +
-                                            "  • Ubuntu/Debian: sudo apt-get install libopencv-dev\n" +
-                                            "  • CentOS/RHEL: sudo yum install opencv-devel\n" +
-                                            "Alternatively, use the retrieveInstance endpoint to download the original DICOM file.",
-                                    tsName);
-                        } else {
-                            // Other codec-related errors (likely missing ImageReader)
-                            logger.error("Failed to render image with transfer syntax {} ({}). " +
-                                            "This format requires additional codec support that is not available. " +
-                                            "See plugin documentation for installation instructions.",
-                                    transferSyntax, tsName);
-                            detailedMessage = String.format(
-                                    "Cannot render image with transfer syntax: %s. " +
-                                            "This compression format requires additional codec support (e.g., OpenCV libraries). " +
-                                            "Most DICOM files use JPEG Baseline compression which is fully supported. " +
-                                            "To access this file, use the retrieveInstance endpoint to download the original DICOM file.",
-                                    tsName);
-                        }
-
-                        throw new UnsupportedOperationException(detailedMessage);
-                    }
-                    throw readEx; // Re-throw if not a native library issue
-                }
-
-                reader.dispose();
-            }
-
-            if (bufferedImage == null) {
-                logger.error("Could not read image from DICOM file");
+        // Use ImageIO with DICOM plugin to read the image
+        BufferedImage bufferedImage;
+        try (ImageInputStream iis = ImageIO.createImageInputStream(dicomFile)) {
+            if (iis == null) {
+                logger.error("Could not create ImageInputStream for DICOM file");
                 return null;
             }
 
-            // Apply viewport scaling if specified
-            if (params != null && params.hasViewport()) {
-                bufferedImage = scaleImage(bufferedImage,
-                        params.getViewportWidth(), params.getViewportHeight());
+            ImageReader reader = getDicomImageReader();
+            if (null == reader) {
+                logger.error("No DICOM ImageReader found");
+                return null;
+            }
+            reader.setInput(iis, false);
+
+            DicomImageReadParam param = (DicomImageReadParam) reader.getDefaultReadParam();
+
+            // Apply window center/width if specified
+            if (params != null && params.hasWindow()) {
+                param.setWindowCenter(params.getWindowCenter().floatValue());
+                param.setWindowWidth(params.getWindowWidth().floatValue());
+                param.setAutoWindowing(false);
             }
 
-            // Convert to JPEG
+            try {
+                bufferedImage = reader.read(frameIndex, param);
+            } catch (Throwable readEx) {
+                reader.dispose();
+                handleCodecError(readEx, transferSyntax);
+                throw readEx; // Re-throw if not a native library issue
+            }
+
+            reader.dispose();
+        }
+
+        if (bufferedImage == null) {
+            logger.error("Could not read image from DICOM file");
+            return null;
+        }
+
+        // Apply viewport scaling if specified
+        if (params != null && params.hasViewport()) {
+            bufferedImage = scaleImage(bufferedImage,
+                    params.getViewportWidth(), params.getViewportHeight());
+        }
+
+        return new DecodedFrame(bufferedImage, totalFrames, frameIndex, frameRate);
+    }
+
+    /**
+     * Check if a read error is due to missing codec support for advanced compression
+     * formats and throw a descriptive UnsupportedOperationException if so.
+     * If the error is not codec-related, this method returns without throwing.
+     *
+     * @param readEx the exception thrown during image reading
+     * @param transferSyntax the DICOM transfer syntax UID of the image
+     * @throws UnsupportedOperationException if the error is due to missing native codec libraries
+     */
+    private void handleCodecError(Throwable readEx, String transferSyntax) {
+        if (!isAdvancedCompressionFormat(transferSyntax) || !isNativeLibraryMissing(readEx)) {
+            return;
+        }
+        String tsName = getTransferSyntaxName(transferSyntax);
+
+        String detailedMessage;
+        if (hasUnsatisfiedLinkError(readEx)) {
+            logger.error("Failed to render image with transfer syntax {} ({}). " +
+                            "dcm4che-imageio-opencv is installed, but native OpenCV libraries are not found. " +
+                            "Please install OpenCV: " +
+                            "macOS: 'brew install opencv' | " +
+                            "Ubuntu: 'sudo apt-get install libopencv-dev' | " +
+                            "CentOS: 'sudo yum install opencv-devel'",
+                    transferSyntax, tsName);
+            detailedMessage = String.format(
+                    "Cannot render image with transfer syntax: %s. " +
+                            "Native OpenCV libraries are not installed on the system. " +
+                            "To enable rendering of JPEG-LS and JPEG 2000 images, install OpenCV:\n" +
+                            "  • macOS: brew install opencv\n" +
+                            "  • Ubuntu/Debian: sudo apt-get install libopencv-dev\n" +
+                            "  • CentOS/RHEL: sudo yum install opencv-devel\n" +
+                            "Alternatively, use the retrieveInstance endpoint to download the original DICOM file.",
+                    tsName);
+        } else {
+            logger.error("Failed to render image with transfer syntax {} ({}). " +
+                            "This format requires additional codec support that is not available. " +
+                            "See plugin documentation for installation instructions.",
+                    transferSyntax, tsName);
+            detailedMessage = String.format(
+                    "Cannot render image with transfer syntax: %s. " +
+                            "This compression format requires additional codec support (e.g., OpenCV libraries). " +
+                            "Most DICOM files use JPEG Baseline compression which is fully supported. " +
+                            "To access this file, use the retrieveInstance endpoint to download the original DICOM file.",
+                    tsName);
+        }
+
+        throw new UnsupportedOperationException(detailedMessage);
+    }
+
+    /**
+     * Render a DICOM file to JPEG format.
+     * Decodes the requested frame, then encodes as JPEG with optional quality control.
+     *
+     * @param dicomFile DICOM file to render
+     * @param requestedFrame requested frame number (1-based), or null for default (middle frame)
+     * @param params rendering parameters (window, viewport, quality), may be null
+     * @return rendered JPEG image result, or null if rendering failed
+     */
+    private RenderedInstanceResult renderDicomToJpeg(File dicomFile, Integer requestedFrame,
+                                                     RenderingParams params) {
+        try {
+            DecodedFrame frame = decodeDicomFrame(dicomFile, requestedFrame, params);
+            if (frame == null) {
+                return null;
+            }
+
             ByteArrayOutputStream baos = new ByteArrayOutputStream();
             if (params != null && params.getQuality() != null) {
                 ImageWriter jpegWriter = ImageIO.getImageWritersByFormatName("JPEG").next();
@@ -1669,21 +1737,52 @@ public class XnatDicomServiceImpl implements XnatDicomService {
                 writeParam.setCompressionMode(ImageWriteParam.MODE_EXPLICIT);
                 writeParam.setCompressionQuality(params.getQuality() / 100f);
                 jpegWriter.setOutput(ImageIO.createImageOutputStream(baos));
-                jpegWriter.write(null, new IIOImage(bufferedImage, null, null), writeParam);
+                jpegWriter.write(null, new IIOImage(frame.image, null, null), writeParam);
                 jpegWriter.dispose();
             } else {
-                ImageIO.write(bufferedImage, "JPEG", baos);
+                ImageIO.write(frame.image, "JPEG", baos);
             }
 
             logger.debug("Successfully rendered DICOM to JPEG, size: {} bytes", baos.size());
-
-            return new RenderedInstanceResult(baos.toByteArray(), totalFrames, frameIndex + 1, frameRate);
+            return new RenderedInstanceResult(baos.toByteArray(), frame.totalFrames,
+                    frame.frameIndex + 1, frame.frameRate, ImageFormat.JPEG);
 
         } catch (UnsupportedOperationException e) {
-            // Re-throw to preserve the helpful error message
             throw e;
         } catch (Exception e) {
             logger.error("Error rendering DICOM to JPEG", e);
+            return null;
+        }
+    }
+
+    /**
+     * Render a DICOM file to PNG format.
+     * Decodes the requested frame, then encodes as lossless PNG.
+     *
+     * @param dicomFile DICOM file to render
+     * @param requestedFrame requested frame number (1-based), or null for default (middle frame)
+     * @param params rendering parameters (window, viewport), may be null; quality is ignored for PNG
+     * @return rendered PNG image result, or null if rendering failed
+     */
+    private RenderedInstanceResult renderDicomToPng(File dicomFile, Integer requestedFrame,
+                                                    RenderingParams params) {
+        try {
+            DecodedFrame frame = decodeDicomFrame(dicomFile, requestedFrame, params);
+            if (frame == null) {
+                return null;
+            }
+
+            ByteArrayOutputStream baos = new ByteArrayOutputStream();
+            ImageIO.write(frame.image, "PNG", baos);
+
+            logger.debug("Successfully rendered DICOM to PNG, size: {} bytes", baos.size());
+            return new RenderedInstanceResult(baos.toByteArray(), frame.totalFrames,
+                    frame.frameIndex + 1, frame.frameRate, ImageFormat.PNG);
+
+        } catch (UnsupportedOperationException e) {
+            throw e;
+        } catch (Exception e) {
+            logger.error("Error rendering DICOM to PNG", e);
             return null;
         }
     }
@@ -1957,7 +2056,7 @@ public class XnatDicomServiceImpl implements XnatDicomService {
             reader.dispose();
         }
 
-        logger.info("Successfully rendered {} frames as animated GIF, size: {} bytes",
+        logger.trace("Successfully rendered {} frames as animated GIF, size: {} bytes",
                 totalFrames, baos.size());
 
         return new RenderedInstanceResult(baos.toByteArray(), totalFrames, totalFrames,
@@ -1966,6 +2065,11 @@ public class XnatDicomServiceImpl implements XnatDicomService {
 
     /**
      * Scale a BufferedImage to target dimensions using bilinear interpolation.
+     *
+     * @param src the source image to scale
+     * @param targetWidth desired width in pixels
+     * @param targetHeight desired height in pixels
+     * @return a new BufferedImage scaled to the target dimensions
      */
     private BufferedImage scaleImage(BufferedImage src, int targetWidth, int targetHeight) {
         int type = src.getType() != 0 ? src.getType() : BufferedImage.TYPE_INT_RGB;
@@ -1994,7 +2098,7 @@ public class XnatDicomServiceImpl implements XnatDicomService {
             Attributes attrs = dis.readDataset(-1, -1);
             int numberOfFrames = attrs.getInt(Tag.NumberOfFrames, 1);
 
-            logger.info("Retrieving frames {} from instance {} (total frames: {})",
+            logger.trace("Retrieving frames {} from instance {} (total frames: {})",
                     frameNumbers, sopInstanceUID, numberOfFrames);
 
             for (Integer frameNumber : frameList) {
@@ -2013,7 +2117,7 @@ public class XnatDicomServiceImpl implements XnatDicomService {
                     500, "ReadError");
         }
 
-        logger.info("Retrieved {} frame(s) from instance: {}", frames.size(), sopInstanceUID);
+        logger.trace("Retrieved {} frame(s) from instance: {}", frames.size(), sopInstanceUID);
         return frames;
     }
 
@@ -2539,7 +2643,7 @@ public class XnatDicomServiceImpl implements XnatDicomService {
             // Verify project access
             XnatProjectdata project = XnatProjectdata.getXnatProjectdatasById(projectId, user, false);
             if (project == null) {
-                logger.info("User {} does not have access to project: {}", user.getLogin(), projectId);
+                logger.debug("User {} does not have access to project: {}", user.getLogin(), projectId);
                 throw new SecurityException("No access to project: " + projectId);
             }
 
@@ -2583,7 +2687,7 @@ public class XnatDicomServiceImpl implements XnatDicomService {
                 String studyInstanceUID = entry.getKey();
                 java.util.List<DicomInstance> instances = entry.getValue();
 
-                logger.info("STOW-RS: Processing study {} with {} instances", studyInstanceUID, instances.size());
+                logger.trace("STOW-RS: Processing study {} with {} instances", studyInstanceUID, instances.size());
 
                 try {
                     // Get or create prearchive session for this StudyInstanceUID
@@ -2591,7 +2695,7 @@ public class XnatDicomServiceImpl implements XnatDicomService {
                         getOrCreatePrearchiveSession(project, user, studyInstanceUID, instances.get(0).getAttributes());
 
                     File sessionDir = new File(session.getUrl());
-                    logger.info("STOW-RS: Using session directory: {}", sessionDir.getAbsolutePath());
+                    logger.trace("STOW-RS: Using session directory: {}", sessionDir.getAbsolutePath());
 
                     // Write each instance to the session
                     for (DicomInstance instance : instances) {
@@ -2605,7 +2709,7 @@ public class XnatDicomServiceImpl implements XnatDicomService {
                                 dos.writeDataset(null, instance.getAttributes());
                             }
 
-                            logger.info("STOW-RS: Wrote DICOM file: {}", dicomFile.getAbsolutePath());
+                            logger.trace("STOW-RS: Wrote DICOM file: {}", dicomFile.getAbsolutePath());
                             statuses.add(new InstanceStatus(instance.getSopInstanceUID(), instance.getSopClassUID(), true, null, 0));
                             successCount++;
 
@@ -2638,7 +2742,7 @@ public class XnatDicomServiceImpl implements XnatDicomService {
             throw new RuntimeException("Storage failed: " + e.getMessage(), e);
         }
 
-        logger.info("STOW-RS: Completed - {} succeeded, {} failed", successCount, failureCount);
+        logger.debug("STOW-RS: Completed - {} succeeded, {} failed", successCount, failureCount);
         return new StowRsResponse(successCount, failureCount, statuses);
     }
 

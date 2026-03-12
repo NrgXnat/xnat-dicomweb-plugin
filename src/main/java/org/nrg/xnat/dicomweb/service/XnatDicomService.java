@@ -152,10 +152,12 @@ public interface XnatDicomService {
      * @param projectId XNAT project identifier
      * @param studyInstanceUID Study Instance UID
      * @param params rendering parameters (viewport defaults to 128x128 if not specified)
+     * @param format output image format (defaults to JPEG if null)
      * @return RenderedInstanceResult containing thumbnail image data
      */
     RenderedInstanceResult retrieveThumbnailStudy(UserI user, String projectId,
-                                                  String studyInstanceUID, RenderingParams params);
+                                                  String studyInstanceUID, RenderingParams params,
+                                                  ImageFormat format);
 
     /**
      * Retrieve a thumbnail for a series.
@@ -165,11 +167,12 @@ public interface XnatDicomService {
      * @param studyInstanceUID Study Instance UID
      * @param seriesInstanceUID Series Instance UID
      * @param params rendering parameters (viewport defaults to 128x128 if not specified)
+     * @param format output image format (defaults to JPEG if null)
      * @return RenderedInstanceResult containing thumbnail image data
      */
     RenderedInstanceResult retrieveThumbnailSeries(UserI user, String projectId,
                                                    String studyInstanceUID, String seriesInstanceUID,
-                                                   RenderingParams params);
+                                                   RenderingParams params, ImageFormat format);
 
     /**
      * Retrieve a thumbnail for an instance.
@@ -180,11 +183,13 @@ public interface XnatDicomService {
      * @param seriesInstanceUID Series Instance UID
      * @param sopInstanceUID SOP Instance UID
      * @param params rendering parameters (viewport defaults to 128x128 if not specified)
+     * @param format output image format (defaults to JPEG if null)
      * @return RenderedInstanceResult containing thumbnail image data
      */
     RenderedInstanceResult retrieveThumbnailInstance(UserI user, String projectId,
                                                     String studyInstanceUID, String seriesInstanceUID,
-                                                    String sopInstanceUID, RenderingParams params);
+                                                    String sopInstanceUID, RenderingParams params,
+                                                    ImageFormat format);
 
     /**
      * Retrieve a thumbnail for specific frame(s).
@@ -196,12 +201,13 @@ public interface XnatDicomService {
      * @param sopInstanceUID SOP Instance UID
      * @param frameList comma-separated list of frame numbers (1-based)
      * @param params rendering parameters (viewport defaults to 128x128 if not specified)
+     * @param format output image format (defaults to JPEG if null)
      * @return RenderedInstanceResult containing thumbnail image data
      */
     RenderedInstanceResult retrieveThumbnailFrame(UserI user, String projectId,
                                                   String studyInstanceUID, String seriesInstanceUID,
                                                   String sopInstanceUID, String frameList,
-                                                  RenderingParams params);
+                                                  RenderingParams params, ImageFormat format);
 
     /**
      * Retrieve specific frame(s) from a DICOM instance
