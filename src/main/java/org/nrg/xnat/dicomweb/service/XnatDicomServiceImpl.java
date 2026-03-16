@@ -296,11 +296,7 @@ public class XnatDicomServiceImpl implements XnatDicomService {
         final File dicomFile = getInstance(user, projectId, studyInstanceUID, seriesInstanceUID, sopInstanceUID);
         try (DicomInputStream dis = new DicomInputStream(dicomFile)) {
             dis.setIncludeBulkData(DicomInputStream.IncludeBulkData.URI);
-            Attributes fmi = dis.readFileMetaInformation();
-            Attributes attrs = dis.readDataset();
-            if (fmi != null) {
-                attrs.addAll(fmi);
-            }
+            Attributes attrs = dis.readDataset();   // FMI not included per PS 3.18 10.4.1.1.2 Metadata Resources
             return attrs;
         } catch (IOException e) {
             logger.error("Error reading DICOM file {}", dicomFile.getAbsolutePath(), e);
@@ -1362,9 +1358,7 @@ public class XnatDicomServiceImpl implements XnatDicomService {
                 .flatMap(file -> {
                     try (DicomInputStream dis = new DicomInputStream(file)) {
                         dis.setIncludeBulkData(DicomInputStream.IncludeBulkData.URI);
-                        final Optional<Attributes> fmi = Optional.ofNullable(dis.readFileMetaInformation());
                         final Attributes attrs = dis.readDataset();
-                        fmi.ifPresent(attrs::addAll);
                         return Stream.of(attrs);
                     } catch (IOException e) {
                         logger.debug("Error reading DICOM candidate {}", file.getAbsolutePath(), e);
