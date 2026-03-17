@@ -15,12 +15,12 @@ This XNAT plugin provides a DICOMweb-compliant REST API that exposes XNAT projec
 
 1. Build the plugin:
    ```bash
-   ./gradlew jar
+   ./gradlew xnatPluginJar
    ```
 
 2. Copy the generated JAR file from `build/libs/` to your XNAT plugins directory:
    ```bash
-   cp build/libs/xnat-dicomweb-proxy-1.1.2.jar /path/to/xnat/plugins/
+   cp build/libs/xnat-dicomweb-proxy-1.2.0-rc1-xpl.jar /path/to/xnat/plugins/
    ```
 
 3. Restart XNAT

@@ -16,6 +16,11 @@ public enum ImageFormat {
     JPEG("image/jpeg"),
 
     /**
+     * PNG format - lossless single static image
+     */
+    PNG("image/png"),
+
+    /**
      * GIF format - can be static or animated for multi-frame instances
      */
     GIF("image/gif");
@@ -40,6 +45,9 @@ public enum ImageFormat {
         String lower = mimeType.toLowerCase();
         if (lower.contains("image/gif") || lower.contains("gif")) {
             return GIF;
+        }
+        if (lower.contains("image/png") || lower.contains("png")) {
+            return PNG;
         }
         return JPEG;
     }

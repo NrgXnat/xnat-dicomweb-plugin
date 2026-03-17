@@ -234,4 +234,46 @@ public class BulkDataHandler {
     public static boolean isBulkDataTag(int tag) {
         return BULK_DATA_TAGS.contains(tag);
     }
+
+    /**
+     * DICOM tags that represent pixel data.
+     */
+    private static final Set<Integer> PIXEL_DATA_TAGS = new HashSet<>();
+
+    static {
+        PIXEL_DATA_TAGS.add(Tag.PixelData);           // 7FE0,0010
+        PIXEL_DATA_TAGS.add(Tag.FloatPixelData);       // 7FE0,0008
+        PIXEL_DATA_TAGS.add(Tag.DoubleFloatPixelData); // 7FE0,0009
+    }
+
+    /**
+     * Check if a tag is a pixel data tag.
+     *
+     * @param tag DICOM tag
+     * @return true if tag is PixelData, FloatPixelData, or DoubleFloatPixelData
+     */
+    public static boolean isPixelDataTag(int tag) {
+        return PIXEL_DATA_TAGS.contains(tag);
+    }
+
+    /**
+     * A single bulk data element extracted from a DICOM instance.
+     */
+    public static class BulkDataItem {
+        private final String contentLocation;
+        private final byte[] data;
+
+        public BulkDataItem(String contentLocation, byte[] data) {
+            this.contentLocation = contentLocation;
+            this.data = data;
+        }
+
+        public String getContentLocation() {
+            return contentLocation;
+        }
+
+        public byte[] getData() {
+            return data;
+        }
+    }
 }

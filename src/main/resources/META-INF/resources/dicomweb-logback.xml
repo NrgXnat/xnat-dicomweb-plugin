@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<configuration>
+  <appender name="dicomweb" class="ch.qos.logback.core.rolling.RollingFileAppender">
+    <file>${xnat.home}/logs/dicomweb.log</file>
+    <append>false</append>
+    <encoder>
+      <pattern>%d [%t] %-5p %c - %m%n</pattern>
+    </encoder>
+    <rollingPolicy class="ch.qos.logback.core.rolling.TimeBasedRollingPolicy">
+      <fileNamePattern>${xnat.home}/logs/dicomweb.log.%d{yyyy-MM-dd}</fileNamePattern>
+    </rollingPolicy>
+  </appender>
+  <logger additivity="false" name="org.nrg.xnat.dicomweb" level="INFO">
+    <appender-ref ref="dicomweb"/>
+  </logger>
+</configuration>

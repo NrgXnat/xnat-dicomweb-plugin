@@ -1,5 +1,29 @@
 package org.nrg.xnat.dicomweb.service;
 
+import com.madgag.gif.fmsware.AnimatedGifEncoder;
+import java.awt.Graphics2D;
+import java.awt.RenderingHints;
+import java.awt.image.BufferedImage;
+import java.io.ByteArrayOutputStream;
+import java.io.File;
+import java.io.FileInputStream;
+import java.io.IOException;
+import java.io.InputStream;
+import java.text.SimpleDateFormat;
+import java.util.ArrayList;
+import java.util.LinkedHashSet;
+import java.util.List;
+import java.util.Optional;
+import java.util.Set;
+import java.util.stream.Collectors;
+import java.util.stream.Stream;
+import java.util.stream.StreamSupport;
+import javax.imageio.IIOImage;
+import javax.imageio.ImageIO;
+import javax.imageio.ImageReader;
+import javax.imageio.ImageWriteParam;
+import javax.imageio.ImageWriter;
+import javax.imageio.stream.ImageInputStream;
 import org.apache.commons.lang3.StringUtils;
 import org.dcm4che3.data.Attributes;
 import org.dcm4che3.data.Tag;
@@ -9,44 +33,90 @@ import org.dcm4che3.io.DicomInputStream;
 import org.nrg.action.ServerException;
 import org.nrg.xdat.XDAT;
 import org.nrg.xdat.bean.CatDcmentryBean;
-import org.nrg.xdat.model.CatEntryI;
+import org.nrg.xdat.model.XnatAbstractresourceI;
 import org.nrg.xdat.model.XnatExperimentdataShareI;
+import org.nrg.xdat.model.XnatImagescandataI;
 import org.nrg.xdat.model.XnatImagescandataShareI;
 import org.nrg.xdat.model.XnatProjectparticipantI;
-import org.nrg.xdat.om.*;
+import org.nrg.xdat.om.XnatAbstractresource;
+import org.nrg.xdat.om.XnatImagescandata;
+import org.nrg.xdat.om.XnatImagesessiondata;
+import org.nrg.xdat.om.XnatProjectdata;
+import org.nrg.xdat.om.XnatResourcecatalog;
+import org.nrg.xdat.om.XnatSubjectdata;
 import org.nrg.xdat.security.helpers.Permissions;
 import org.nrg.xft.XFTTable;
 import org.nrg.xft.search.CriteriaCollection;
 import org.nrg.xft.search.QueryOrganizer;
 import org.nrg.xft.security.UserI;
+import org.nrg.xnat.dicomweb.config.DicomWebPreferenceBean;
+import org.nrg.xnat.dicomweb.exceptions.BadRequestException;
+import org.nrg.xnat.dicomweb.exceptions.DicomWebException;
+import org.nrg.xnat.dicomweb.exceptions.ResourceNotFoundException;
+import org.nrg.xnat.dicomweb.utils.BulkDataHandler;
 import org.nrg.xnat.dicomweb.utils.DicomWebUtils;
 import org.nrg.xnat.utils.CatalogUtils;
+import org.nrg.xnatx.dicomweb.core.entity.DwInstance;
+import org.nrg.xnatx.dicomweb.core.entity.DwSeries;
+import org.nrg.xnatx.dicomweb.core.service.query.DicomwebDataService;
+import org.nrg.xnatx.dicomweb.core.service.query.DwInstanceDataService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
-import com.madgag.gif.fmsware.AnimatedGifEncoder;
-
-import javax.imageio.ImageIO;
-import javax.imageio.ImageReader;
-import javax.imageio.stream.ImageInputStream;
-import java.awt.image.BufferedImage;
-import java.io.ByteArrayOutputStream;
-import java.io.File;
-import java.io.FileInputStream;
-import java.io.InputStream;
-import java.util.ArrayList;
-import java.util.Iterator;
-import java.util.LinkedHashSet;
-import java.util.List;
-import java.util.Set;
 
 /**
- * XNAT 1.9.x implementation of DICOM service
+ * XNAT 1.9.x implementation of DICOM service.
+ *
+ * <p>This service provides DICOMweb QIDO-RS (Query) and WADO-RS (Retrieve) functionality
+ * for XNAT image sessions. It uses database-cached metadata for fast queries when available,
+ * with automatic fallback to direct DICOM file reading.
  */
 @Service
 public class XnatDicomServiceImpl implements XnatDicomService {
 
-    private static final Logger logger = LoggerFactory.getLogger(XnatDicomServiceImpl.class);
+  private static final Logger logger = LoggerFactory.getLogger(XnatDicomServiceImpl.class);
+
+  private final DicomwebDataService dicomwebDataService;
+  private final DwInstanceDataService dwInstanceDataService;
+  private final DicomWebPreferenceBean preferences;
+
+  // Allowed values for (0008,0056) Instance Availability; see PS 3.3 C.4.23.1
+  public enum InstanceAvailability {
+      // The Instances are immediately available from the Retrieve AE Title (0008,0054), and if a C-MOVE were to be
+      // requested, it would succeed in a reasonably short time.
+      ONLINE,
+
+      // The Instances need to be retrieved from relatively slow media such as optical disk or tape, and if a C-MOVE
+      // were to be requested from the Retrieve AE Title (0008,0054), it would succeed, but may take a considerable time.
+      NEARLINE,
+
+      // A manual intervention is needed before the Instances may be retrieved, and if a C-MOVE were to be requested
+      // from the Retrieve AE Title (0008,0054), it would fail (e.g., by timeout) without such manual intervention.
+      OFFLINE,
+
+      // The Instances cannot be retrieved from the Retrieve AE Title (0008,0054), and if a C-MOVE were to be
+      // requested, it would fail.
+      UNAVAILABLE
+  }
+
+  /**
+   * Constructs XnatDicomServiceImpl with injected services.
+   *
+   * @param dicomwebDataService service for querying DICOMweb data from database
+   * @param dwInstanceDataService service for querying DICOM instance data
+   */
+  @Autowired
+  public XnatDicomServiceImpl(
+      DicomwebDataService dicomwebDataService,
+      DwInstanceDataService dwInstanceDataService,
+      DicomWebPreferenceBean preferences
+  ) {
+    this.dicomwebDataService = dicomwebDataService;
+    this.dwInstanceDataService = dwInstanceDataService;
+    this.preferences = preferences;
+    logger.debug("XnatDicomServiceImpl initialized with database-backed metadata queries");
+  }
 
     @Override
     public List<Attributes> searchStudies(UserI user, String projectId, Attributes queryAttributes) {
@@ -137,6 +207,13 @@ public class XnatDicomServiceImpl implements XnatDicomService {
                                 subjectIdCol, subjectLabelCol, elementNameCol);
 
                             if (attrs != null) {
+                                // Augment with fields requiring session/subject data
+                                String sessionId = (String) row[idCol];
+                                XnatImagesessiondata session = XnatImagesessiondata
+                                    .getXnatImagesessiondatasById(sessionId, user, false);
+                                if (session != null) {
+                                    augmentStudyAttributes(attrs, session, projectId, studyUID);
+                                }
                                 results.add(attrs);
                             }
                         }
@@ -151,7 +228,7 @@ public class XnatDicomServiceImpl implements XnatDicomService {
                 results = filterStudyResults(results, queryAttributes);
             }
 
-            logger.info("Study search for project {} returned {} studies", projectId, results.size());
+            logger.debug("Study search for project {} returned {} studies", projectId, results.size());
 
         } catch (Exception e) {
             logger.error("Error searching studies in project: " + projectId, e);
@@ -182,16 +259,15 @@ public class XnatDicomServiceImpl implements XnatDicomService {
             // Aggregate all scans (series) from all matching sessions
             int totalScans = 0;
             for (XnatImagesessiondata session : targetSessions) {
-                if(!Permissions.canRead(user,session)){
+                if(!Permissions.canRead(user, session)){
                     continue;
                 }
 
-                List scans = session.getScans_scan();
+                List<XnatImagescandataI> scans = session.getScans_scan();
                 totalScans += scans.size();
 
-                for (Object scanObj : scans) {
-                    XnatImagescandata scan = (XnatImagescandata) scanObj;
-                    Attributes attrs = createSeriesAttributes(scan, studyInstanceUID);
+                for (XnatImagescandataI scan : scans) {
+                    Attributes attrs = createSeriesAttributes(scan, studyInstanceUID, projectId);
                     results.add(attrs);
                 }
             }
@@ -204,7 +280,7 @@ public class XnatDicomServiceImpl implements XnatDicomService {
                 results = filterSeriesResults(results, queryAttributes);
             }
 
-            logger.info("Series search for study {} returned {} series", studyInstanceUID, results.size());
+            logger.debug("Series search for study {} returned {} series", studyInstanceUID, results.size());
 
         } catch (Exception e) {
             logger.error("Error searching series in study: " + studyInstanceUID, e);
@@ -214,37 +290,19 @@ public class XnatDicomServiceImpl implements XnatDicomService {
     }
 
     @Override
-    public Attributes getInstanceAttributes(UserI user, String projectId, String studyInstanceUID,
+    public Attributes retrieveMetadata(UserI user, String projectId, String studyInstanceUID,
                                             String seriesInstanceUID, String sopInstanceUID) {
-        try {
-            File dicomFile = getInstance(user, projectId, studyInstanceUID, seriesInstanceUID, sopInstanceUID);
-            try (DicomInputStream dis = new DicomInputStream(dicomFile)) {
-                // Use URI mode to save memory - BulkData will reference file location
-                dis.setIncludeBulkData(DicomInputStream.IncludeBulkData.URI);
-
-                // Read FileMetaInformation
-                Attributes fmi = dis.readFileMetaInformation();
-
-                // Read dataset (bulk data replaced with BulkData objects containing file URI)
-                Attributes attrs = dis.readDataset();
-
-                // Merge FileMetaInformation
-                if (fmi != null) {
-                    attrs.addAll(fmi);
-                }
-
-                return attrs;
-            } catch (Exception e) {
-                logger.debug("Error reading DICOM candidate {}", dicomFile.getAbsolutePath(), e);
-            }
-
-            logger.info("Instance search for series {} returned 0 instances", seriesInstanceUID);
-
-        } catch (Exception e) {
-            logger.error("Error searching instances in series: " + seriesInstanceUID, e);
+      // FIXME: DwInstance may cache metadata; check there first before going to the file system.
+        final File dicomFile = getInstance(user, projectId, studyInstanceUID, seriesInstanceUID, sopInstanceUID);
+        try (DicomInputStream dis = new DicomInputStream(dicomFile)) {
+            dis.setIncludeBulkData(DicomInputStream.IncludeBulkData.URI);
+            Attributes attrs = dis.readDataset();   // FMI not included per PS 3.18 10.4.1.1.2 Metadata Resources
+            return attrs;
+        } catch (IOException e) {
+            logger.error("Error reading DICOM file {}", dicomFile.getAbsolutePath(), e);
+            throw new DicomWebException("Error reading instance " + sopInstanceUID, e,
+                    500, "ReadError");
         }
-
-        return null;
     }
 
     @Override
@@ -273,24 +331,39 @@ public class XnatDicomServiceImpl implements XnatDicomService {
                 }
 
                 // Find the scan directly by SeriesInstanceUID using efficient SQL query
-                XnatImagescandata targetScan = findScanBySeriesUIDDirect(session.getScans_scan(), seriesInstanceUID);
+                XnatImagescandataI targetScan = findScanBySeriesUIDDirect(session.getScans_scan(), seriesInstanceUID);
 
                 if (targetScan == null) {
                     continue;
                 }
 
-                // Get DICOM files for this scan
-                results = readDicomFilesFromScan(targetScan);
+                // Try database cache first
+                results = queryInstancesFromDatabase(targetScan, projectId).collect(Collectors.toList());
+
+                // Fallback to reading DICOM files if database cache is empty
+                if (results.isEmpty()) {
+                    logger.debug("Database cache empty for series {}, falling back to file reading",
+                            seriesInstanceUID);
+                    results = readInstanceSearchResponseFromScanFiles(targetScan).collect(Collectors.toList());
+                }
+
+                // Insert Retrieve URL and Instance Availability, using WADO URLs
+                final String prefBaseUrl = preferences.getBaseUrl();
+                final String baseUrl = (null == prefBaseUrl || prefBaseUrl.isEmpty())
+                        ? XDAT.getSiteConfigPreferences().getSiteUrl() : prefBaseUrl;
+                results.forEach(attrs -> {
+                    final String url = String.format("%s/xapi/dicomweb/projects/%s/studies/%s/series/%s/instances/%s",
+                            baseUrl, projectId, session.getUid(), seriesInstanceUID, attrs.getString(Tag.SOPInstanceUID));
+                    attrs.setString(Tag.RetrieveURL, VR.UR, url);
+                    attrs.setString(Tag.InstanceAvailability, VR.CS, InstanceAvailability.ONLINE.name());
+                });
 
                 // Apply query filters if provided
                 if (queryAttributes != null && !queryAttributes.isEmpty()) {
                     results = filterInstanceResults(results, queryAttributes);
                 }
             }
-
-
-            logger.info("Instance search for series {} returned {} instances", seriesInstanceUID, results.size());
-
+            logger.debug("Instance search for series {} returned {} instances", seriesInstanceUID, results.size());
         } catch (Exception e) {
             logger.error("Error searching instances in series: " + seriesInstanceUID, e);
         }
@@ -298,66 +371,54 @@ public class XnatDicomServiceImpl implements XnatDicomService {
         return results;
     }
 
+    /**
+     * Locate the DICOM file for a specific instance.
+     *
+     * @throws ResourceNotFoundException if the project, study, series, or instance cannot be found
+     */
     private File getInstance(UserI user, String projectId, String studyInstanceUID,
                                         String seriesInstanceUID, String sopInstanceUID) {
-        try {
-            XnatProjectdata project = XnatProjectdata.getXnatProjectdatasById(projectId, user, false);
-            if (project == null) {
-                logger.warn("Project not found or user does not have access: {}", projectId);
-                return null;
-            }
-
-            // Find all sessions with matching StudyInstanceUID (XNAT allows multiple sessions with same UID)
-            List<XnatImagesessiondata> targetSessions = findSessionsByUID(user, projectId, studyInstanceUID);
-
-            if (targetSessions.isEmpty()) {
-                logger.warn("Study not found: {}", studyInstanceUID);
-                return null;
-            }
-
-            for(XnatImagesessiondata session : targetSessions){
-                if(!Permissions.canRead(user,session)){
-                    continue;
-                }
-
-                // Find the scan directly by SeriesInstanceUID using efficient SQL query
-                final XnatImagescandata targetScan = findScanBySeriesUIDDirect(session.getScans_scan(), seriesInstanceUID);
-
-                if (targetScan == null) {
-                    continue;
-                }
-
-                // Find the specific DICOM file
-                return findDicomFileInScan(targetScan, sopInstanceUID);
-            }
-        } catch (Exception e) {
-            logger.error("Error retrieving instance: " + sopInstanceUID, e);
+        XnatProjectdata project = XnatProjectdata.getXnatProjectdatasById(projectId, user, false);
+        if (project == null) {
+            throw new ResourceNotFoundException("Project", projectId);
         }
 
-        return null;
+        List<XnatImagesessiondata> targetSessions = findSessionsByUID(user, projectId, studyInstanceUID);
+        if (targetSessions.isEmpty()) {
+            throw new ResourceNotFoundException("Study", studyInstanceUID);
+        }
+
+        for (XnatImagesessiondata session : targetSessions) {
+            try {
+                if (!Permissions.canRead(user, session)) {
+                    continue;
+                }
+            } catch (Exception e) {
+                logger.error("unable to check permissions for user {} on session {}, skipping",
+                        user.getLogin(), session.getId());
+                continue;
+            }
+
+            final XnatImagescandataI targetScan = findScanBySeriesUIDDirect(session.getScans_scan(), seriesInstanceUID);
+            if (targetScan == null) {
+                continue;
+            }
+
+            File dicomFile = findDicomFileInScan(targetScan, sopInstanceUID);
+            if (dicomFile != null) {
+                return dicomFile;
+            }
+        }
+
+        throw new ResourceNotFoundException("Instance", sopInstanceUID);
     }
 
     @Override
     public InputStream retrieveInstance(UserI user, String projectId, String studyInstanceUID,
-                                       String seriesInstanceUID, String sopInstanceUID) {
-        try {
-            File dicomFile = getInstance(user, projectId, studyInstanceUID, seriesInstanceUID, sopInstanceUID);
-
-            if (dicomFile != null) {
-                logger.info("Retrieved instance: {}", sopInstanceUID);
-                return new FileInputStream(dicomFile);
-            }
-        } catch (Exception e) {
-            logger.error("Error retrieving instance: " + sopInstanceUID, e);
-        }
-
-        return null;
-    }
-
-    @Override
-    public Attributes retrieveMetadata(UserI user, String projectId, String studyInstanceUID,
-                                      String seriesInstanceUID, String sopInstanceUID) {
-        return getInstanceAttributes(user, projectId, studyInstanceUID, seriesInstanceUID, sopInstanceUID);
+                                       String seriesInstanceUID, String sopInstanceUID) throws IOException {
+        File dicomFile = getInstance(user, projectId, studyInstanceUID, seriesInstanceUID, sopInstanceUID);
+        logger.trace("Retrieved instance: {}", sopInstanceUID);
+        return new FileInputStream(dicomFile);
     }
 
     @Override
@@ -387,17 +448,18 @@ public class XnatDicomServiceImpl implements XnatDicomService {
                 Set<String> allModalities = new LinkedHashSet<>();
 
                 for (XnatImagesessiondata session : sessions) {
-                    List scans = session.getScans_scan();
+                    List<XnatImagescandataI> scans = session.getScans_scan();
                     if (scans != null) {
                         totalSeries += scans.size();
-                        for (Object scanObj : scans) {
-                            XnatImagescandata scan = (XnatImagescandata) scanObj;
+                        for (XnatImagescandataI scan : scans) {
                             String modality = scan.getModality();
                             if (modality != null && !modality.isEmpty()) {
                                 allModalities.add(modality);
                             }
-                            List<Attributes> instances = readDicomFilesFromScan(scan);
-                            totalInstances += instances.size();
+
+                            // Try database cache first, otherwise walk the scan files.
+                            final long nCached = queryInstancesFromDatabase(scan, projectId).count();
+                            totalInstances += nCached > 0 ? nCached: readInstanceSearchResponseFromScanFiles(scan).count();
                         }
                     }
                 }
@@ -410,7 +472,7 @@ public class XnatDicomServiceImpl implements XnatDicomService {
                 }
             }
 
-            logger.info("Retrieved study metadata for study: {} ({} sessions)", studyInstanceUID, sessions.size());
+            logger.debug("Retrieved study metadata for study: {} ({} sessions)", studyInstanceUID, sessions.size());
             return attrs;
 
         } catch (Exception e) {
@@ -440,22 +502,15 @@ public class XnatDicomServiceImpl implements XnatDicomService {
             // Collect instances from all series across all sessions
             int totalScans = 0;
             for (XnatImagesessiondata session : sessions) {
-                List scans = session.getScans_scan();
+                List<XnatImagescandataI> scans = session.getScans_scan();
                 totalScans += scans.size();
-
-                for (Object scanObj : scans) {
-                    XnatImagescandata scan = (XnatImagescandata) scanObj;
-                    List<Attributes> instances = readDicomFilesFromScan(scan);
-                    allInstances.addAll(instances);
-                }
+                scans.forEach(scan -> allInstances.addAll(readInstanceMetadataFromScanFiles(scan)));
             }
 
-            logger.debug("Found {} scans across {} sessions for study {}",
-                totalScans, sessions.size(), studyInstanceUID);
-            logger.info("Retrieved metadata for {} instances in study {}", allInstances.size(), studyInstanceUID);
-
+            logger.debug("Found {} scans across {} sessions for study {}", totalScans, sessions.size(), studyInstanceUID);
+            logger.debug("Retrieved metadata for {} instances in study {}", allInstances.size(), studyInstanceUID);
         } catch (Exception e) {
-            logger.error("Error retrieving all instance metadata for study: " + studyInstanceUID, e);
+            logger.error("Error retrieving all instance metadata for study {}", studyInstanceUID, e);
         }
 
         return allInstances;
@@ -506,49 +561,116 @@ public class XnatDicomServiceImpl implements XnatDicomService {
     public RenderedInstanceResult retrieveRenderedInstance(UserI user, String projectId, String studyInstanceUID,
                                           String seriesInstanceUID, String sopInstanceUID,
                                           Integer frameNumber, ImageFormat format) {
+        return retrieveRenderedInstance(user, projectId, studyInstanceUID, seriesInstanceUID,
+                sopInstanceUID, frameNumber, format, null);
+    }
+
+    @Override
+    public RenderedInstanceResult retrieveRenderedInstance(UserI user, String projectId, String studyInstanceUID,
+                                          String seriesInstanceUID, String sopInstanceUID,
+                                          Integer frameNumber, ImageFormat format,
+                                          RenderingParams params) {
+        File dicomFile = getInstance(user, projectId, studyInstanceUID, seriesInstanceUID, sopInstanceUID);
+        return renderInstance(dicomFile, sopInstanceUID, frameNumber, format, params);
+    }
+
+    @Override
+    public RenderedInstanceResult retrieveRenderedStudy(UserI user, String projectId,
+                                                         String studyInstanceUID, Integer frameNumber,
+                                                         ImageFormat format, RenderingParams params) {
+        File dicomFile = getRepresentativeInstance(user, projectId, studyInstanceUID, null);
+        return renderInstance(dicomFile, studyInstanceUID, frameNumber, format, params);
+    }
+
+    @Override
+    public RenderedInstanceResult retrieveRenderedSeries(UserI user, String projectId,
+                                                          String studyInstanceUID, String seriesInstanceUID,
+                                                          Integer frameNumber, ImageFormat format,
+                                                          RenderingParams params) {
+        File dicomFile = getRepresentativeInstance(user, projectId, studyInstanceUID, seriesInstanceUID);
+        return renderInstance(dicomFile, seriesInstanceUID, frameNumber, format, params);
+    }
+
+    @Override
+    public RenderedInstanceResult retrieveThumbnailStudy(UserI user, String projectId,
+                                                          String studyInstanceUID, RenderingParams params,
+                                                          ImageFormat format) {
+        RenderingParams effective = RenderingParams.withDefaultThumbnailSize(params);
+        ImageFormat effectiveFormat = format != null ? format : ImageFormat.JPEG;
+        return retrieveRenderedStudy(user, projectId, studyInstanceUID, null, effectiveFormat, effective);
+    }
+
+    @Override
+    public RenderedInstanceResult retrieveThumbnailSeries(UserI user, String projectId,
+                                                           String studyInstanceUID, String seriesInstanceUID,
+                                                           RenderingParams params, ImageFormat format) {
+        RenderingParams effective = RenderingParams.withDefaultThumbnailSize(params);
+        ImageFormat effectiveFormat = format != null ? format : ImageFormat.JPEG;
+        return retrieveRenderedSeries(user, projectId, studyInstanceUID, seriesInstanceUID,
+                null, effectiveFormat, effective);
+    }
+
+    @Override
+    public RenderedInstanceResult retrieveThumbnailInstance(UserI user, String projectId,
+                                                            String studyInstanceUID, String seriesInstanceUID,
+                                                            String sopInstanceUID, RenderingParams params,
+                                                            ImageFormat format) {
+        RenderingParams effective = RenderingParams.withDefaultThumbnailSize(params);
+        ImageFormat effectiveFormat = format != null ? format : ImageFormat.JPEG;
+        return retrieveRenderedInstance(user, projectId, studyInstanceUID, seriesInstanceUID,
+                sopInstanceUID, null, effectiveFormat, effective);
+    }
+
+    @Override
+    public RenderedInstanceResult retrieveThumbnailFrame(UserI user, String projectId,
+                                                          String studyInstanceUID, String seriesInstanceUID,
+                                                          String sopInstanceUID, String frameList,
+                                                          RenderingParams params, ImageFormat format) {
+        RenderingParams effective = RenderingParams.withDefaultThumbnailSize(params);
+        ImageFormat effectiveFormat = format != null ? format : ImageFormat.JPEG;
+        // Use the first frame number from the list
+        Integer frameNumber = null;
+        if (frameList != null && !frameList.isEmpty()) {
+            try {
+                frameNumber = Integer.parseInt(frameList.split(",")[0].trim());
+            } catch (NumberFormatException e) {
+                throw new BadRequestException("frameList", "invalid frame number");
+            }
+        }
+        return retrieveRenderedInstance(user, projectId, studyInstanceUID, seriesInstanceUID,
+                sopInstanceUID, frameNumber, effectiveFormat, effective);
+    }
+
+    /**
+     * Render a DICOM instance to the requested image format.
+     * Dispatches to the appropriate per-format rendering method.
+     *
+     * @param dicomFile the DICOM file to render
+     * @param identifier instance identifier for logging and error messages
+     * @param frameNumber requested frame number (1-based), or null for default
+     * @param format output image format (JPEG, PNG, or GIF)
+     * @param params rendering parameters (viewport, window, quality), may be null
+     * @return rendered image result, or null if rendering failed
+     */
+    private RenderedInstanceResult renderInstance(File dicomFile, String identifier,
+                                                   Integer frameNumber, ImageFormat format,
+                                                   RenderingParams params) {
+        logger.debug("Rendering instance: {} (frame: {}, format: {})", identifier,
+                frameNumber != null ? frameNumber : "default", format);
+
         try {
-            XnatProjectdata project = XnatProjectdata.getXnatProjectdatasById(projectId, user, false);
-            if (project == null) {
-                return null;
+            switch (format) {
+                case GIF:
+                    return renderDicomToGif(dicomFile, frameNumber, params);
+                case PNG:
+                    return renderDicomToPng(dicomFile, frameNumber, params);
+                case JPEG:
+                default:
+                    return renderDicomToJpeg(dicomFile, frameNumber, params);
             }
-
-            // Find all sessions with matching StudyInstanceUID (XNAT allows multiple sessions with same UID)
-            List<XnatImagesessiondata> sessions = findSessionsByUID(user, projectId, studyInstanceUID);
-            if (sessions.isEmpty()) {
-                logger.warn("Study not found: {}", studyInstanceUID);
-                return null;
-            }
-
-            for(XnatImagesessiondata session : sessions) {
-                // Find the scan directly by SeriesInstanceUID using efficient SQL query
-                XnatImagescandata targetScan = findScanBySeriesUIDDirect(session.getScans_scan(), seriesInstanceUID);
-
-                if (targetScan == null) {
-                    continue;
-                }
-
-                // Find the specific DICOM file
-                File dicomFile = findDicomFileInScan(targetScan, sopInstanceUID);
-
-                if (dicomFile != null) {
-                    logger.info("Rendering instance: {} (frame: {}, format: {})", sopInstanceUID,
-                            frameNumber != null ? frameNumber : "default", format);
-
-                    // For GIF format with multi-frame, render as animated GIF
-                    if (format == ImageFormat.GIF) {
-                        return renderDicomToGif(dicomFile, frameNumber);
-                    } else {
-                        return renderDicomToJpeg(dicomFile, frameNumber);
-                    }
-                }
-            }
-
         } catch (UnsupportedOperationException e) {
-            // Re-throw UnsupportedOperationException (from missing OpenCV)
             throw e;
         } catch (Throwable e) {
-            // Catch both Exception and Error (e.g., UnsatisfiedLinkError, NoClassDefFoundError)
-            // Check if this is due to missing native libraries
             if (e instanceof UnsatisfiedLinkError || e instanceof NoClassDefFoundError) {
                 logger.error("Failed to render instance due to missing native libraries: {}", e.getMessage());
                 throw new UnsupportedOperationException(
@@ -557,10 +679,42 @@ public class XnatDicomServiceImpl implements XnatDicomService {
                         "Install OpenCV (macOS: 'brew install opencv', Ubuntu: 'apt-get install libopencv-dev') " +
                         "or use the retrieveInstance endpoint to download the original DICOM file.");
             }
-            logger.error("Error rendering instance: " + sopInstanceUID, e);
+            throw new DicomWebException("Error rendering instance " + identifier, e,
+                    500, "RenderError");
+        }
+    }
+
+    /**
+     * Select a representative DICOM file for study or series level rendering.
+     * Picks the middle instance of the specified (or first) series.
+     *
+     * @param user the authenticated user
+     * @param projectId XNAT project identifier
+     * @param studyUID Study Instance UID
+     * @param seriesUID Series Instance UID, or null to use the first series in the study
+     * @return the DICOM file for the representative instance
+     * @throws ResourceNotFoundException if the study or series contains no instances
+     */
+    private File getRepresentativeInstance(UserI user, String projectId,
+                                            String studyUID, String seriesUID) {
+        String effectiveSeriesUID = seriesUID;
+
+        if (effectiveSeriesUID == null) {
+            List<Attributes> seriesList = searchSeries(user, projectId, studyUID, null);
+            if (seriesList.isEmpty()) {
+                throw new ResourceNotFoundException("Study", studyUID);
+            }
+            effectiveSeriesUID = seriesList.get(0).getString(Tag.SeriesInstanceUID);
         }
 
-        return null;
+        List<Attributes> instances = searchInstances(user, projectId, studyUID, effectiveSeriesUID, null);
+        if (instances.isEmpty()) {
+            throw new ResourceNotFoundException("Series", effectiveSeriesUID);
+        }
+
+        int midIndex = instances.size() / 2;
+        String sopUID = instances.get(midIndex).getString(Tag.SOPInstanceUID);
+        return getInstance(user, projectId, studyUID, effectiveSeriesUID, sopUID);
     }
 
     // Helper methods
@@ -726,11 +880,10 @@ public class XnatDicomServiceImpl implements XnatDicomService {
             attrs.setString(Tag.StudyID, VR.SH, id != null ? id : "");
 
             // Add modalities in study
-            List scans = session.getScans_scan();
+            final List<XnatImagescandataI> scans = session.getScans_scan();
             if (scans != null && !scans.isEmpty()) {
                 List<String> modalities = new ArrayList<>();
-                for (Object scanObj : scans) {
-                    XnatImagescandata scan = (XnatImagescandata) scanObj;
+                for (XnatImagescandataI scan : scans) {
                     String modality = scan.getModality();
                     if (modality != null && !modality.isEmpty() && !modalities.contains(modality)) {
                         modalities.add(modality);
@@ -740,7 +893,6 @@ public class XnatDicomServiceImpl implements XnatDicomService {
                     attrs.setString(Tag.ModalitiesInStudy, VR.CS, String.join("\\", modalities));
                 }
             }
-
         } catch (Exception e) {
             logger.error("Error creating study attributes", e);
         }
@@ -817,6 +969,69 @@ public class XnatDicomServiceImpl implements XnatDicomService {
         }
 
         return attrs;
+    }
+
+    /**
+     * Augment study attributes with fields that require loading the session and subject objects.
+     * Adds NumberOfStudyRelatedSeries/Instances, RetrieveURL, PatientSex, PatientBirthDate,
+     * and ReferringPhysicianName per PS3.18 Table 10.6.3-3.
+     */
+    private void augmentStudyAttributes(Attributes attrs, XnatImagesessiondata session,
+                                        String projectId, String studyUID) {
+        try {
+            // NumberOfStudyRelatedSeries and NumberOfStudyRelatedInstances
+            List<XnatImagescandataI> scans = session.getScans_scan();
+            int numberOfSeries = scans != null ? scans.size() : 0;
+            int numberOfInstances = 0;
+            if (scans != null) {
+                for (XnatImagescandataI scan : scans) {
+                    int fc = getFileCount(scan);
+                    if (fc >= 0) {
+                        numberOfInstances += fc;
+                    }
+                }
+            }
+            attrs.setInt(Tag.NumberOfStudyRelatedSeries, VR.IS, numberOfSeries);
+            attrs.setInt(Tag.NumberOfStudyRelatedInstances, VR.IS, numberOfInstances);
+
+            // RetrieveURL
+            final String prefBaseUrl = preferences.getBaseUrl();
+            final String baseUrl = (null == prefBaseUrl || prefBaseUrl.isEmpty())
+                    ? XDAT.getSiteConfigPreferences().getSiteUrl() : prefBaseUrl;
+            String retrieveUrl = String.format("%s/xapi/dicomweb/projects/%s/studies/%s",
+                    baseUrl, projectId, studyUID);
+            attrs.setString(Tag.RetrieveURL, VR.UR, retrieveUrl);
+
+            // Patient demographics from subject
+            XnatSubjectdata subject = session.getSubjectData();
+            if (subject != null) {
+                // PatientSex
+                String gender = subject.getGender();
+                String patientSex;
+                if ("m".equalsIgnoreCase(gender)) {
+                    patientSex = "M";
+                } else if ("f".equalsIgnoreCase(gender)) {
+                    patientSex = "F";
+                } else {
+                    patientSex = "O";
+                }
+                attrs.setString(Tag.PatientSex, VR.CS, patientSex);
+
+                // PatientBirthDate
+                java.util.Date dob = subject.getDOB();
+                if (dob != null) {
+                    SimpleDateFormat df = new SimpleDateFormat("yyyyMMdd");
+                    attrs.setString(Tag.PatientBirthDate, VR.DA, df.format(dob));
+                }
+            } else {
+                attrs.setString(Tag.PatientSex, VR.CS, "O");
+            }
+
+            // ReferringPhysicianName — not available in XNAT, set empty (PS3.18 requires tag presence)
+            attrs.setString(Tag.ReferringPhysicianName, VR.PN, "");
+        } catch (Exception e) {
+            logger.error("Error augmenting study attributes for session {}", session.getId(), e);
+        }
     }
 
     /**
@@ -915,7 +1130,7 @@ public class XnatDicomServiceImpl implements XnatDicomService {
             // attrs.setString(Tag.ReferringPhysicianName, VR.PN, "");
 
             // Count series and instances
-            List scans = session.getScans_scan();
+            List<XnatImagescandataI> scans = session.getScans_scan();
             int numberOfSeries = 0;
             int numberOfInstances = 0;
             List<String> modalities = new ArrayList<>();
@@ -923,9 +1138,7 @@ public class XnatDicomServiceImpl implements XnatDicomService {
             if (scans != null && !scans.isEmpty()) {
                 numberOfSeries = scans.size();
 
-                for (Object scanObj : scans) {
-                    XnatImagescandata scan = (XnatImagescandata) scanObj;
-
+                for (XnatImagescandataI scan : scans) {
                     // Collect modalities
                     String modality = scan.getModality();
                     if (modality != null && !modality.isEmpty() && !modalities.contains(modality)) {
@@ -1002,13 +1215,14 @@ public class XnatDicomServiceImpl implements XnatDicomService {
     }
 
     /**
-     * Create series-level DICOM attributes from scan
+     * Create series-level DICOM attributes from scan.
+     * Populates return keys per PS3.18 Table 10.6.3-4.
      */
-    private Attributes createSeriesAttributes(XnatImagescandata scan, String studyUID) {
+    private Attributes createSeriesAttributes(XnatImagescandataI scan, String studyUID, String projectId) {
         Attributes attrs = new Attributes();
 
         try {
-            // Series-level attributes
+            // Series-level attributes (Required)
             String seriesUID = scan.getUid();
             if (seriesUID != null && !seriesUID.isEmpty()) {
                 attrs.setString(Tag.SeriesInstanceUID, VR.UI, seriesUID);
@@ -1020,8 +1234,43 @@ public class XnatDicomServiceImpl implements XnatDicomService {
             String scanId = scan.getId();
             attrs.setString(Tag.SeriesNumber, VR.IS, scanId != null ? scanId : "1");
 
+            // NumberOfSeriesRelatedInstances (Required per PS3.18 Table 10.6.3-4)
+            int fileCount = getFileCount(scan);
+            if (fileCount >= 0) {
+                attrs.setInt(Tag.NumberOfSeriesRelatedInstances, VR.IS, fileCount);
+            }
+
+            // RetrieveURL (Required if retrievable, per PS3.18 Table 10.6.3-4)
+            if (seriesUID != null && !seriesUID.isEmpty()) {
+                final String prefBaseUrl = preferences.getBaseUrl();
+                final String baseUrl = (null == prefBaseUrl || prefBaseUrl.isEmpty())
+                        ? XDAT.getSiteConfigPreferences().getSiteUrl() : prefBaseUrl;
+                String retrieveUrl = String.format("%s/xapi/dicomweb/projects/%s/studies/%s/series/%s",
+                        baseUrl, projectId, studyUID, seriesUID);
+                attrs.setString(Tag.RetrieveURL, VR.UR, retrieveUrl);
+            }
+
+            // Conditional attributes (Type C — present if known)
             String description = scan.getSeriesDescription();
             attrs.setString(Tag.SeriesDescription, VR.LO, description != null ? description : "");
+
+            // PerformedProcedureStepStartDate (Type C per PS3.18 Table 10.6.3-4)
+            Object startDate = scan.getStartDate();
+            if (startDate != null) {
+                String dateStr = startDate.toString().replaceAll("-", "");
+                if (!dateStr.isEmpty()) {
+                    attrs.setString(Tag.PerformedProcedureStepStartDate, VR.DA, dateStr);
+                }
+            }
+
+            // PerformedProcedureStepStartTime (Type C per PS3.18 Table 10.6.3-4)
+            Object startTime = scan.getStarttime();
+            if (startTime != null) {
+                String timeStr = startTime.toString().replaceAll(":", "");
+                if (!timeStr.isEmpty()) {
+                    attrs.setString(Tag.PerformedProcedureStepStartTime, VR.TM, timeStr);
+                }
+            }
 
             // Add study-level attributes
             attrs.setString(Tag.StudyInstanceUID, VR.UI, studyUID);
@@ -1033,94 +1282,132 @@ public class XnatDicomServiceImpl implements XnatDicomService {
         return attrs;
     }
 
-    private Integer getFileCount(XnatImagescandata scan) {
-        List<XnatAbstractresource> resources = scan.getFile();
-        for(XnatAbstractresource resource : resources) {
-            if("DICOM".equals(resource.getLabel()) && resource instanceof XnatResourcecatalog){
-                return resource.getFileCount();
-            }
-        }
-
-        return -1;
+    private Integer getFileCount(XnatImagescandataI scan) {
+        return scan.getFile().stream()
+                .filter(XnatResourcecatalog.class::isInstance)
+                .filter(resource -> "DICOM".equals(resource.getLabel()))
+                .map(XnatAbstractresourceI::getFileCount)
+                .findAny()
+                .orElse(-1);
     }
 
     /**
-     * Read DICOM files from scan resources
+     * Queries DICOM instance metadata from database cache.
+     *
+     * <p>This method provides significantly faster metadata retrieval than reading files directly
+     * from disk. It queries the database cache populated by the DICOMweb event listener.
+     *
+     * @param scan the XNAT scan to query instances for
+     * @return stream of DICOM Attributes from database, or empty list if not found or on error
      */
-    private List<Attributes> readDicomFilesFromScan(XnatImagescandata scan) {
-        List<Attributes> results = new ArrayList<>();
-
+    private Stream<Attributes> queryInstancesFromDatabase(final XnatImagescandataI scan,
+                                                            final String projectId) {
+        final String seriesUid = scan.getUid();
+        if (seriesUid == null || seriesUid.isEmpty()) {
+            logger.debug("Scan {} has no series UID, cannot query database", scan.getId());
+            return Stream.of();
+        }
         try {
-            // Get resources/files from the scan
-            List resources = scan.getFile();
-
-            if (resources != null) {
-                for (Object resourceObj : resources) {
-                    if (resourceObj instanceof XnatAbstractresource) {
-                        XnatAbstractresource resource = (XnatAbstractresource) resourceObj;
-
-                        if (!isDicomResource(resource)) {
-                            continue;
-                        }
-
-                        for (File dicomFile : resolveDicomFiles(resource, scan, null)) {
-                            try (DicomInputStream dis = new DicomInputStream(dicomFile)) {
-                                // Use URI mode to save memory - BulkData will reference file location
-                                dis.setIncludeBulkData(DicomInputStream.IncludeBulkData.URI);
-
-                                // Read FileMetaInformation
-                                Attributes fmi = dis.readFileMetaInformation();
-
-                                // Read dataset (bulk data replaced with BulkData objects containing file URI)
-                                Attributes attrs = dis.readDataset();
-
-                                // Merge FileMetaInformation
-                                if (fmi != null) {
-                                    attrs.addAll(fmi);
-                                }
-
-                                results.add(attrs);
-                            } catch (Exception e) {
-                                logger.debug("Error reading DICOM candidate {}", dicomFile.getAbsolutePath(), e);
-                            }
-                        }
-                    }
-                }
+            // Query series by UID scoped to the project
+            final DwSeries series = dicomwebDataService.getSeriesByUidAndProject(
+                    seriesUid, projectId, true
+            );
+            if (series == null) {
+                logger.debug("Series {} not found in database cache", seriesUid);
+                return Stream.of();
             }
 
-        } catch (Exception e) {
-            logger.error("Error reading DICOM files from scan", e);
-        }
+            // Get all instances for this series using query-by-example
+            final DwInstance exampleInstance = new DwInstance();
+            exampleInstance.setSeries(series);
 
-        return results;
+            return dwInstanceDataService.getAll(exampleInstance, true).stream()
+                    .flatMap(inst -> Optional.ofNullable(inst.getInstanceResource())
+                            .map(Stream::of)
+                            .orElse(Stream.of())
+                    );
+        } catch (Exception e) {
+            logger.warn("Error querying instances from database for scan {}: {}",
+                    scan.getId(), e.getMessage(), e);
+            return Stream.of();
+        }
     }
 
-    private List<File> resolveDicomFiles(XnatAbstractresource resource, XnatImagescandata scan, String fileSOPUID) {
-        Set<File> files = new LinkedHashSet<>();
+    /**
+     * Stream the DICOM resources for the provided scan
+     * @param scan scan that might represent a DICOM series
+     * @return DICOM resources for the scan
+     */
+    private Stream<XnatAbstractresource> dicomResourceStream(final XnatImagescandataI scan) {
+        return Optional.ofNullable(scan.getFile())
+                .map(List::stream)
+                .orElse(Stream.of())    // Java 9: .stream().flatMap(List::stream)
+                .filter(XnatAbstractresource.class::isInstance)
+                .map(XnatAbstractresource.class::cast)
+                .filter(XnatDicomServiceImpl::isDicomResource);
+    }
 
-        XnatImagesessiondata session = (XnatImagesessiondata) scan.getImageSessionData();
+    /**
+     * Get full attributes with bulk data URIs for each DICOM instance in the provided scan.
+     * @param scan XNAT scan representing a DICOM series
+     * @return List of instances
+     */
+    private List<Attributes> readInstanceMetadataFromScanFiles(final XnatImagescandataI scan) {
+        return dicomResourceStream(scan)
+                .flatMap(resource -> resolveDicomFiles(resource, scan, null))
+                .flatMap(file -> {
+                    try (DicomInputStream dis = new DicomInputStream(file)) {
+                        dis.setIncludeBulkData(DicomInputStream.IncludeBulkData.URI);
+                        final Attributes attrs = dis.readDataset();
+                        return Stream.of(attrs);
+                    } catch (IOException e) {
+                        logger.debug("Error reading DICOM candidate {}", file.getAbsolutePath(), e);
+                        return Stream.of();
+                    }
+                })
+                .collect(Collectors.toList());
+    }
 
+    /**
+     * Read DICOM files from scan resources (fallback when database cache unavailable)
+     */
+    private Stream<Attributes> readInstanceSearchResponseFromScanFiles(final XnatImagescandataI scan) {
+        // TODO: there's a reasonable argument that we should be building and storing DwInstances
+        //       here, as this is a scan that didn't have metadata in the database.
+        return dicomResourceStream(scan)
+                .flatMap(resource -> resolveDicomFiles(resource, scan, null))
+                .flatMap(file -> {
+                    try (DicomInputStream dis = new DicomInputStream(file)) {
+                        // run Attributes through a DwInstance to standardize which attributes we return
+                        dis.setIncludeBulkData(DicomInputStream.IncludeBulkData.NO);
+                        final DwInstance inst = new DwInstance();
+                        inst.setData(dis.readDataset());
+                        final Attributes attrs = inst.getInstanceResource();
+                        return Stream.of(attrs);
+                    } catch (IOException e) {
+                        logger.debug("Error reading DICOM candidate {}", file.getAbsolutePath(), e);
+                        return Stream.of();
+                    }
+                });
+    }
+
+    private Stream<File> resolveDicomFiles(final XnatAbstractresource resource, final XnatImagescandataI scan, final String fileSOPUID) {
+        final XnatImagesessiondata session = ((XnatImagescandata) scan).getImageSessionData();
         if (resource instanceof XnatResourcecatalog && session != null) {
             try {
-                CatalogUtils.CatalogData catalogData = CatalogUtils.CatalogData.getOrCreate(session, (XnatResourcecatalog) resource);
-                String projectId = session.getProject();
-
-                for (CatEntryI entry : catalogData.catBean.getEntries_entry()) {
-                    if(entry instanceof CatDcmentryBean){
-                        if ((fileSOPUID == null || !fileSOPUID.equals(((CatDcmentryBean)entry).getUid()))) {
-                            File file = CatalogUtils.getFile(entry, catalogData.catPath, projectId);
-                            files.add(file);
-                        }
-                    }
-                }
+                final CatalogUtils.CatalogData catalogData = CatalogUtils.CatalogData.getOrCreate(session, (XnatResourcecatalog) resource);
+                return catalogData.catBean.getEntries_entry().stream()
+                        .filter(CatDcmentryBean.class::isInstance)
+                        .map(CatDcmentryBean.class::cast)
+                        .filter(e -> null == fileSOPUID || fileSOPUID.equals(e.getUid()))
+                        .map(e -> CatalogUtils.getFile(e, catalogData.catPath, session.getProject()));
             } catch (ServerException e) {
                 logger.error("Unable to resolve catalog for resource {}", resource.getXnatAbstractresourceId(), e);
             } catch (Exception e) {
                 logger.error("Unexpected error resolving catalog for resource {}", resource.getXnatAbstractresourceId(), e);
             }
         }
-
-        return new ArrayList<>(files);
+        return Stream.of();
     }
 
     private void collectFiles(File root, Set<File> sink) {
@@ -1143,13 +1430,13 @@ public class XnatDicomServiceImpl implements XnatDicomService {
         }
     }
 
-    private boolean isDicomResource(XnatAbstractresource resource) {
+    private static boolean isDicomResource(XnatAbstractresource resource) {
         return matchesDicomDescriptor(resource.getLabel())
                 || matchesDicomDescriptor(resource.getFormat())
                 || matchesDicomDescriptor(resource.getContent());
     }
 
-    private boolean matchesDicomDescriptor(String value) {
+    private static boolean matchesDicomDescriptor(String value) {
         if (value == null) {
             return false;
         }
@@ -1164,45 +1451,29 @@ public class XnatDicomServiceImpl implements XnatDicomService {
      * Find scan by SeriesInstanceUID.
      * First tries to match scan.getUid(), then falls back to reading DICOM files.
      */
-    private XnatImagescandata findScanBySeriesUIDDirect(List<XnatImagescandata> scans, String seriesInstanceUID) {
+    private XnatImagescandata findScanBySeriesUIDDirect(List<XnatImagescandataI> scans, String seriesInstanceUID) {
         // First pass: try to match scan.getUid()
-        for (XnatImagescandata scan : scans) {
-            if (seriesInstanceUID.equals(scan.getUid())) {
-                return scan;
-            }
-        }
-
-        return null;
+        return scans.stream()
+                .filter(XnatImagescandata.class::isInstance)
+                .filter(scan -> seriesInstanceUID.equals(scan.getUid()))
+                .map(XnatImagescandata.class::cast)
+                .findAny()
+                .orElse(null);
     }
 
     /**
      * Find specific DICOM file by SOPInstanceUID
      */
-    private File findDicomFileInScan(XnatImagescandata scan, String sopInstanceUID) {
+    private File findDicomFileInScan(XnatImagescandataI scan, String sopInstanceUID) {
         try {
-            List resources = scan.getFile();
-
-            if (resources != null) {
-                for (Object resourceObj : resources) {
-                    if (resourceObj instanceof XnatAbstractresource) {
-                        XnatAbstractresource resource = (XnatAbstractresource) resourceObj;
-
-                        if (!isDicomResource(resource)) {
-                            continue;
-                        }
-
-                        for (File dicomFile : resolveDicomFiles(resource, scan, sopInstanceUID)) {
-                            return dicomFile;
-                        }
-                    }
-                }
-            }
-
+            return dicomResourceStream(scan)
+                    .flatMap(resource -> resolveDicomFiles(resource, scan, sopInstanceUID))
+                    .findAny()
+                    .orElse(null);
         } catch (Exception e) {
             logger.error("Error finding DICOM file in scan", e);
+            return null;
         }
-
-        return null;
     }
 
     /**
@@ -1263,138 +1534,242 @@ public class XnatDicomServiceImpl implements XnatDicomService {
     }
 
     /**
-     * Render a DICOM file to JPEG format with frame selection support
-     * @param dicomFile DICOM file to render
-     * @param requestedFrame requested frame number (1-based), null for default (middle frame)
-     * @return RenderedInstanceResult with image data and metadata
+     * Get the dcm4che3 ImageReader for DICOM. This is a little complicated because we
+     * run in a context where there's also a dcm4che2 ImageReader.
+     * @return dcm4che3 ImageReader, or null if one can't be found
      */
-    private RenderedInstanceResult renderDicomToJpeg(File dicomFile, Integer requestedFrame) {
-        try {
-            // First, read DICOM metadata to determine frame count, frame rate, and transfer syntax
-            int totalFrames = 1;
-            Double frameRate = null;
-            String transferSyntax = null;
+    private ImageReader getDicomImageReader() {
+        final Iterable<ImageReader> readers = () -> ImageIO.getImageReadersByFormatName("DICOM");
+        return StreamSupport.stream(readers.spliterator(), false)
+                .filter(reader -> reader.getClass().getName().startsWith("org.dcm4che3"))
+                .findAny()
+                .orElse(null);
+    }
 
-            try (DicomInputStream dis = new DicomInputStream(dicomFile)) {
-                // Read transfer syntax for logging
-                transferSyntax = dis.getTransferSyntax();
+    /**
+     * Intermediate result from reading and transforming a DICOM frame,
+     * before encoding to a specific image format.
+     */
+    private static class DecodedFrame {
+        final BufferedImage image;
+        final int totalFrames;
+        final int frameIndex; // 0-based
+        final Double frameRate;
 
-                Attributes attrs = dis.readDataset(-1, -1);
-                totalFrames = attrs.getInt(Tag.NumberOfFrames, 1);
+        DecodedFrame(BufferedImage image, int totalFrames, int frameIndex, Double frameRate) {
+            this.image = image;
+            this.totalFrames = totalFrames;
+            this.frameIndex = frameIndex;
+            this.frameRate = frameRate;
+        }
+    }
 
-                // Try to extract frame rate from various DICOM tags
-                frameRate = extractFrameRate(attrs);
+    /**
+     * Read a DICOM file and decode a single frame, applying window and viewport transforms.
+     * This is the shared pipeline for JPEG and PNG rendering.
+     *
+     * @param dicomFile DICOM file to read
+     * @param requestedFrame requested frame number (1-based), null for default (middle frame)
+     * @param params rendering parameters (window, viewport)
+     * @return decoded frame with metadata, or null if the image could not be read
+     */
+    private DecodedFrame decodeDicomFrame(File dicomFile, Integer requestedFrame,
+                                          RenderingParams params) throws Exception {
+        // Read DICOM metadata to determine frame count, frame rate, and transfer syntax
+        int totalFrames = 1;
+        Double frameRate = null;
+        String transferSyntax = null;
+
+        try (DicomInputStream dis = new DicomInputStream(dicomFile)) {
+            transferSyntax = dis.getTransferSyntax();
+            Attributes attrs = dis.readDataset(-1, -1);
+            totalFrames = attrs.getInt(Tag.NumberOfFrames, 1);
+            frameRate = extractFrameRate(attrs);
+        }
+
+        // Determine which frame to render (0-based index)
+        int frameIndex;
+        if (requestedFrame != null) {
+            frameIndex = requestedFrame - 1;
+            if (frameIndex < 0 || frameIndex >= totalFrames) {
+                logger.warn("Requested frame {} out of range [1-{}], using middle frame",
+                        requestedFrame, totalFrames);
+                frameIndex = totalFrames / 2;
             }
+        } else {
+            frameIndex = totalFrames > 1 ? totalFrames / 2 : 0;
+        }
 
-            // Determine which frame to render (0-based index)
-            int frameIndex;
-            if (requestedFrame != null) {
-                // User specified a frame (convert from 1-based to 0-based)
-                frameIndex = requestedFrame - 1;
-                if (frameIndex < 0 || frameIndex >= totalFrames) {
-                    logger.warn("Requested frame {} out of range [1-{}], using middle frame",
-                            requestedFrame, totalFrames);
-                    frameIndex = totalFrames / 2;
-                }
-            } else {
-                // Default to middle frame for multi-frame, first frame for single-frame
-                frameIndex = totalFrames > 1 ? totalFrames / 2 : 0;
-            }
+        logger.debug("Rendering frame {} of {} (frameRate: {})", frameIndex + 1, totalFrames, frameRate);
 
-            logger.debug("Rendering frame {} of {} (frameRate: {})", frameIndex + 1, totalFrames, frameRate);
-
-            // Use ImageIO with DICOM plugin to read the image
-            ImageInputStream iis = ImageIO.createImageInputStream(dicomFile);
+        // Use ImageIO with DICOM plugin to read the image
+        BufferedImage bufferedImage;
+        try (ImageInputStream iis = ImageIO.createImageInputStream(dicomFile)) {
             if (iis == null) {
                 logger.error("Could not create ImageInputStream for DICOM file");
                 return null;
             }
 
-            Iterator<ImageReader> readers = ImageIO.getImageReadersByFormatName("DICOM");
-            if (!readers.hasNext()) {
+            ImageReader reader = getDicomImageReader();
+            if (null == reader) {
                 logger.error("No DICOM ImageReader found");
-                iis.close();
                 return null;
             }
-
-            ImageReader reader = readers.next();
             reader.setInput(iis, false);
 
             DicomImageReadParam param = (DicomImageReadParam) reader.getDefaultReadParam();
 
-            // Read the selected frame
-            BufferedImage bufferedImage;
+            // Apply window center/width if specified
+            if (params != null && params.hasWindow()) {
+                param.setWindowCenter(params.getWindowCenter().floatValue());
+                param.setWindowWidth(params.getWindowWidth().floatValue());
+                param.setAutoWindowing(false);
+            }
+
             try {
                 bufferedImage = reader.read(frameIndex, param);
-            } catch (Throwable readEx) {  // Catch Error (NoClassDefFoundError) and Exception
+            } catch (Throwable readEx) {
                 reader.dispose();
-                iis.close();
+                handleCodecError(readEx, transferSyntax);
+                throw readEx; // Re-throw if not a native library issue
+            }
 
-                // Check if this is due to missing codec support for advanced compression
-                if (isAdvancedCompressionFormat(transferSyntax) &&
-                    isNativeLibraryMissing(readEx)) {
-                    String tsName = getTransferSyntaxName(transferSyntax);
+            reader.dispose();
+        }
 
-                    // Determine specific error based on exception type
-                    String detailedMessage;
-                    if (hasUnsatisfiedLinkError(readEx)) {
-                        // dcm4che-imageio-opencv.jar is present, but native OpenCV library is missing
-                        logger.error("Failed to render image with transfer syntax {} ({}). " +
-                                "dcm4che-imageio-opencv is installed, but native OpenCV libraries are not found. " +
-                                "Please install OpenCV: " +
-                                "macOS: 'brew install opencv' | " +
-                                "Ubuntu: 'sudo apt-get install libopencv-dev' | " +
-                                "CentOS: 'sudo yum install opencv-devel'",
-                                transferSyntax, tsName);
-                        detailedMessage = String.format(
-                            "Cannot render image with transfer syntax: %s. " +
+        if (bufferedImage == null) {
+            logger.error("Could not read image from DICOM file");
+            return null;
+        }
+
+        // Apply viewport scaling if specified
+        if (params != null && params.hasViewport()) {
+            bufferedImage = scaleImage(bufferedImage,
+                    params.getViewportWidth(), params.getViewportHeight());
+        }
+
+        return new DecodedFrame(bufferedImage, totalFrames, frameIndex, frameRate);
+    }
+
+    /**
+     * Check if a read error is due to missing codec support for advanced compression
+     * formats and throw a descriptive UnsupportedOperationException if so.
+     * If the error is not codec-related, this method returns without throwing.
+     *
+     * @param readEx the exception thrown during image reading
+     * @param transferSyntax the DICOM transfer syntax UID of the image
+     * @throws UnsupportedOperationException if the error is due to missing native codec libraries
+     */
+    private void handleCodecError(Throwable readEx, String transferSyntax) {
+        if (!isAdvancedCompressionFormat(transferSyntax) || !isNativeLibraryMissing(readEx)) {
+            return;
+        }
+        String tsName = getTransferSyntaxName(transferSyntax);
+
+        String detailedMessage;
+        if (hasUnsatisfiedLinkError(readEx)) {
+            logger.error("Failed to render image with transfer syntax {} ({}). " +
+                            "dcm4che-imageio-opencv is installed, but native OpenCV libraries are not found. " +
+                            "Please install OpenCV: " +
+                            "macOS: 'brew install opencv' | " +
+                            "Ubuntu: 'sudo apt-get install libopencv-dev' | " +
+                            "CentOS: 'sudo yum install opencv-devel'",
+                    transferSyntax, tsName);
+            detailedMessage = String.format(
+                    "Cannot render image with transfer syntax: %s. " +
                             "Native OpenCV libraries are not installed on the system. " +
                             "To enable rendering of JPEG-LS and JPEG 2000 images, install OpenCV:\n" +
                             "  • macOS: brew install opencv\n" +
                             "  • Ubuntu/Debian: sudo apt-get install libopencv-dev\n" +
                             "  • CentOS/RHEL: sudo yum install opencv-devel\n" +
                             "Alternatively, use the retrieveInstance endpoint to download the original DICOM file.",
-                            tsName);
-                    } else {
-                        // Other codec-related errors (likely missing ImageReader)
-                        logger.error("Failed to render image with transfer syntax {} ({}). " +
-                                "This format requires additional codec support that is not available. " +
-                                "See plugin documentation for installation instructions.",
-                                transferSyntax, tsName);
-                        detailedMessage = String.format(
-                            "Cannot render image with transfer syntax: %s. " +
+                    tsName);
+        } else {
+            logger.error("Failed to render image with transfer syntax {} ({}). " +
+                            "This format requires additional codec support that is not available. " +
+                            "See plugin documentation for installation instructions.",
+                    transferSyntax, tsName);
+            detailedMessage = String.format(
+                    "Cannot render image with transfer syntax: %s. " +
                             "This compression format requires additional codec support (e.g., OpenCV libraries). " +
                             "Most DICOM files use JPEG Baseline compression which is fully supported. " +
                             "To access this file, use the retrieveInstance endpoint to download the original DICOM file.",
-                            tsName);
-                    }
+                    tsName);
+        }
 
-                    throw new UnsupportedOperationException(detailedMessage);
-                }
-                throw readEx; // Re-throw if not a native library issue
-            }
+        throw new UnsupportedOperationException(detailedMessage);
+    }
 
-            reader.dispose();
-            iis.close();
-
-            if (bufferedImage == null) {
-                logger.error("Could not read image from DICOM file");
+    /**
+     * Render a DICOM file to JPEG format.
+     * Decodes the requested frame, then encodes as JPEG with optional quality control.
+     *
+     * @param dicomFile DICOM file to render
+     * @param requestedFrame requested frame number (1-based), or null for default (middle frame)
+     * @param params rendering parameters (window, viewport, quality), may be null
+     * @return rendered JPEG image result, or null if rendering failed
+     */
+    private RenderedInstanceResult renderDicomToJpeg(File dicomFile, Integer requestedFrame,
+                                                     RenderingParams params) {
+        try {
+            DecodedFrame frame = decodeDicomFrame(dicomFile, requestedFrame, params);
+            if (frame == null) {
                 return null;
             }
 
-            // Convert to JPEG
             ByteArrayOutputStream baos = new ByteArrayOutputStream();
-            ImageIO.write(bufferedImage, "JPEG", baos);
+            if (params != null && params.getQuality() != null) {
+                ImageWriter jpegWriter = ImageIO.getImageWritersByFormatName("JPEG").next();
+                ImageWriteParam writeParam = jpegWriter.getDefaultWriteParam();
+                writeParam.setCompressionMode(ImageWriteParam.MODE_EXPLICIT);
+                writeParam.setCompressionQuality(params.getQuality() / 100f);
+                jpegWriter.setOutput(ImageIO.createImageOutputStream(baos));
+                jpegWriter.write(null, new IIOImage(frame.image, null, null), writeParam);
+                jpegWriter.dispose();
+            } else {
+                ImageIO.write(frame.image, "JPEG", baos);
+            }
 
             logger.debug("Successfully rendered DICOM to JPEG, size: {} bytes", baos.size());
-
-            return new RenderedInstanceResult(baos.toByteArray(), totalFrames, frameIndex + 1, frameRate);
+            return new RenderedInstanceResult(baos.toByteArray(), frame.totalFrames,
+                    frame.frameIndex + 1, frame.frameRate, ImageFormat.JPEG);
 
         } catch (UnsupportedOperationException e) {
-            // Re-throw to preserve the helpful error message
             throw e;
         } catch (Exception e) {
             logger.error("Error rendering DICOM to JPEG", e);
+            return null;
+        }
+    }
+
+    /**
+     * Render a DICOM file to PNG format.
+     * Decodes the requested frame, then encodes as lossless PNG.
+     *
+     * @param dicomFile DICOM file to render
+     * @param requestedFrame requested frame number (1-based), or null for default (middle frame)
+     * @param params rendering parameters (window, viewport), may be null; quality is ignored for PNG
+     * @return rendered PNG image result, or null if rendering failed
+     */
+    private RenderedInstanceResult renderDicomToPng(File dicomFile, Integer requestedFrame,
+                                                    RenderingParams params) {
+        try {
+            DecodedFrame frame = decodeDicomFrame(dicomFile, requestedFrame, params);
+            if (frame == null) {
+                return null;
+            }
+
+            ByteArrayOutputStream baos = new ByteArrayOutputStream();
+            ImageIO.write(frame.image, "PNG", baos);
+
+            logger.debug("Successfully rendered DICOM to PNG, size: {} bytes", baos.size());
+            return new RenderedInstanceResult(baos.toByteArray(), frame.totalFrames,
+                    frame.frameIndex + 1, frame.frameRate, ImageFormat.PNG);
+
+        } catch (UnsupportedOperationException e) {
+            throw e;
+        } catch (Exception e) {
+            logger.error("Error rendering DICOM to PNG", e);
             return null;
         }
     }
@@ -1529,7 +1904,8 @@ public class XnatDicomServiceImpl implements XnatDicomService {
      * @param requestedFrame optional frame number (1-based) - if specified, renders single frame as static GIF
      * @return RenderedInstanceResult with GIF data and metadata
      */
-    private RenderedInstanceResult renderDicomToGif(File dicomFile, Integer requestedFrame) {
+    private RenderedInstanceResult renderDicomToGif(File dicomFile, Integer requestedFrame,
+                                                      RenderingParams params) {
         try {
             // First, read DICOM metadata to determine frame count and frame rate
             int totalFrames = 1;
@@ -1543,11 +1919,11 @@ public class XnatDicomServiceImpl implements XnatDicomService {
 
             // If single frame or specific frame requested, render as static GIF
             if (totalFrames == 1 || requestedFrame != null) {
-                return renderSingleFrameAsGif(dicomFile, requestedFrame, totalFrames, frameRate);
+                return renderSingleFrameAsGif(dicomFile, requestedFrame, totalFrames, frameRate, params);
             }
 
             // Multi-frame: render as animated GIF
-            return renderAnimatedGif(dicomFile, totalFrames, frameRate);
+            return renderAnimatedGif(dicomFile, totalFrames, frameRate, params);
 
         } catch (Exception e) {
             logger.error("Error rendering DICOM to GIF", e);
@@ -1559,26 +1935,10 @@ public class XnatDicomServiceImpl implements XnatDicomService {
      * Render a single frame as static GIF
      */
     private RenderedInstanceResult renderSingleFrameAsGif(File dicomFile, Integer requestedFrame,
-                                                          int totalFrames, Double frameRate) throws Exception {
-        ImageInputStream iis = ImageIO.createImageInputStream(dicomFile);
-        if (iis == null) {
-            logger.error("Could not create ImageInputStream for DICOM file");
-            return null;
-        }
-
-        Iterator<ImageReader> readers = ImageIO.getImageReadersByFormatName("DICOM");
-        if (!readers.hasNext()) {
-            logger.error("No DICOM ImageReader found");
-            iis.close();
-            return null;
-        }
-
-        ImageReader reader = readers.next();
-        reader.setInput(iis, false);
-        DicomImageReadParam param = (DicomImageReadParam) reader.getDefaultReadParam();
-
-        // Determine which frame to render
+                                                          int totalFrames, Double frameRate,
+                                                          RenderingParams params) throws Exception {
         int frameIndex = 0;
+        // Determine which frame to render
         if (requestedFrame != null) {
             frameIndex = requestedFrame - 1;
             if (frameIndex < 0 || frameIndex >= totalFrames) {
@@ -1588,12 +1948,32 @@ public class XnatDicomServiceImpl implements XnatDicomService {
             frameIndex = totalFrames > 1 ? totalFrames / 2 : 0;
         }
 
-        BufferedImage image = reader.read(frameIndex, param);
-        reader.dispose();
-        iis.close();
+        BufferedImage image;
+        try (ImageInputStream iis = ImageIO.createImageInputStream(dicomFile)) {
+            if (iis == null) {
+                logger.error("Could not create ImageInputStream for DICOM file");
+                return null;
+            }
+
+            ImageReader reader = getDicomImageReader();
+            if (null == reader) {
+                logger.error("No DICOM ImageReader found");
+                return null;
+            }
+
+            reader.setInput(iis, false);
+            DicomImageReadParam param = (DicomImageReadParam) reader.getDefaultReadParam();
+            image = reader.read(frameIndex, param);
+            reader.dispose();
+        }
 
         if (image == null) {
             return null;
+        }
+
+        // Apply viewport scaling if specified
+        if (params != null && params.hasViewport()) {
+            image = scaleImage(image, params.getViewportWidth(), params.getViewportHeight());
         }
 
         // Encode as GIF
@@ -1610,137 +1990,121 @@ public class XnatDicomServiceImpl implements XnatDicomService {
      * Render all frames as animated GIF
      */
     private RenderedInstanceResult renderAnimatedGif(File dicomFile, int totalFrames,
-                                                     Double frameRate) throws Exception {
-        ImageInputStream iis = ImageIO.createImageInputStream(dicomFile);
-        if (iis == null) {
-            logger.error("Could not create ImageInputStream for DICOM file");
-            return null;
-        }
-
-        Iterator<ImageReader> readers = ImageIO.getImageReadersByFormatName("DICOM");
-        if (!readers.hasNext()) {
-            logger.error("No DICOM ImageReader found");
-            iis.close();
-            return null;
-        }
-
-        ImageReader reader = readers.next();
-        reader.setInput(iis, false);
-        DicomImageReadParam param = (DicomImageReadParam) reader.getDefaultReadParam();
-
-        // Calculate frame delay in centiseconds (1/100 second)
-        // Default to 10 fps (100ms = 10 centiseconds) if no frame rate available
-        int delayInCentiseconds = 10;  // Default
-        if (frameRate != null && frameRate > 0) {
-            // Convert FPS to delay in centiseconds
-            delayInCentiseconds = (int) Math.round(100.0 / frameRate);
-            if (delayInCentiseconds < 1) delayInCentiseconds = 1;  // Minimum 1 centisecond
-        }
-
-        logger.debug("Rendering {} frames as animated GIF, delay: {} centiseconds (frameRate: {})",
-                totalFrames, delayInCentiseconds, frameRate);
-
-        // Create animated GIF encoder
+                                                     Double frameRate, RenderingParams params) throws Exception {
         ByteArrayOutputStream baos = new ByteArrayOutputStream();
-        AnimatedGifEncoder encoder = new AnimatedGifEncoder();
-        encoder.start(baos);
-        encoder.setDelay(delayInCentiseconds * 10);  // setDelay expects milliseconds
-        encoder.setRepeat(0);  // 0 = loop forever
-
-        // Read and encode all frames
-        for (int frameIndex = 0; frameIndex < totalFrames; frameIndex++) {
-            BufferedImage image = reader.read(frameIndex, param);
-            if (image != null) {
-                encoder.addFrame(image);
-                logger.trace("Added frame {} to animated GIF", frameIndex + 1);
-            } else {
-                logger.warn("Failed to read frame {}", frameIndex + 1);
+        try (ImageInputStream iis = ImageIO.createImageInputStream(dicomFile)) {
+            if (iis == null) {
+                logger.error("Could not create ImageInputStream for DICOM file");
+                return null;
             }
+
+            final ImageReader reader = getDicomImageReader();
+            if (null == reader) {
+                logger.error("No DICOM ImageReader found");
+                return null;
+            }
+            reader.setInput(iis, false);
+            DicomImageReadParam param = (DicomImageReadParam) reader.getDefaultReadParam();
+
+            // Calculate frame delay in centiseconds (1/100 second)
+            // Default to 10 fps (100ms = 10 centiseconds) if no frame rate available
+            int delayInCentiseconds = 10;  // Default
+            if (frameRate != null && frameRate > 0) {
+                // Convert FPS to delay in centiseconds
+                delayInCentiseconds = (int) Math.round(100.0 / frameRate);
+                if (delayInCentiseconds < 1) delayInCentiseconds = 1;  // Minimum 1 centisecond
+            }
+
+            logger.debug("Rendering {} frames as animated GIF, delay: {} centiseconds (frameRate: {})",
+                    totalFrames, delayInCentiseconds, frameRate);
+
+            // Create animated GIF encoder
+
+            AnimatedGifEncoder encoder = new AnimatedGifEncoder();
+            encoder.start(baos);
+            encoder.setDelay(delayInCentiseconds * 10);  // setDelay expects milliseconds
+            encoder.setRepeat(0);  // 0 = loop forever
+
+            // Read and encode all frames
+            for (int frameIndex = 0; frameIndex < totalFrames; frameIndex++) {
+                BufferedImage image = reader.read(frameIndex, param);
+                if (image != null) {
+                    if (params != null && params.hasViewport()) {
+                        image = scaleImage(image, params.getViewportWidth(), params.getViewportHeight());
+                    }
+                    encoder.addFrame(image);
+                    logger.trace("Added frame {} to animated GIF", frameIndex + 1);
+                } else {
+                    logger.warn("Failed to read frame {}", frameIndex + 1);
+                }
+            }
+
+            encoder.finish();
+            reader.dispose();
         }
 
-        encoder.finish();
-        reader.dispose();
-        iis.close();
-
-        logger.info("Successfully rendered {} frames as animated GIF, size: {} bytes",
+        logger.trace("Successfully rendered {} frames as animated GIF, size: {} bytes",
                 totalFrames, baos.size());
 
         return new RenderedInstanceResult(baos.toByteArray(), totalFrames, totalFrames,
                 frameRate, ImageFormat.GIF);
     }
 
+    /**
+     * Scale a BufferedImage to target dimensions using bilinear interpolation.
+     *
+     * @param src the source image to scale
+     * @param targetWidth desired width in pixels
+     * @param targetHeight desired height in pixels
+     * @return a new BufferedImage scaled to the target dimensions
+     */
+    private BufferedImage scaleImage(BufferedImage src, int targetWidth, int targetHeight) {
+        int type = src.getType() != 0 ? src.getType() : BufferedImage.TYPE_INT_RGB;
+        BufferedImage scaled = new BufferedImage(targetWidth, targetHeight, type);
+        Graphics2D g = scaled.createGraphics();
+        g.setRenderingHint(RenderingHints.KEY_INTERPOLATION,
+                RenderingHints.VALUE_INTERPOLATION_BILINEAR);
+        g.drawImage(src, 0, 0, targetWidth, targetHeight, null);
+        g.dispose();
+        return scaled;
+    }
+
     @Override
     public List<byte[]> retrieveFrames(UserI user, String projectId, String studyInstanceUID,
                                       String seriesInstanceUID, String sopInstanceUID, String frameNumbers) {
-        List<byte[]> frames = new ArrayList<>();
+        File dicomFile = getInstance(user, projectId, studyInstanceUID, seriesInstanceUID, sopInstanceUID);
 
-        try {
-            XnatProjectdata project = XnatProjectdata.getXnatProjectdatasById(projectId, user, false);
-            if (project == null) {
-                return frames;
-            }
-
-            // Find all sessions with matching StudyInstanceUID (XNAT allows multiple sessions with same UID)
-            List<XnatImagesessiondata> targetSessions = findSessionsByUID(user, projectId, studyInstanceUID);
-
-            if (targetSessions.isEmpty()) {
-                logger.warn("Study not found: {}", studyInstanceUID);
-                return frames;
-            }
-
-            for(XnatImagesessiondata session : targetSessions) {
-                // Find the scan directly by SeriesInstanceUID using efficient SQL query
-                XnatImagescandata targetScan = findScanBySeriesUIDDirect(session.getScans_scan(), seriesInstanceUID);
-
-                if (targetScan == null) {
-                    continue;
-                }
-
-                // Find the specific DICOM file
-                File dicomFile = findDicomFileInScan(targetScan, sopInstanceUID);
-
-                if (dicomFile == null) {
-                    continue;
-                }
-
-                // Parse frame numbers
-                List<Integer> frameList = parseFrameNumbers(frameNumbers);
-                if (frameList.isEmpty()) {
-                    continue;
-                }
-
-                // Read DICOM file and extract frames
-                try (DicomInputStream dis = new DicomInputStream(dicomFile)) {
-                    Attributes attrs = dis.readDataset(-1, -1);
-
-                    // Check if this is a multi-frame image
-                    int numberOfFrames = attrs.getInt(Tag.NumberOfFrames, 1);
-
-                    logger.info("Retrieving frames {} from instance {} (total frames: {})",
-                            frameNumbers, sopInstanceUID, numberOfFrames);
-
-                    // Validate requested frames
-                    for (Integer frameNumber : frameList) {
-                        if (frameNumber < 1 || frameNumber > numberOfFrames) {
-                            logger.warn("Frame number {} out of range (1-{})", frameNumber, numberOfFrames);
-                            continue;
-                        }
-
-                        // Extract pixel data for the frame
-                        byte[] frameData = extractFramePixelData(dicomFile, frameNumber - 1); // Convert to 0-based
-                        if (frameData != null) {
-                            frames.add(frameData);
-                        }
-                    }
-                }
-            }
-
-            logger.info("Retrieved {} frame(s) from instance: {}", frames.size(), sopInstanceUID);
-
-        } catch (Exception e) {
-            logger.error("Error retrieving frames from instance: " + sopInstanceUID, e);
+        List<Integer> frameList = parseFrameNumbers(frameNumbers);
+        if (frameList.isEmpty()) {
+            throw new BadRequestException("frameList", "no valid frame numbers provided");
         }
 
+        List<byte[]> frames = new ArrayList<>();
+
+        try (DicomInputStream dis = new DicomInputStream(dicomFile)) {
+            Attributes attrs = dis.readDataset(-1, -1);
+            int numberOfFrames = attrs.getInt(Tag.NumberOfFrames, 1);
+
+            logger.trace("Retrieving frames {} from instance {} (total frames: {})",
+                    frameNumbers, sopInstanceUID, numberOfFrames);
+
+            for (Integer frameNumber : frameList) {
+                if (frameNumber < 1 || frameNumber > numberOfFrames) {
+                    logger.warn("Frame number {} out of range (1-{})", frameNumber, numberOfFrames);
+                    continue;
+                }
+
+                byte[] frameData = extractFramePixelData(dicomFile, frameNumber - 1);
+                if (frameData != null) {
+                    frames.add(frameData);
+                }
+            }
+        } catch (IOException e) {
+            throw new DicomWebException("Error reading frames from instance " + sopInstanceUID, e,
+                    500, "ReadError");
+        }
+
+        logger.trace("Retrieved {} frame(s) from instance: {}", frames.size(), sopInstanceUID);
         return frames;
     }
 
@@ -1832,53 +2196,50 @@ public class XnatDicomServiceImpl implements XnatDicomService {
      */
     private byte[] extractFrameViaImageIO(File dicomFile, int frameIndex) {
         try {
-            ImageInputStream iis = ImageIO.createImageInputStream(dicomFile);
-            if (iis == null) {
-                logger.error("Could not create ImageInputStream");
-                return null;
-            }
-
-            Iterator<ImageReader> readers = ImageIO.getImageReadersByFormatName("DICOM");
-            if (!readers.hasNext()) {
-                logger.error("No DICOM ImageReader found");
-                iis.close();
-                return null;
-            }
-
-            ImageReader reader = readers.next();
-            reader.setInput(iis, false);
-
-            int numImages = reader.getNumImages(true);
-            if (frameIndex < 0 || frameIndex >= numImages) {
-                logger.error("Frame index {} out of range (0-{})", frameIndex, numImages - 1);
-                reader.dispose();
-                iis.close();
-                return null;
-            }
-
-            // Read and decompress the frame
-            DicomImageReadParam param = (DicomImageReadParam) reader.getDefaultReadParam();
             BufferedImage image;
-            try {
-                image = reader.read(frameIndex, param);
-            } catch (Throwable readEx) {
-                reader.dispose();
-                iis.close();
-
-                // Check if this is due to missing OpenCV native libraries
-                if (readEx instanceof NoClassDefFoundError || readEx instanceof UnsatisfiedLinkError) {
-                    logger.error("Failed to read frame due to missing native libraries: {}", readEx.getMessage());
-                    throw new UnsupportedOperationException(
-                            "Cannot extract frame data. This DICOM file uses compression formats (JPEG-LS or JPEG 2000) " +
-                            "that require OpenCV native libraries. " +
-                            "Install OpenCV (macOS: 'brew install opencv', Ubuntu: 'apt-get install libopencv-dev') " +
-                            "or use the retrieveInstance endpoint to download the original DICOM file.");
+            try (ImageInputStream iis = ImageIO.createImageInputStream(dicomFile)) {
+                if (iis == null) {
+                    logger.error("Could not create ImageInputStream");
+                    return null;
                 }
-                throw new RuntimeException("Failed to read frame: " + readEx.getMessage(), readEx);
-            }
 
-            reader.dispose();
-            iis.close();
+                ImageReader reader = getDicomImageReader();
+                if (null == reader) {
+                    logger.error("No DICOM ImageReader found");
+                    return null;
+                }
+
+                reader.setInput(iis, false);
+
+                int numImages = reader.getNumImages(true);
+                if (frameIndex < 0 || frameIndex >= numImages) {
+                    logger.error("Frame index {} out of range (0-{})", frameIndex, numImages - 1);
+                    reader.dispose();
+                    return null;
+                }
+
+                // Read and decompress the frame
+                DicomImageReadParam param = (DicomImageReadParam) reader.getDefaultReadParam();
+
+                try {
+                    image = reader.read(frameIndex, param);
+                } catch (Throwable readEx) {
+                    reader.dispose();
+
+                    // Check if this is due to missing OpenCV native libraries
+                    if (readEx instanceof NoClassDefFoundError || readEx instanceof UnsatisfiedLinkError) {
+                        logger.error("Failed to read frame due to missing native libraries: {}", readEx.getMessage());
+                        throw new UnsupportedOperationException(
+                                "Cannot extract frame data. This DICOM file uses compression formats (JPEG-LS or JPEG 2000) " +
+                                        "that require OpenCV native libraries. " +
+                                        "Install OpenCV (macOS: 'brew install opencv', Ubuntu: 'apt-get install libopencv-dev') " +
+                                        "or use the retrieveInstance endpoint to download the original DICOM file.");
+                    }
+                    throw new RuntimeException("Failed to read frame: " + readEx.getMessage(), readEx);
+                }
+
+                reader.dispose();
+            }
 
             if (image == null) {
                 logger.error("Could not read frame {} from DICOM file", frameIndex);
@@ -2258,9 +2619,7 @@ public class XnatDicomServiceImpl implements XnatDicomService {
 
     @Override
     public StowRsResponse storeInstances(UserI user, String projectId, List<InputStream> dicomInstances) {
-        System.out.println("=== STOW-RS SERVICE CALLED ===");
-        System.out.println("=== User: " + user.getLogin() + ", Project: " + projectId + ", Instances: " + dicomInstances.size());
-        logger.info("STOW-RS: Storing {} DICOM instances for user {} in project {}",
+        logger.debug("STOW-RS: Storing {} DICOM instances for user {} in project {}",
             dicomInstances.size(), user.getLogin(), projectId);
 
         List<InstanceStatus> statuses = new ArrayList<>();
@@ -2268,23 +2627,18 @@ public class XnatDicomServiceImpl implements XnatDicomService {
         int failureCount = 0;
 
         try {
-            System.out.println("=== Verifying project access...");
             // Verify project access
             XnatProjectdata project = XnatProjectdata.getXnatProjectdatasById(projectId, user, false);
-            System.out.println("=== Project: " + project);
             if (project == null) {
-                System.out.println("=== ERROR: No project access!");
-                logger.error("User {} does not have access to project: {}", user.getLogin(), projectId);
+                logger.debug("User {} does not have access to project: {}", user.getLogin(), projectId);
                 throw new SecurityException("No access to project: " + projectId);
             }
 
             // Group instances by StudyInstanceUID to create proper sessions
             java.util.Map<String, java.util.List<DicomInstance>> instancesByStudy = new java.util.HashMap<>();
 
-            System.out.println("=== First pass: Reading " + dicomInstances.size() + " DICOM instances...");
             // First pass: Read DICOM metadata and group by StudyInstanceUID
             for (int i = 0; i < dicomInstances.size(); i++) {
-                System.out.println("=== Processing instance " + (i+1) + " of " + dicomInstances.size());
                 InputStream stream = dicomInstances.get(i);
 
                 try {
@@ -2308,23 +2662,19 @@ public class XnatDicomServiceImpl implements XnatDicomService {
                         .add(new DicomInstance(attrs, sopInstanceUID, sopClassUID, seriesNumber));
 
                 } catch (Exception e) {
-                    System.out.println("=== ERROR reading instance " + (i+1) + ": " + e.getClass().getName() + ": " + e.getMessage());
-                    e.printStackTrace(System.out);
-                    logger.error("STOW-RS: Error reading DICOM instance " + (i + 1), e);
+                    logger.error("STOW-RS: Error reading DICOM instance {}", i + 1, e);
                     statuses.add(new InstanceStatus(null, null, false,
                         "Error reading DICOM: " + e.getMessage(), 0xC000));
                     failureCount++;
                 }
             }
 
-            System.out.println("=== First pass complete. Grouped into " + instancesByStudy.size() + " studies");
             // Second pass: Process each study group using PrearcDatabase
             for (java.util.Map.Entry<String, java.util.List<DicomInstance>> entry : instancesByStudy.entrySet()) {
-                System.out.println("=== Processing study: " + entry.getKey() + " with " + entry.getValue().size() + " instances");
                 String studyInstanceUID = entry.getKey();
                 java.util.List<DicomInstance> instances = entry.getValue();
 
-                logger.info("STOW-RS: Processing study {} with {} instances", studyInstanceUID, instances.size());
+                logger.trace("STOW-RS: Processing study {} with {} instances", studyInstanceUID, instances.size());
 
                 try {
                     // Get or create prearchive session for this StudyInstanceUID
@@ -2332,7 +2682,7 @@ public class XnatDicomServiceImpl implements XnatDicomService {
                         getOrCreatePrearchiveSession(project, user, studyInstanceUID, instances.get(0).getAttributes());
 
                     File sessionDir = new File(session.getUrl());
-                    logger.info("STOW-RS: Using session directory: {}", sessionDir.getAbsolutePath());
+                    logger.trace("STOW-RS: Using session directory: {}", sessionDir.getAbsolutePath());
 
                     // Write each instance to the session
                     for (DicomInstance instance : instances) {
@@ -2346,7 +2696,7 @@ public class XnatDicomServiceImpl implements XnatDicomService {
                                 dos.writeDataset(null, instance.getAttributes());
                             }
 
-                            logger.info("STOW-RS: Wrote DICOM file: {}", dicomFile.getAbsolutePath());
+                            logger.trace("STOW-RS: Wrote DICOM file: {}", dicomFile.getAbsolutePath());
                             statuses.add(new InstanceStatus(instance.getSopInstanceUID(), instance.getSopClassUID(), true, null, 0));
                             successCount++;
 
@@ -2361,7 +2711,7 @@ public class XnatDicomServiceImpl implements XnatDicomService {
                 } catch (Exception e) {
                     System.err.println("=== ERROR processing study " + studyInstanceUID + ": " + e.getClass().getName() + ": " + e.getMessage());
                     e.printStackTrace(System.err);
-                    logger.error("STOW-RS: Error processing study " + studyInstanceUID, e);
+                    logger.error("STOW-RS: Error processing study {}", studyInstanceUID, e);
                     // Mark all instances in this study as failed
                     for (DicomInstance instance : instances) {
                         statuses.add(new InstanceStatus(instance.getSopInstanceUID(), instance.getSopClassUID(), false,
@@ -2379,7 +2729,7 @@ public class XnatDicomServiceImpl implements XnatDicomService {
             throw new RuntimeException("Storage failed: " + e.getMessage(), e);
         }
 
-        logger.info("STOW-RS: Completed - {} succeeded, {} failed", successCount, failureCount);
+        logger.debug("STOW-RS: Completed - {} succeeded, {} failed", successCount, failureCount);
         return new StowRsResponse(successCount, failureCount, statuses);
     }
 
@@ -2430,13 +2780,134 @@ public class XnatDicomServiceImpl implements XnatDicomService {
 
         org.nrg.xnat.helpers.prearchive.SessionData session = getOrCreate.isLeft() ? getOrCreate.getLeft() : getOrCreate.getRight();
 
-        String action = getOrCreate.isLeft() ? "Created new" : "Using existing";
-        System.out.println("=== " + action + " session for StudyInstanceUID: " + studyInstanceUID);
-        System.out.println("=== Session URL: " + session.getUrl());
-        logger.info("STOW-RS: {} session for StudyInstanceUID {}: {}",
-            action, studyInstanceUID, session.getUrl());
+        logger.debug("STOW-RS: {} session for StudyInstanceUID {}: {}",
+                getOrCreate.isLeft() ? "Created new" : "Using existing", studyInstanceUID, session.getUrl());
 
         return session;
+    }
+
+    // ==================== Bulk Data & Pixel Data Methods ====================
+
+    /**
+     * Extract bulk data items from a DICOM file.
+     *
+     * @param dicomFile the DICOM file
+     * @param baseUri base URI for generating BulkDataURI
+     * @param studyUID Study Instance UID
+     * @param seriesUID Series Instance UID
+     * @param instanceUID SOP Instance UID
+     * @param pixelDataOnly if true, only include pixel data tags
+     * @return list of BulkDataItem
+     */
+    private List<BulkDataHandler.BulkDataItem> extractBulkDataItems(
+            File dicomFile, String baseUri, String studyUID, String seriesUID,
+            String instanceUID, boolean pixelDataOnly) {
+        List<BulkDataHandler.BulkDataItem> items = new ArrayList<>();
+        try (DicomInputStream dis = new DicomInputStream(dicomFile)) {
+            dis.setIncludeBulkData(DicomInputStream.IncludeBulkData.YES);
+            Attributes attrs = dis.readDataset();
+
+            attrs.accept(new Attributes.Visitor() {
+                @Override
+                public boolean visit(Attributes attrs, int tag, VR vr, Object value) throws Exception {
+                    if (!BulkDataHandler.shouldUseBulkDataURI(tag, vr, value)) {
+                        return true;
+                    }
+                    if (pixelDataOnly && !BulkDataHandler.isPixelDataTag(tag)) {
+                        return true;
+                    }
+                    byte[] data = attrs.getBytes(tag);
+                    if (data != null && data.length > 0) {
+                        String contentLocation = BulkDataHandler.generateBulkDataURI(
+                                baseUri, studyUID, seriesUID, instanceUID, tag);
+                        items.add(new BulkDataHandler.BulkDataItem(contentLocation, data));
+                    }
+                    return true;
+                }
+            }, false);
+        } catch (Exception e) {
+            logger.error("Error extracting bulk data from file {}", dicomFile.getAbsolutePath(), e);
+        }
+        return items;
+    }
+
+    /** {@inheritDoc} */
+    @Override
+    public List<BulkDataHandler.BulkDataItem> retrieveInstanceBulkData(
+            UserI user, String projectId, String studyUID, String seriesUID,
+            String instanceUID, String baseUri) {
+        File dicomFile = getInstance(user, projectId, studyUID, seriesUID, instanceUID);
+        return extractBulkDataItems(dicomFile, baseUri, studyUID, seriesUID, instanceUID, false);
+    }
+
+    /** {@inheritDoc} */
+    @Override
+    public List<BulkDataHandler.BulkDataItem> retrieveSeriesBulkData(
+            UserI user, String projectId, String studyUID, String seriesUID, String baseUri) {
+        return retrieveBulkDataAcrossInstances(user, projectId, studyUID, seriesUID, baseUri, false);
+    }
+
+    /** {@inheritDoc} */
+    @Override
+    public List<BulkDataHandler.BulkDataItem> retrieveStudyBulkData(
+            UserI user, String projectId, String studyUID, String baseUri) {
+        List<BulkDataHandler.BulkDataItem> items = new ArrayList<>();
+        List<Attributes> seriesList = searchSeries(user, projectId, studyUID, null);
+        for (Attributes seriesAttrs : seriesList) {
+            String seriesUID = seriesAttrs.getString(Tag.SeriesInstanceUID);
+            items.addAll(retrieveBulkDataAcrossInstances(user, projectId, studyUID, seriesUID, baseUri, false));
+        }
+        return items;
+    }
+
+    /** {@inheritDoc} */
+    @Override
+    public List<BulkDataHandler.BulkDataItem> retrieveInstancePixelData(
+            UserI user, String projectId, String studyUID, String seriesUID,
+            String instanceUID, String baseUri) {
+        File dicomFile = getInstance(user, projectId, studyUID, seriesUID, instanceUID);
+        return extractBulkDataItems(dicomFile, baseUri, studyUID, seriesUID, instanceUID, true);
+    }
+
+    /** {@inheritDoc} */
+    @Override
+    public List<BulkDataHandler.BulkDataItem> retrieveSeriesPixelData(
+            UserI user, String projectId, String studyUID, String seriesUID, String baseUri) {
+        return retrieveBulkDataAcrossInstances(user, projectId, studyUID, seriesUID, baseUri, true);
+    }
+
+    /** {@inheritDoc} */
+    @Override
+    public List<BulkDataHandler.BulkDataItem> retrieveStudyPixelData(
+            UserI user, String projectId, String studyUID, String baseUri) {
+        List<BulkDataHandler.BulkDataItem> items = new ArrayList<>();
+        List<Attributes> seriesList = searchSeries(user, projectId, studyUID, null);
+        for (Attributes seriesAttrs : seriesList) {
+            String seriesUID = seriesAttrs.getString(Tag.SeriesInstanceUID);
+            items.addAll(retrieveBulkDataAcrossInstances(user, projectId, studyUID, seriesUID, baseUri, true));
+        }
+        return items;
+    }
+
+    private List<BulkDataHandler.BulkDataItem> retrieveBulkDataAcrossInstances(
+            UserI user, String projectId, String studyUID, String seriesUID,
+            String baseUri, boolean pixelDataOnly) {
+        List<BulkDataHandler.BulkDataItem> items = new ArrayList<>();
+        try {
+            List<Attributes> instances = searchInstances(user, projectId, studyUID, seriesUID, null);
+            for (Attributes attrs : instances) {
+                String sopUID = attrs.getString(Tag.SOPInstanceUID);
+                try {
+                    File dicomFile = getInstance(user, projectId, studyUID, seriesUID, sopUID);
+                    items.addAll(extractBulkDataItems(dicomFile, baseUri, studyUID, seriesUID, sopUID, pixelDataOnly));
+                } catch (ResourceNotFoundException e) {
+                    logger.debug("Instance {} not found while retrieving bulk data", sopUID);
+                }
+            }
+        } catch (Exception e) {
+            logger.error("Error retrieving bulk data for series {}", seriesUID, e);
+        }
+        return items;
     }
 
     /**

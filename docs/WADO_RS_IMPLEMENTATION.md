@@ -3,7 +3,7 @@
 ## Status: Implemented
 
 **Version:** 1.1.3
-**Last Updated:** December 11, 2025
+**Last Updated:** March 11, 2026
 
 This document describes the WADO-RS (Web Access to DICOM Objects by RESTful Services) implementation for the XNAT DICOMweb Proxy Plugin.
 
@@ -253,6 +253,89 @@ curl -u admin:admin \
   -o pixeldata.bin
 ```
 
+### 10. Retrieve Instance Bulk Data (All Tags)
+
+```
+GET /xapi/dicomweb/projects/{projectId}/studies/{studyUID}/series/{seriesUID}/instances/{instanceUID}/bulkdata
+```
+
+**Accept:** `multipart/related; type="application/octet-stream"`
+**Response:** All bulk data elements from the instance, each as a separate part with `Content-Location` header
+
+**Response:**
+```
+Content-Type: multipart/related; type="application/octet-stream"; boundary=abc123
+
+--abc123
+Content-Type: application/octet-stream
+Content-Location: http://host/xapi/dicomweb/.../bulkdata/7FE00010
+
+<raw pixel data>
+--abc123
+Content-Type: application/octet-stream
+Content-Location: http://host/xapi/dicomweb/.../bulkdata/60003000
+
+<raw overlay data>
+--abc123--
+```
+
+---
+
+### 11. Retrieve Series Bulk Data
+
+```
+GET /xapi/dicomweb/projects/{projectId}/studies/{studyUID}/series/{seriesUID}/bulkdata
+```
+
+**Accept:** `multipart/related; type="application/octet-stream"`
+**Response:** All bulk data elements from all instances in the series
+
+---
+
+### 12. Retrieve Study Bulk Data
+
+```
+GET /xapi/dicomweb/projects/{projectId}/studies/{studyUID}/bulkdata
+```
+
+**Accept:** `multipart/related; type="application/octet-stream"`
+**Response:** All bulk data elements from all instances in the study
+
+---
+
+### 13. Retrieve Instance Pixel Data
+
+```
+GET /xapi/dicomweb/projects/{projectId}/studies/{studyUID}/series/{seriesUID}/instances/{instanceUID}/pixeldata
+```
+
+**Accept:** `multipart/related; type="application/octet-stream"`
+**Response:** Only pixel data tags (7FE0,0010 / 7FE0,0008 / 7FE0,0009) from the instance
+
+---
+
+### 14. Retrieve Series Pixel Data
+
+```
+GET /xapi/dicomweb/projects/{projectId}/studies/{studyUID}/series/{seriesUID}/pixeldata
+```
+
+**Accept:** `multipart/related; type="application/octet-stream"`
+**Response:** Pixel data from all instances in the series
+
+---
+
+### 15. Retrieve Study Pixel Data
+
+```
+GET /xapi/dicomweb/projects/{projectId}/studies/{studyUID}/pixeldata
+```
+
+**Accept:** `multipart/related; type="application/octet-stream"`
+**Response:** Pixel data from all instances in the study
+
+---
+
 ## Response Format Summary
 
 | Endpoint | Content-Type | Response Body |
@@ -262,7 +345,9 @@ curl -u admin:admin \
 | Retrieve Metadata | `application/dicom+json` or `application/dicom+xml` | JSON/XML array |
 | Retrieve Rendered | `image/jpeg`, `image/png`, or `image/gif` | Image file |
 | Retrieve Frames | `application/octet-stream` or `multipart/related` | Frame data |
-| Retrieve Bulk Data | `application/octet-stream` | Raw binary data |
+| Retrieve Bulk Data (tag) | `application/octet-stream` | Raw binary data |
+| Retrieve Bulk Data (all) | `multipart/related; type="application/octet-stream"` | Multipart binary |
+| Retrieve Pixel Data | `multipart/related; type="application/octet-stream"` | Multipart binary |
 
 ## Architecture
 
@@ -305,7 +390,8 @@ curl -u admin:admin \
 | `WadoRsApi.java` | REST controller for all WADO-RS endpoints |
 | `XnatDicomServiceImpl.java` | Service layer for DICOM operations |
 | `XnatDicomService.java` | Service interface |
-| `BulkDataHandler.java` | BulkDataURI substitution logic |
+| `BulkDataHandler.java` | BulkDataURI substitution, bulk data item model, pixel data tag detection |
+| `MediaTypeNegotiator.java` | Content negotiation (Accept header, quality values, query parameter) |
 | `DicomWebUtils.java` | DICOM to JSON/XML conversion utilities |
 | `RenderedInstanceResult.java` | Container for rendered image data |
 | `ImageFormat.java` | Enum for supported image formats (JPEG/PNG/GIF) |
@@ -563,18 +649,29 @@ The plugin includes a comprehensive WADO-RS test suite:
 ./test/test-wadors-suite.sh
 ```
 
-**Tests:**
-1. Retrieve Study (multipart)
-2. Retrieve Series (multipart)
-3. Retrieve Instance
-4. Retrieve Study Metadata
-5. Retrieve Series Metadata
-6. Retrieve Instance Metadata
-7. Retrieve Rendered Instance (JPEG)
-8. Retrieve Frames
-9. Retrieve Bulk Data (PixelData)
-10. Not Found Handling
+**Unit Tests (`WadoRsApiTest`):**
+1. Retrieve Study (multipart) — success and not-found
+2. Retrieve Series (multipart) — success and not-found
+3. Retrieve Instance — success and not-found
+4. Retrieve Study Metadata — success, not-found, all-instances
+5. Retrieve Series Metadata — success and not-found
+6. Retrieve Instance Metadata — success and not-found
+7. Retrieve Rendered Instance — success, not-found, frame selection
+8. Retrieve Frames — single, multiple, not-found, out-of-range, non-sequential
+9. Retrieve Bulk Data (single tag) — Content-Location header
+10. Retrieve Instance Bulk Data — success, not-found, Content-Location headers
+11. Retrieve Series Bulk Data — aggregation
+12. Retrieve Study Bulk Data — aggregation
+13. Retrieve Instance Pixel Data — success and not-found
+14. Content negotiation — JSON/XML via Accept header, quality values, query parameter override, wildcard handling, fallback to default
 
+**Additional Tests:**
+- `MediaTypeNegotiatorTest` — media type parsing, quality-based selection, wildcard handling, query parameter validation
+
+**Integration Tests:**
+```bash
+./test/test-wadors-suite.sh
+```
 All tests should pass on a properly configured XNAT instance with test data.
 
 ## DICOMweb Compliance
@@ -587,14 +684,20 @@ This implementation follows:
 **Compliant Features:**
 - ✅ Multipart/related responses with correct boundaries
 - ✅ BulkDataURI substitution for large attributes
-- ✅ Content negotiation (JSON/XML/image formats)
+- ✅ Content negotiation via Accept header with quality values (PS 3.18 Section 8.3.3)
+- ✅ `accept` query parameter support (PS 3.18 Section 8.3.3.1)
+- ✅ Content-Location headers on bulk data/pixel data multipart parts
 - ✅ Proper HTTP status codes
 - ✅ Frame retrieval for multi-frame images
 - ✅ Rendered image output
+- ✅ Study/series/instance-level bulk data retrieval
+- ✅ Study/series/instance-level pixel data retrieval
 
 **Limitations:**
 - Study/Series retrieval returns instances from XNAT sessions, which may span multiple actual DICOM studies/series if data was imported with session merging
 - RetrieveURL points to XNAT DICOMweb endpoints (not the original source)
+- Content-Location headers not yet added to study/series instance retrieval multipart parts (SHOULD per spec, not SHALL)
+- Transfer syntax negotiation/transcoding not yet implemented
 
 ## Future Enhancements
 

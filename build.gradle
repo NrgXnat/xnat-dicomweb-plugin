@@ -1,49 +1,42 @@
-apply plugin: 'io.spring.dependency-management'
-apply plugin: 'java'
-apply plugin: 'maven-publish'
-apply plugin: 'idea'
-apply plugin: 'eclipse'
-
-def pluginVersion = '1.1.3'
-
 buildscript {
     ext {
-        vXnat = "1.9.0"
-    }
-    repositories {
-        maven { url "https://plugins.gradle.org/m2/" }
-        mavenLocal()
-        maven { url "https://nrgxnat.jfrog.io/nrgxnat/libs-release" }
-        maven { url "https://nrgxnat.jfrog.io/artifactory/libs-release" }
-        maven { url "https://nrgxnat.jfrog.io/nrgxnat/libs-snapshot" }
-        mavenCentral()
-    }
-    dependencies {
-        classpath "io.spring.gradle:dependency-management-plugin:1.0.3.RELEASE"
+        vXnat = "1.9.3-RC-SNAPSHOT"
     }
 }
 
-group 'org.nrg.xnat'
-version pluginVersion
+plugins {
+    id "eclipse"
+    id "idea"
+    id "java-library"
+    id "maven-publish"
+    id "com.palantir.git-version" version "3.4.0"
+    id "io.freefair.lombok" version "8.14.3"
+    id "net.linguica.maven-settings" version "0.5"
+    id "org.nrg.xnat.build.xnat-data-builder" version "${vXnat}"
+    id "io.spring.dependency-management" version "1.1.7"
+}
+
+group = "org.nrg.xnatx.plugins"
+version = "1.2.0-rc1"
+description = "XNAT DICOMweb Proxy Plugin"
 
 repositories {
-    maven { url "https://plugins.gradle.org/m2/" }
     mavenLocal()
-    maven { url "https://nrgxnat.jfrog.io/nrgxnat/libs-release" }
-    maven { url "https://nrgxnat.jfrog.io/artifactory/libs-release" }
-    maven { url "https://nrgxnat.jfrog.io/nrgxnat/libs-snapshot" }
     mavenCentral()
-    maven { url "https://www.dcm4che.org/maven2/" }
-    maven { url "https://oss.sonatype.org/content/repositories/releases/" }
+    maven { url = "https://nrgxnat.jfrog.io/nrgxnat/libs-release" }
+    maven { url = "https://nrgxnat.jfrog.io/nrgxnat/libs-snapshot" }
+    maven { url = "https://maven.dcm4che.org" }
+    maven { url = "https://maven.imagej.net/content/groups/public" }
+    maven { url = "https://oss.sonatype.org/content/repositories/releases/" }
     // For org.weasis.core:weasis-core-img:4.6.0.
-    maven { url "https://raw.githubusercontent.com/nroduit/mvn-repo/master/" }
+    maven { url = "https://raw.githubusercontent.com/nroduit/mvn-repo/master/" }
 }
 
-sourceCompatibility = 1.8
-targetCompatibility = 1.8
-
-compileJava {
-    options.fork = false
+java {
+    sourceCompatibility = JavaVersion.VERSION_1_8
+    targetCompatibility = JavaVersion.VERSION_1_8
+    withSourcesJar()
+    withJavadocJar()
 }
 
 configurations {
@@ -54,8 +47,38 @@ configurations {
     all*.exclude group: 'javax.sql', module: 'jdbc-stdext'
     all*.exclude group: 'javax.transaction', module: 'jta'
     all*.exclude group: 'javax.servlet', module: 'servlet-api'
-    // Add implementAndInclude configuration for dependencies to be packaged
+
     implementation.extendsFrom(implementAndInclude)
+    all {
+    	exclude group: 'com.sun.media', module: 'jai_imageio'
+    }
+}
+
+dependencyManagement.imports {
+    mavenBom "org.nrg:parent:${vXnat}"
+}
+
+idea {
+    module {
+        inheritOutputDirs = false
+        outputDir = compileJava.destinationDirectory.get().asFile
+        testOutputDir = compileTestJava.destinationDirectory.get().asFile
+    }
+}
+
+sourceSets {
+    main {
+        java {
+            srcDir "build/xnat-generated/src/main/java"
+        }
+        resources {
+            srcDir "build/xnat-generated/src/main/resources"
+        }
+    }
+}
+
+compileJava {
+    options.fork = false
 }
 
 configurations.testRuntimeClasspath {
@@ -67,21 +90,27 @@ dependencyManagement.imports {
 }
 
 dependencies {
+    // Shared DICOMweb core library (from mavenLocal)
+    implementAndInclude "org.nrg.xnatx.plugins:xnat-dicomweb-core:1.2.0-rc1"
+
+    // EtherJ for exception handling (used by DicomwebMetadataException)
+    implementAndInclude "icr.etherj:etherj-core:1.1.6"
+
     compileOnly "org.slf4j:slf4j-api"
     compileOnly "log4j:log4j"
     compileOnly 'javax.servlet:javax.servlet-api'
-    compileOnly 'com.google.guava:guava:20.0'
-    compileOnly 'commons-lang:commons-lang:2.6'
-    compileOnly 'com.fasterxml.jackson.core:jackson-core:2.13.4'
-    compileOnly 'com.fasterxml.jackson.core:jackson-annotations:2.13.4'
-    compileOnly 'com.fasterxml.jackson.core:jackson-databind:2.13.4'
-    compileOnly 'org.hibernate.javax.persistence:hibernate-jpa-2.1-api:1.0.0.Final'
-    compileOnly 'javax.inject:javax.inject:1'
-    compileOnly "org.nrg.xnat:web:${vXnat}"
-    compileOnly "org.nrg.xnat:xnat-data-models:${vXnat}"
-    compileOnly "org.nrg.xdat:core:${vXnat}"
-    compileOnly("org.nrg:framework:${vXnat}")
-    compileOnly "org.nrg:config:${vXnat}"
+    compileOnly 'com.google.guava:guava'
+    compileOnly 'commons-lang:commons-lang'
+    compileOnly 'com.fasterxml.jackson.core:jackson-core'
+    compileOnly 'com.fasterxml.jackson.core:jackson-annotations'
+    compileOnly 'com.fasterxml.jackson.core:jackson-databind'
+    compileOnly 'org.hibernate.javax.persistence:hibernate-jpa-2.1-api'
+    compileOnly 'javax.inject:javax.inject'
+    compileOnly "org.nrg.xnat:web"
+    compileOnly "org.nrg.xnat:xnat-data-models"
+    compileOnly "org.nrg.xdat:core"
+    compileOnly "org.nrg:framework"
+    compileOnly "org.nrg:config"
     compileOnly "org.springframework:spring-beans"
     compileOnly "org.springframework:spring-context"
     compileOnly "org.springframework:spring-web"
@@ -90,80 +119,80 @@ dependencies {
     compileOnly "io.springfox:springfox-swagger-ui"
 
     // DCM4CHE for DICOMweb support (packaged in plugin)
-    implementAndInclude "org.dcm4che:dcm4che-core:5.29.2"
-    implementAndInclude "org.dcm4che:dcm4che-json:5.29.2"
-    implementAndInclude "org.dcm4che:dcm4che-imageio:5.29.2"
-    implementAndInclude "org.dcm4che:dcm4che-image:5.29.2"
-    implementAndInclude "org.dcm4che:dcm4che-net:5.29.2"
+    compileOnly "org.dcm4che:dcm4che-core"
+    compileOnly "org.dcm4che:dcm4che-imageio"
+    compileOnly "org.dcm4che:dcm4che-image"
+    compileOnly "org.dcm4che:dcm4che-net"
+    implementAndInclude "org.dcm4che:dcm4che-json"
     // OpenCV image I/O for advanced compression formats (JPEG-LS, JPEG 2000)
-    implementAndInclude "org.dcm4che:dcm4che-imageio-opencv:5.29.2"
+    implementAndInclude "org.dcm4che:dcm4che-imageio-opencv:5.31.0"
 
     // Apache Mime4J for multipart/related parsing (packaged in plugin)
     implementAndInclude 'org.apache.james:apache-mime4j-core:0.8.9'
     implementAndInclude 'org.apache.james:apache-mime4j-dom:0.8.9'
 
     // Additional dependencies (packaged in plugin)
-    implementAndInclude 'commons-io:commons-io:2.11.0'
-    implementAndInclude 'org.apache.commons:commons-compress:1.21'
-    compileOnly 'commons-fileupload:commons-fileupload:1.4'
+    implementation 'commons-io:commons-io'
+    implementation 'org.apache.commons:commons-compress'
+    implementation 'commons-fileupload:commons-fileupload'
 
     // AnimatedGifEncoder for animated GIF generation (packaged in plugin)
     implementAndInclude 'com.madgag:animated-gif-lib:1.4'
 
-    testImplementation group: 'junit', name: 'junit'
+    testImplementation 'junit:junit'
     testImplementation "org.springframework:spring-test"
-    testImplementation "org.mockito:mockito-core:4.8.0"
+    testImplementation "org.springframework:spring-web"
+    testImplementation "org.springframework:spring-webmvc"
+    testImplementation "org.mockito:mockito-core"
     testImplementation "javax.servlet:javax.servlet-api"
-    testImplementation ("org.nrg.xnat:xnat-data-models:${vXnat}") {
-        exclude group: 'com.sun.media', module: 'jai_imageio'
-    }
-    testImplementation ("org.nrg.xdat:core:${vXnat}") {
-        exclude group: 'com.sun.media', module: 'jai_imageio'
-    }
-    testImplementation ("org.nrg.xnat:web:${vXnat}") {
-        exclude group: 'com.sun.media', module: 'jai_imageio'
-    }
-    testImplementation ("org.nrg:framework:${vXnat}") {
-        exclude group: 'com.sun.media', module: 'jai_imageio'
-    }
-    // Test dependencies that need actual implementations
-    testImplementation "org.dcm4che:dcm4che-core:5.29.2"
-    testImplementation "org.dcm4che:dcm4che-json:5.29.2"
-    testImplementation("org.dcm4che:dcm4che-imageio:5.29.2") {
-        exclude group: 'com.sun.media', module: 'jai_imageio'
-    }
-    testImplementation("org.dcm4che:dcm4che-image:5.29.2") {
-        exclude group: 'com.sun.media', module: 'jai_imageio'
-    }
-    testImplementation 'org.apache.james:apache-mime4j-core:0.8.9'
-    testImplementation 'org.apache.james:apache-mime4j-dom:0.8.9'
-    testImplementation "org.slf4j:slf4j-api"
-    testImplementation "org.slf4j:slf4j-simple:1.7.30"
+    testImplementation "org.slf4j:slf4j-simple"
+    testImplementation "org.nrg:framework"
+    testImplementation "org.nrg.xdat:core"
+    testImplementation "org.nrg.xnat:xnat-data-models"
+    testImplementation "org.nrg.xnat:web"
+}
+
+// Pulls in the Jenkins BUILD_NUMBER environment variable if available.
+def buildDate = new Date()
+def buildNumber = System.getenv().BUILD_NUMBER?.toInteger() ?: "Manual"
+def isDirty, branchName, gitHash, gitHashFull, commitDistance, lastTag, isCleanTag
+
+try {
+    def gitDetails = versionDetails()
+    isDirty = gitVersion().endsWith ".dirty"
+    branchName = gitDetails.branchName ?: "Unknown"
+    gitHash = gitDetails.gitHash
+    gitHashFull = gitDetails.gitHashFull
+    commitDistance = gitDetails.commitDistance
+    lastTag = gitDetails.lastTag
+    isCleanTag = gitDetails.isCleanTag
+} catch (IllegalArgumentException ignored) {
+    logger.info "Got an error trying to read VCS metadata from git. It's possible this project is not under VCS control. Using placeholder values for manifest entries."
+    isDirty = true
+    branchName = "Unknown"
+    gitHash = "None"
+    gitHashFull = "None"
+    commitDistance = 0
+    lastTag = "None"
+    isCleanTag = false
+}
+
+compileJava {
+    dependsOn xnatDataBuilder
+    options.fork = false
 }
 
 jar {
-    manifest {
-        attributes(
-                'Implementation-Title': 'XNAT DICOMweb Proxy Plugin',
-                'Implementation-Version': version
-        )
+    doLast {
+        if (!gradle.taskGraph.hasTask(":xnatPluginJar")) {
+            logger.warn "WARNING: You should generally run xnatPluginJar instead of jar task for this plugin"
+        }
     }
 }
 
-task xnatPluginJar(type: Jar) {
-    zip64 true
-    archiveClassifier.set "xpl"
-    duplicatesStrategy = DuplicatesStrategy.EXCLUDE
-    manifest {
-        attributes(
-                'Implementation-Title': 'XNAT DICOMweb Proxy Plugin',
-                'Implementation-Version': version
-        )
-    }
-    // Exclude development resources
-    exclude "**/resources/**/*-dev**"
-    exclude "**/resources/**/*--xx**"
-    // Include all implementAndInclude dependencies
+tasks.register("xnatPluginJar", Jar) {
+    zip64 = true
+    archiveClassifier = "xpl"
     from {
         configurations.implementAndInclude.collect { it.isDirectory() ? it : zipTree(it) }
     } {
@@ -174,10 +203,32 @@ task xnatPluginJar(type: Jar) {
     with jar
 }
 
+tasks.withType(Jar).configureEach {
+    duplicatesStrategy = DuplicatesStrategy.EXCLUDE
+    manifest {
+        attributes "Application-Name": project.description,
+                "Build-Date": buildDate,
+                "Build-Number": buildNumber,
+                "Implementation-Title": project.description,
+                "Implementation-Version": project.version,
+                "Implementation-Sha": gitHash,
+                "Implementation-Sha-Full": gitHashFull,
+                "Implementation-Commit": commitDistance,
+                "Implementation-LastTag": lastTag,
+                "Implementation-Branch": branchName,
+                "Implementation-CleanTag": isCleanTag,
+                "Implementation-Dirty": isDirty
+    }
+}
+
 publishing {
     publications {
         mavenJava(MavenPublication) {
-            artifact jar
+            from components.java
         }
     }
+
+    repositories {
+    }
 }
+
