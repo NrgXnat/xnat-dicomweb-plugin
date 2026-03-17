@@ -6,9 +6,8 @@
 
 package org.nrg.xnat.dicomweb.utils;
 
+import lombok.extern.slf4j.Slf4j;
 import org.nrg.xnat.dicomweb.exceptions.NotAcceptableException;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 
 import java.util.ArrayList;
 import java.util.Collections;
@@ -24,10 +23,8 @@ import java.util.Map;
  * {@code accept} query parameter (Section 8.3.3.1), which has the same semantics
  * but disallows wildcards.</p>
  */
+@Slf4j
 public final class MediaTypeNegotiator {
-
-    private static final Logger logger = LoggerFactory.getLogger(MediaTypeNegotiator.class);
-
     private MediaTypeNegotiator() {}
 
     /**
@@ -71,10 +68,16 @@ public final class MediaTypeNegotiator {
          * Wildcards in this (the client type) match anything.
          */
         public boolean matches(String serverType) {
-            if (isWildcard()) return true;
+            if (isWildcard()) {
+                return true;
+            }
             String[] parts = serverType.split("/", 2);
-            if (parts.length != 2) return false;
-            if (!type.equalsIgnoreCase(parts[0])) return false;
+            if (parts.length != 2) {
+                return false;
+            }
+            if (!type.equalsIgnoreCase(parts[0])) {
+                return false;
+            }
             return isSubtypeWildcard() || subtype.equalsIgnoreCase(parts[1]);
         }
 
@@ -116,7 +119,7 @@ public final class MediaTypeNegotiator {
             try {
                 result.add(parseMediaRange(range));
             } catch (IllegalArgumentException e) {
-                logger.debug("Skipping unparseable media range '{}': {}", range, e.getMessage());
+                log.debug("Skipping unparseable media range '{}': {}", range, e.getMessage());
             }
         }
 

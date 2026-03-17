@@ -24,7 +24,6 @@ import javax.imageio.ImageReader;
 import javax.imageio.ImageWriteParam;
 import javax.imageio.ImageWriter;
 import javax.imageio.stream.ImageInputStream;
-import javax.inject.Inject;
 import org.apache.commons.lang3.StringUtils;
 import org.dcm4che3.data.Attributes;
 import org.dcm4che3.data.Tag;
@@ -63,6 +62,7 @@ import org.nrg.xnatx.dicomweb.core.service.query.DicomwebDataService;
 import org.nrg.xnatx.dicomweb.core.service.query.DwInstanceDataService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 
 /**
@@ -106,7 +106,7 @@ public class XnatDicomServiceImpl implements XnatDicomService {
    * @param dicomwebDataService service for querying DICOMweb data from database
    * @param dwInstanceDataService service for querying DICOM instance data
    */
-  @Inject
+  @Autowired
   public XnatDicomServiceImpl(
       DicomwebDataService dicomwebDataService,
       DwInstanceDataService dwInstanceDataService,
@@ -115,7 +115,7 @@ public class XnatDicomServiceImpl implements XnatDicomService {
     this.dicomwebDataService = dicomwebDataService;
     this.dwInstanceDataService = dwInstanceDataService;
     this.preferences = preferences;
-    logger.info("XnatDicomServiceImpl initialized with database-backed metadata queries");
+    logger.debug("XnatDicomServiceImpl initialized with database-backed metadata queries");
   }
 
     @Override
@@ -1453,13 +1453,12 @@ public class XnatDicomServiceImpl implements XnatDicomService {
      */
     private XnatImagescandata findScanBySeriesUIDDirect(List<XnatImagescandataI> scans, String seriesInstanceUID) {
         // First pass: try to match scan.getUid()
-        for (XnatImagescandataI scan : scans) {
-            if (scan instanceof XnatImagescandata && seriesInstanceUID.equals(scan.getUid())) {
-                return (XnatImagescandata) scan;
-            }
-        }
-
-        return null;
+        return scans.stream()
+                .filter(XnatImagescandata.class::isInstance)
+                .filter(scan -> seriesInstanceUID.equals(scan.getUid()))
+                .map(XnatImagescandata.class::cast)
+                .findAny()
+                .orElse(null);
     }
 
     /**
@@ -2663,7 +2662,7 @@ public class XnatDicomServiceImpl implements XnatDicomService {
                         .add(new DicomInstance(attrs, sopInstanceUID, sopClassUID, seriesNumber));
 
                 } catch (Exception e) {
-                    logger.error("STOW-RS: Error reading DICOM instance " + (i + 1), e);
+                    logger.error("STOW-RS: Error reading DICOM instance {}", i + 1, e);
                     statuses.add(new InstanceStatus(null, null, false,
                         "Error reading DICOM: " + e.getMessage(), 0xC000));
                     failureCount++;
@@ -2712,7 +2711,7 @@ public class XnatDicomServiceImpl implements XnatDicomService {
                 } catch (Exception e) {
                     System.err.println("=== ERROR processing study " + studyInstanceUID + ": " + e.getClass().getName() + ": " + e.getMessage());
                     e.printStackTrace(System.err);
-                    logger.error("STOW-RS: Error processing study " + studyInstanceUID, e);
+                    logger.error("STOW-RS: Error processing study {}", studyInstanceUID, e);
                     // Mark all instances in this study as failed
                     for (DicomInstance instance : instances) {
                         statuses.add(new InstanceStatus(instance.getSopInstanceUID(), instance.getSopClassUID(), false,

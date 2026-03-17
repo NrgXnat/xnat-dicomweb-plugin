@@ -4,6 +4,7 @@ import io.swagger.annotations.Api;
 import io.swagger.annotations.ApiOperation;
 import io.swagger.annotations.ApiResponse;
 import io.swagger.annotations.ApiResponses;
+import lombok.extern.slf4j.Slf4j;
 import org.dcm4che3.data.Attributes;
 import org.nrg.framework.annotations.XapiRestController;
 import org.nrg.xapi.rest.AbstractXapiRestController;
@@ -22,8 +23,6 @@ import org.nrg.xnat.dicomweb.utils.BulkDataHandler;
 import org.nrg.xnat.dicomweb.utils.BulkDataHandler.BulkDataItem;
 import org.nrg.xnat.dicomweb.utils.DicomWebUtils;
 import org.nrg.xnat.dicomweb.utils.MediaTypeNegotiator;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.core.io.InputStreamResource;
 import org.springframework.http.HttpHeaders;
@@ -47,43 +46,35 @@ import java.util.List;
 import java.util.UUID;
 import java.util.stream.Collectors;
 
+import static org.nrg.xnatx.dicomweb.core.toolkit.MediaTypes.*;
+import static org.springframework.http.MediaType.APPLICATION_OCTET_STREAM_VALUE;
+
 /**
  * WADO-RS (Web Access to DICOM Objects over RESTful Services)
  * Implements DICOMweb retrieve endpoints per DICOM PS 3.18 Section 10.4.
  */
 @XapiRestController
 @Api("DICOMweb WADO-RS API")
+@Slf4j
 public class WadoRsApi extends AbstractXapiRestController {
-
-    private static final Logger logger = LoggerFactory.getLogger(WadoRsApi.class);
-
-    // Media type constants
-    private static final String MT_DICOM = "application/dicom";
-    private static final String MT_DICOM_JSON = "application/dicom+json";
-    private static final String MT_DICOM_XML = "application/dicom+xml";
-    private static final String MT_OCTET_STREAM = "application/octet-stream";
-    private static final String MT_IMAGE_JPEG = "image/jpeg";
-    private static final String MT_IMAGE_PNG = "image/png";
-    private static final String MT_IMAGE_GIF = "image/gif";
-
     // Supported types per resource category
     private static final List<String> INSTANCE_TYPES =
-            Collections.singletonList(MT_DICOM);
-    private static final String INSTANCE_DEFAULT = MT_DICOM;
+            Collections.singletonList(APPLICATION_DICOM_VALUE);
+    private static final String INSTANCE_DEFAULT = APPLICATION_DICOM_VALUE;
 
     private static final List<String> METADATA_TYPES =
-            Arrays.asList(MT_DICOM_JSON, MT_DICOM_XML);
-    private static final String METADATA_DEFAULT = MT_DICOM_JSON;
+            Arrays.asList(APPLICATION_DICOM_JSON_VALUE, APPLICATION_DICOM_XML_VALUE);
+    private static final String METADATA_DEFAULT = APPLICATION_DICOM_JSON_VALUE;
 
     private static final List<String> RENDERED_TYPES =
-            Arrays.asList(MT_IMAGE_JPEG, MT_IMAGE_PNG, MT_IMAGE_GIF);
-    private static final String RENDERED_DEFAULT = MT_IMAGE_JPEG;
+            Arrays.asList(IMAGE_JPEG_VALUE, IMAGE_PNG_VALUE, IMAGE_GIF_VALUE);
+    private static final String RENDERED_DEFAULT = IMAGE_JPEG_VALUE;
 
     private static final List<String> FRAME_TYPES =
-            Arrays.asList(MT_OCTET_STREAM, "multipart/related");
+            Arrays.asList(APPLICATION_OCTET_STREAM_VALUE, "multipart/related");
 
     private static final List<String> BULKDATA_TYPES =
-            Collections.singletonList(MT_OCTET_STREAM);
+            Collections.singletonList(APPLICATION_OCTET_STREAM_VALUE);
 
     private final XnatDicomService dicomService;
 
@@ -105,7 +96,7 @@ public class WadoRsApi extends AbstractXapiRestController {
     @XapiRequestMapping(
             value = "/dicomweb/projects/{projectId}/studies/{studyUID}/series/{seriesUID}/instances/{instanceUID}",
             method = RequestMethod.GET,
-            produces = MT_DICOM
+            produces = APPLICATION_DICOM_VALUE
     )
     @ApiOperation(value = "Retrieve a DICOM instance (WADO-RS)", response = byte[].class)
     @ApiResponses({
@@ -134,7 +125,7 @@ public class WadoRsApi extends AbstractXapiRestController {
         }
 
         HttpHeaders headers = new HttpHeaders();
-        headers.setContentType(MediaType.parseMediaType(MT_DICOM));
+        headers.setContentType(MediaType.parseMediaType(APPLICATION_DICOM_VALUE));
 
         return ResponseEntity.ok()
                 .headers(headers)
@@ -152,7 +143,7 @@ public class WadoRsApi extends AbstractXapiRestController {
     @XapiRequestMapping(
             value = "/dicomweb/projects/{projectId}/studies/{studyUID}/series/{seriesUID}/instances/{instanceUID}/metadata",
             method = RequestMethod.GET,
-            produces = {MT_DICOM_JSON, MT_DICOM_XML}
+            produces = {APPLICATION_DICOM_JSON_VALUE, APPLICATION_DICOM_XML_VALUE}
     )
     @ApiOperation(value = "Retrieve instance metadata (WADO-RS)", response = String.class)
     @ApiResponses({
@@ -232,7 +223,7 @@ public class WadoRsApi extends AbstractXapiRestController {
     @XapiRequestMapping(
             value = "/dicomweb/projects/{projectId}/studies/{studyUID}/metadata",
             method = RequestMethod.GET,
-            produces = {MT_DICOM_JSON, MT_DICOM_XML}
+            produces = {APPLICATION_DICOM_JSON_VALUE, APPLICATION_DICOM_XML_VALUE}
     )
     @ApiOperation(value = "Retrieve study metadata (WADO-RS)", response = String.class)
     @ApiResponses({
@@ -250,19 +241,19 @@ public class WadoRsApi extends AbstractXapiRestController {
         String selected = negotiateMediaType(request, acceptParam, METADATA_TYPES, METADATA_DEFAULT);
 
         UserI user = getSessionUser();
-        logger.debug("Retrieving study metadata for project={}, study={}", projectId, studyUID);
+        log.debug("Retrieving study metadata for project={}, study={}", projectId, studyUID);
 
         List<Attributes> instances = dicomService.retrieveAllStudyInstanceMetadata(user, projectId, studyUID);
 
         if (instances == null || instances.isEmpty()) {
-            logger.warn("No instances found for study {}", studyUID);
+            log.warn("No instances found for study {}", studyUID);
             throw new ResourceNotFoundException("Study", studyUID);
         }
 
         String requestUrl = request.getRequestURL().toString();
         String baseUri = BulkDataHandler.extractBaseUri(requestUrl, projectId);
 
-        logger.debug("Returning {} metadata for {} instances", selected, instances.size());
+        log.debug("Returning {} metadata for {} instances", selected, instances.size());
         return buildMetadataResponse(instances, selected, baseUri, studyUID);
     }
 
@@ -295,16 +286,16 @@ public class WadoRsApi extends AbstractXapiRestController {
         negotiateMultipartDicom(request, acceptParam);
 
         UserI user = getSessionUser();
-        logger.debug("Retrieving study instances for project={}, study={}", projectId, studyUID);
+        log.debug("Retrieving study instances for project={}, study={}", projectId, studyUID);
 
         List<InputStream> streams = dicomService.retrieveStudy(user, projectId, studyUID);
 
         if (streams == null || streams.isEmpty()) {
-            logger.warn("No streams found for study {}", studyUID);
+            log.warn("No streams found for study {}", studyUID);
             throw new ResourceNotFoundException("Study", studyUID);
         }
 
-        logger.debug("Returning multipart response with {} instances", streams.size());
+        log.debug("Returning multipart response with {} instances", streams.size());
         return buildMultipartDicomResponse(streams);
     }
 
@@ -319,7 +310,7 @@ public class WadoRsApi extends AbstractXapiRestController {
     @XapiRequestMapping(
             value = "/dicomweb/projects/{projectId}/studies/{studyUID}/series/{seriesUID}/instances/{instanceUID}/rendered",
             method = RequestMethod.GET,
-            produces = {MT_IMAGE_JPEG, MT_IMAGE_PNG, MT_IMAGE_GIF}
+            produces = {IMAGE_JPEG_VALUE, IMAGE_PNG_VALUE, IMAGE_GIF_VALUE}
     )
     @ApiOperation(value = "Retrieve rendered instance (WADO-RS)", response = byte[].class)
     @ApiResponses({
@@ -347,7 +338,7 @@ public class WadoRsApi extends AbstractXapiRestController {
         ImageFormat format = ImageFormat.fromMimeType(selected);
         RenderingParams params = RenderingParams.parse(viewport, window, quality);
 
-        logger.debug("Rendered request: Accept={}, selected={}, format={}",
+        log.debug("Rendered request: Accept={}, selected={}, format={}",
                 request != null ? request.getHeader("Accept") : null, selected, format);
 
         RenderedInstanceResult result =
@@ -370,7 +361,7 @@ public class WadoRsApi extends AbstractXapiRestController {
     @XapiRequestMapping(
             value = "/dicomweb/projects/{projectId}/studies/{studyUID}/rendered",
             method = RequestMethod.GET,
-            produces = {MT_IMAGE_JPEG, MT_IMAGE_PNG, MT_IMAGE_GIF}
+            produces = {IMAGE_JPEG_VALUE, IMAGE_PNG_VALUE, IMAGE_GIF_VALUE}
     )
     @ApiOperation(value = "Retrieve rendered study image (WADO-RS)", response = byte[].class)
     @ApiResponses({
@@ -412,7 +403,7 @@ public class WadoRsApi extends AbstractXapiRestController {
     @XapiRequestMapping(
             value = "/dicomweb/projects/{projectId}/studies/{studyUID}/series/{seriesUID}/rendered",
             method = RequestMethod.GET,
-            produces = {MT_IMAGE_JPEG, MT_IMAGE_PNG, MT_IMAGE_GIF}
+            produces = {IMAGE_JPEG_VALUE, IMAGE_PNG_VALUE, IMAGE_GIF_VALUE}
     )
     @ApiOperation(value = "Retrieve rendered series image (WADO-RS)", response = byte[].class)
     @ApiResponses({
@@ -457,7 +448,7 @@ public class WadoRsApi extends AbstractXapiRestController {
     @XapiRequestMapping(
             value = "/dicomweb/projects/{projectId}/studies/{studyUID}/series/{seriesUID}/instances/{instanceUID}/frames/{frameList}/rendered",
             method = RequestMethod.GET,
-            produces = {MT_IMAGE_JPEG, MT_IMAGE_PNG, MT_IMAGE_GIF}
+            produces = {IMAGE_JPEG_VALUE, IMAGE_PNG_VALUE, IMAGE_GIF_VALUE}
     )
     @ApiOperation(value = "Retrieve rendered frame (WADO-RS)", response = byte[].class)
     @ApiResponses({
@@ -514,7 +505,7 @@ public class WadoRsApi extends AbstractXapiRestController {
     @XapiRequestMapping(
             value = "/dicomweb/projects/{projectId}/studies/{studyUID}/thumbnail",
             method = RequestMethod.GET,
-            produces = {MT_IMAGE_JPEG, MT_IMAGE_PNG, MT_IMAGE_GIF}
+            produces = {IMAGE_JPEG_VALUE, IMAGE_PNG_VALUE, IMAGE_GIF_VALUE}
     )
     @ApiOperation(value = "Retrieve study thumbnail (WADO-RS)", response = byte[].class)
     @ApiResponses({
@@ -552,7 +543,7 @@ public class WadoRsApi extends AbstractXapiRestController {
     @XapiRequestMapping(
             value = "/dicomweb/projects/{projectId}/studies/{studyUID}/series/{seriesUID}/thumbnail",
             method = RequestMethod.GET,
-            produces = {MT_IMAGE_JPEG, MT_IMAGE_PNG, MT_IMAGE_GIF}
+            produces = {IMAGE_JPEG_VALUE, IMAGE_PNG_VALUE, IMAGE_GIF_VALUE}
     )
     @ApiOperation(value = "Retrieve series thumbnail (WADO-RS)", response = byte[].class)
     @ApiResponses({
@@ -592,7 +583,7 @@ public class WadoRsApi extends AbstractXapiRestController {
     @XapiRequestMapping(
             value = "/dicomweb/projects/{projectId}/studies/{studyUID}/series/{seriesUID}/instances/{instanceUID}/thumbnail",
             method = RequestMethod.GET,
-            produces = {MT_IMAGE_JPEG, MT_IMAGE_PNG, MT_IMAGE_GIF}
+            produces = {IMAGE_JPEG_VALUE, IMAGE_PNG_VALUE, IMAGE_GIF_VALUE}
     )
     @ApiOperation(value = "Retrieve instance thumbnail (WADO-RS)", response = byte[].class)
     @ApiResponses({
@@ -634,7 +625,7 @@ public class WadoRsApi extends AbstractXapiRestController {
     @XapiRequestMapping(
             value = "/dicomweb/projects/{projectId}/studies/{studyUID}/series/{seriesUID}/instances/{instanceUID}/frames/{frameList}/thumbnail",
             method = RequestMethod.GET,
-            produces = {MT_IMAGE_JPEG, MT_IMAGE_PNG, MT_IMAGE_GIF}
+            produces = {IMAGE_JPEG_VALUE, IMAGE_PNG_VALUE, IMAGE_GIF_VALUE}
     )
     @ApiOperation(value = "Retrieve frame thumbnail (WADO-RS)", response = byte[].class)
     @ApiResponses({
@@ -678,7 +669,7 @@ public class WadoRsApi extends AbstractXapiRestController {
     @XapiRequestMapping(
             value = "/dicomweb/projects/{projectId}/studies/{studyUID}/series/{seriesUID}/instances/{instanceUID}/frames/{frameList}",
             method = RequestMethod.GET,
-            produces = {MT_OCTET_STREAM, "multipart/related"}
+            produces = {APPLICATION_OCTET_STREAM_VALUE, "multipart/related"}
     )
     @ApiOperation(value = "Retrieve frame(s) from instance (WADO-RS)", response = byte[].class)
     @ApiResponses({
@@ -699,7 +690,7 @@ public class WadoRsApi extends AbstractXapiRestController {
         // Frames support octet-stream and multipart; we don't reject based on Accept
         // since the response format depends on how many frames are requested.
         if (request != null) {
-            negotiateMediaType(request, acceptParam, FRAME_TYPES, MT_OCTET_STREAM);
+            negotiateMediaType(request, acceptParam, FRAME_TYPES, APPLICATION_OCTET_STREAM_VALUE);
         }
 
         UserI user = getSessionUser();
@@ -744,7 +735,7 @@ public class WadoRsApi extends AbstractXapiRestController {
     @XapiRequestMapping(
             value = "/dicomweb/projects/{projectId}/studies/{studyUID}/series/{seriesUID}/instances/{instanceUID}/bulkdata/{tag}",
             method = RequestMethod.GET,
-            produces = MT_OCTET_STREAM
+            produces = APPLICATION_OCTET_STREAM_VALUE
     )
     @ApiOperation(value = "Retrieve bulk data for a specific DICOM attribute (WADO-RS)", response = byte[].class)
     @ApiResponses({
@@ -765,7 +756,7 @@ public class WadoRsApi extends AbstractXapiRestController {
             HttpServletRequest request,
             HttpServletResponse response) throws Exception {
         if (request != null) {
-            negotiateMediaType(request, acceptParam, BULKDATA_TYPES, MT_OCTET_STREAM);
+            negotiateMediaType(request, acceptParam, BULKDATA_TYPES, APPLICATION_OCTET_STREAM_VALUE);
         }
 
         UserI user = getSessionUser();
@@ -774,11 +765,11 @@ public class WadoRsApi extends AbstractXapiRestController {
         try {
             tagInt = Integer.parseUnsignedInt(tag, 16);
         } catch (NumberFormatException e) {
-            logger.warn("Invalid tag format: {}", tag);
+            log.warn("Invalid tag format: {}", tag);
             throw new BadRequestException("tag", "must be a valid hexadecimal DICOM tag");
         }
 
-        logger.debug("Retrieving bulk data for instance {} tag {}", instanceUID, tag);
+        log.debug("Retrieving bulk data for instance {} tag {}", instanceUID, tag);
 
         InputStream stream = dicomService.retrieveInstance(user, projectId, studyUID, seriesUID, instanceUID);
 
@@ -789,18 +780,18 @@ public class WadoRsApi extends AbstractXapiRestController {
             Attributes attrs = dis.readDataset();
 
             if (!attrs.contains(tagInt)) {
-                logger.warn("Tag {} not found in instance {}", tag, instanceUID);
+                log.warn("Tag {} not found in instance {}", tag, instanceUID);
                 throw new ResourceNotFoundException("Bulk data tag", tag);
             }
 
             bulkData = attrs.getBytes(tagInt);
 
             if (bulkData == null || bulkData.length == 0) {
-                logger.warn("Tag {} has no data in instance {}", tag, instanceUID);
+                log.warn("Tag {} has no data in instance {}", tag, instanceUID);
                 throw new ResourceNotFoundException("Bulk data tag", tag);
             }
 
-            logger.info("Retrieved bulk data for tag {}: {} bytes", tag, bulkData.length);
+            log.info("Retrieved bulk data for tag {}: {} bytes", tag, bulkData.length);
         }
 
         String contentLocation = BulkDataHandler.generateBulkDataURI(
@@ -1060,7 +1051,7 @@ public class WadoRsApi extends AbstractXapiRestController {
     @XapiRequestMapping(
             value = "/dicomweb/projects/{projectId}/studies/{studyUID}/series/{seriesUID}/metadata",
             method = RequestMethod.GET,
-            produces = {MT_DICOM_JSON, MT_DICOM_XML}
+            produces = {APPLICATION_DICOM_JSON_VALUE, APPLICATION_DICOM_XML_VALUE}
     )
     @ApiOperation(value = "Retrieve metadata for all instances in a series (WADO-RS)", response = String.class)
     @ApiResponses({
@@ -1147,7 +1138,7 @@ public class WadoRsApi extends AbstractXapiRestController {
 
         // For study/series retrieval, we support multipart/related with type=application/dicom
         // and also accept bare application/dicom or wildcards.
-        List<String> supported = Arrays.asList("multipart/related", MT_DICOM);
+        List<String> supported = Arrays.asList("multipart/related", APPLICATION_DICOM_VALUE);
         MediaTypeNegotiator.negotiate(acceptHeader, acceptParam, supported, "multipart/related");
     }
 
@@ -1156,7 +1147,7 @@ public class WadoRsApi extends AbstractXapiRestController {
      */
     private ResponseEntity<String> buildMetadataResponse(
             List<Attributes> instances, String mediaType, String baseUri, String studyUID) {
-        boolean wantsXml = MT_DICOM_XML.equals(mediaType);
+        boolean wantsXml = APPLICATION_DICOM_XML_VALUE.equals(mediaType);
         String responseBody;
         String contentType;
 
@@ -1169,11 +1160,11 @@ public class WadoRsApi extends AbstractXapiRestController {
                     xmlBuilder.append(DicomWebUtils.toXmlWithBulkDataURI(
                             attrs, baseUri, studyUID, seriesUID, instanceUID));
                 } catch (Exception e) {
-                    logger.error("Error converting instance metadata to XML", e);
+                    log.error("Error converting instance metadata to XML", e);
                 }
             }
             responseBody = xmlBuilder.toString();
-            contentType = MT_DICOM_XML;
+            contentType = APPLICATION_DICOM_XML_VALUE;
         } else {
             String json = "[" + instances.stream()
                     .map(attrs -> {
@@ -1183,13 +1174,13 @@ public class WadoRsApi extends AbstractXapiRestController {
                             return DicomWebUtils.toJsonWithBulkDataURI(
                                     attrs, baseUri, studyUID, seriesUID, instanceUID);
                         } catch (Exception e) {
-                            logger.error("Error converting instance metadata to JSON", e);
+                            log.error("Error converting instance metadata to JSON", e);
                             return "{}";
                         }
                     })
                     .collect(Collectors.joining(",")) + "]";
             responseBody = json;
-            contentType = MT_DICOM_JSON;
+            contentType = APPLICATION_DICOM_JSON_VALUE;
         }
 
         return ResponseEntity.ok()
@@ -1246,7 +1237,7 @@ public class WadoRsApi extends AbstractXapiRestController {
         String acceptHeader = request.getHeader("Accept");
         if (acceptHeader == null && acceptParam == null) return;
 
-        List<String> supported = Arrays.asList("multipart/related", MT_OCTET_STREAM);
+        List<String> supported = Arrays.asList("multipart/related", APPLICATION_OCTET_STREAM_VALUE);
         MediaTypeNegotiator.negotiate(acceptHeader, acceptParam, supported, "multipart/related");
     }
 

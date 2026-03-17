@@ -34,6 +34,7 @@
  *********************************************************************/
 package org.nrg.xnat.dicomweb.event;
 
+import lombok.extern.slf4j.Slf4j;
 import org.nrg.xdat.om.WrkWorkflowdata;
 import org.nrg.xdat.om.XnatImagesessiondata;
 import org.nrg.xdat.om.XnatProjectdata;
@@ -52,14 +53,12 @@ import org.nrg.xnat.turbine.utils.ArchivableItem;
 import org.nrg.xnatx.dicomweb.core.inputcreator.DicomwebInputHandler;
 import org.nrg.xnatx.dicomweb.core.toolkit.DicomwebUtils;
 import org.nrg.xnatx.dicomweb.core.exceptions.DicomwebMetadataException;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 import reactor.bus.Event;
 import reactor.bus.EventBus;
 import reactor.fn.Consumer;
 
-import javax.inject.Inject;
 import java.util.HashMap;
 import java.util.Map;
 
@@ -72,19 +71,16 @@ import static reactor.bus.selector.Selectors.R;
  * <p>This listener operates independently from the OHIF viewer plugin and
  * supports ALL DICOM modalities (CT, MR, PT, US, XA, DX, CR, MG, NM, SM, etc.).
  */
+@Slf4j
 @Service
 public class DicomwebProxyEventListener implements Consumer<Event<WorkflowStatusEvent>> {
-
-    private static final Logger logger =
-            LoggerFactory.getLogger(DicomwebProxyEventListener.class);
-
     private final AnonUtils anonUtils;
     private final DicomwebInputHandler dwInputHandler;
     private final DicomWebPreferenceBean preferences;
     private final Map<String, Boolean> triggerPipelines = new HashMap<>();
     private final Map<String, Boolean> triggerPipelinesSubject = new HashMap<>();
 
-    @Inject
+    @Autowired
     public DicomwebProxyEventListener(
             EventBus eventBus, AnonUtils anonUtils, DicomwebInputHandler dwInputHandler,
             DicomWebPreferenceBean preferences) {
@@ -99,7 +95,7 @@ public class DicomwebProxyEventListener implements Consumer<Event<WorkflowStatus
         this.dwInputHandler = dwInputHandler;
         this.preferences = preferences;
         createTriggers();
-        logger.debug("DICOMweb Proxy event listener initialized");
+        log.debug("DICOMweb Proxy event listener initialized");
     }
 
     @Override
@@ -140,7 +136,7 @@ public class DicomwebProxyEventListener implements Consumer<Event<WorkflowStatus
         String dataType = workflow.getDataType();
         String id = workflow.getId();
 
-        logger.debug(
+        log.debug(
                 "Handling event in DicomwebProxyEventListener. PipelineName: {}, DataType: {}, ID: {}",
                 pipelineName,
                 dataType,
@@ -151,7 +147,7 @@ public class DicomwebProxyEventListener implements Consumer<Event<WorkflowStatus
         try {
             se = SchemaElement.GetElement(dataType);
         } catch (XFTInitException | ElementNotFoundException e) {
-            logger.error("Unable to determine SchemaElement for dataType {}", dataType, e);
+            log.error("Unable to determine SchemaElement for dataType {}", dataType, e);
             return;
         }
 
@@ -164,7 +160,7 @@ public class DicomwebProxyEventListener implements Consumer<Event<WorkflowStatus
         }
 
         if (XnatProjectdata.SCHEMA_ELEMENT_NAME.equals(dataType) && pipelineName.equals("Removed Project")) {
-            logger.trace("project {} deleted; removing cached metadata", id);
+            log.trace("project {} deleted; removing cached metadata", id);
             dwInputHandler.deleteDicomwebDataForProject(id);
             return;
         }
@@ -191,13 +187,13 @@ public class DicomwebProxyEventListener implements Consumer<Event<WorkflowStatus
             String pipelineName,
             boolean generateOnlyWhenProjectAnonEnabled) {
         if (item == null) {
-            logger.info("No item for ID: {} User: {} Trigger event: {}", id, user.getUsername(), pipelineName);
+            log.info("No item for ID: {} User: {} Trigger event: {}", id, user.getUsername(), pipelineName);
             return;
         }
         if (generateOnlyWhenProjectAnonEnabled) {
             String project = item.getProject();
             if (!anonUtils.isProjectScriptEnabled(project)) {
-                logger.debug("No project anon for project: {}, skipping event: {}", project, pipelineName);
+                log.debug("No project anon for project: {}, skipping event: {}", project, pipelineName);
                 return;
             }
         }
@@ -206,7 +202,7 @@ public class DicomwebProxyEventListener implements Consumer<Event<WorkflowStatus
             for (final XnatSubjectassessordata expt :
                     ((XnatSubjectdata) item)
                             .getExperiments_experiment(XnatImagesessiondata.SCHEMA_ELEMENT_NAME)) {
-                logger.debug(
+                log.debug(
                         "Extracting DICOMweb metadata for ID: {} User: {} Trigger event: {} (subject)",
                         expt.getId(),
                         user.getUsername(),
@@ -214,7 +210,7 @@ public class DicomwebProxyEventListener implements Consumer<Event<WorkflowStatus
                 generateMetadata((XnatImagesessiondata) expt);
             }
         } else if (item instanceof XnatImagesessiondata) {
-            logger.debug(
+            log.debug(
                     "Extracting DICOMweb metadata for ID: {} User: {} Trigger event: {}",
                     id,
                     user.getUsername(),
@@ -225,7 +221,7 @@ public class DicomwebProxyEventListener implements Consumer<Event<WorkflowStatus
 
     private void generateMetadata(XnatImagesessiondata item) {
         if (!preferences.getEnableMetadataCache()) {
-            logger.debug("Metadata caching is disabled, skipping metadata extraction for session {}", item.getId());
+            log.debug("Metadata caching is disabled, skipping metadata extraction for session {}", item.getId());
             return;
         }
         try {
@@ -233,7 +229,7 @@ public class DicomwebProxyEventListener implements Consumer<Event<WorkflowStatus
                 dwInputHandler.createDicomwebData(item, true);
             }
         } catch (DicomwebMetadataException ex) {
-            logger.warn(
+            log.warn(
                     "Error extracting DICOMweb metadata for session {}: {}",
                     item.getId(),
                     ex.getMessage(),
@@ -249,7 +245,7 @@ public class DicomwebProxyEventListener implements Consumer<Event<WorkflowStatus
                 dwInputHandler.deleteDicomwebData(id);
             }
         } catch (DicomwebMetadataException ex) {
-            logger.warn(
+            log.warn(
                     "Error removing DICOMweb metadata for session {}: {}", id, ex.getMessage(), ex);
         }
     }

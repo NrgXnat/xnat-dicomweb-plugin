@@ -17,7 +17,7 @@ plugins {
 }
 
 group = "org.nrg.xnatx.plugins"
-version = "1.1.3"
+version = "1.2.0-rc1"
 description = "XNAT DICOMweb Proxy Plugin"
 
 repositories {
@@ -91,7 +91,7 @@ dependencyManagement.imports {
 
 dependencies {
     // Shared DICOMweb core library (from mavenLocal)
-    implementAndInclude "org.nrg.xnatx.plugins:xnat-dicomweb-core:1.1.3"
+    implementAndInclude "org.nrg.xnatx.plugins:xnat-dicomweb-core:1.2.0-rc1"
 
     // EtherJ for exception handling (used by DicomwebMetadataException)
     implementAndInclude "icr.etherj:etherj-core:1.1.6"
@@ -229,10 +229,6 @@ publishing {
     }
 
     repositories {
-        maven {
-            name = "Radiologics"
-            url = "https://maven.dev.radiologics.com/repository/${version.endsWith("SNAPSHOT") ? "internal" : "snapshots"}"
-        }
     }
 }
 
