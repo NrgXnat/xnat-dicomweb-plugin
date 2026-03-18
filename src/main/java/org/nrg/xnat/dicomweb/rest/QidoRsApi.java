@@ -153,7 +153,7 @@ public class QidoRsApi extends AbstractXapiRestController {
         List<Attributes> paginatedStudies = applyPagination(allStudies, offset, limit);
 
         // Convert to JSON array
-        String json = "[" + paginatedStudies.stream()
+        String json = paginatedStudies.stream()
                 .map(attrs -> {
                     try {
                         return DicomWebUtils.toJson(attrs);
@@ -162,7 +162,7 @@ public class QidoRsApi extends AbstractXapiRestController {
                         return "{}";
                     }
                 })
-                .collect(Collectors.joining(",")) + "]";
+                .collect(Collectors.joining(",", "[", "]"));
 
         // Return with X-Total-Count header
         return ResponseEntity.ok()
@@ -205,7 +205,7 @@ public class QidoRsApi extends AbstractXapiRestController {
         // Apply pagination
         List<Attributes> paginatedSeries = applyPagination(allSeries, offset, limit);
 
-        String json = "[" + paginatedSeries.stream()
+        String json = paginatedSeries.stream()
                 .map(attrs -> {
                     try {
                         return DicomWebUtils.toJson(attrs);
@@ -214,7 +214,7 @@ public class QidoRsApi extends AbstractXapiRestController {
                         return "{}";
                     }
                 })
-                .collect(Collectors.joining(",")) + "]";
+                .collect(Collectors.joining(",", "[", "]"));
 
         // Return with X-Total-Count header
         return ResponseEntity.ok()
@@ -258,7 +258,7 @@ public class QidoRsApi extends AbstractXapiRestController {
         // Apply pagination
         List<Attributes> paginatedInstances = applyPagination(allInstances, offset, limit);
 
-        String json = "[" + paginatedInstances.stream()
+        String json = paginatedInstances.stream()
                 .map(attrs -> {
                     try {
                         return DicomWebUtils.toJson(attrs);
@@ -267,7 +267,7 @@ public class QidoRsApi extends AbstractXapiRestController {
                         return "{}";
                     }
                 })
-                .collect(Collectors.joining(",")) + "]";
+                .collect(Collectors.joining(",", "[", "]"));
 
         // Return with X-Total-Count header
         return ResponseEntity.ok()

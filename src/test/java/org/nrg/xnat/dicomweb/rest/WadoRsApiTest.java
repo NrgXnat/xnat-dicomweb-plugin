@@ -27,6 +27,7 @@ import javax.servlet.http.HttpServletRequest;
 import javax.servlet.http.HttpServletResponse;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.stream.Stream;
 
 import static org.junit.Assert.*;
 import static org.mockito.ArgumentMatchers.*;
@@ -73,7 +74,7 @@ public class WadoRsApiTest {
         List<Attributes> mockInstances = createMockInstances(3);
 
         when(mockDicomService.retrieveAllStudyInstanceMetadata(any(UserI.class), eq(projectId), eq(studyUID)))
-            .thenReturn(mockInstances);
+            .thenReturn(mockInstances.stream());
 
         // Mock HttpServletRequest
         HttpServletRequest mockRequest = mock(HttpServletRequest.class);
@@ -102,7 +103,7 @@ public class WadoRsApiTest {
         String studyUID = "1.2.3.4.5";
 
         when(mockDicomService.retrieveAllStudyInstanceMetadata(any(UserI.class), eq(projectId), eq(studyUID)))
-            .thenReturn(new ArrayList<>());
+            .thenReturn(Stream.of());
 
         // Mock HttpServletRequest
         HttpServletRequest mockRequest = mock(HttpServletRequest.class);
@@ -121,7 +122,7 @@ public class WadoRsApiTest {
         List<Attributes> mockInstances = createMockInstances(2);
 
         when(mockDicomService.retrieveAllStudyInstanceMetadata(any(UserI.class), eq(projectId), eq(studyUID)))
-            .thenReturn(mockInstances);
+            .thenReturn(mockInstances.stream());
 
         // Mock HttpServletRequest
         HttpServletRequest mockRequest = mock(HttpServletRequest.class);
@@ -149,7 +150,7 @@ public class WadoRsApiTest {
         List<Attributes> mockInstances = createMockInstances(5);
 
         when(mockDicomService.retrieveAllStudyInstanceMetadata(any(UserI.class), eq(projectId), eq(studyUID)))
-            .thenReturn(mockInstances);
+            .thenReturn(mockInstances.stream());
 
         // Mock HttpServletRequest
         HttpServletRequest mockRequest = mock(HttpServletRequest.class);
@@ -744,7 +745,7 @@ public class WadoRsApiTest {
     public void testStudyMetadata_QualityPrefersXml_ReturnsXml() throws Exception {
         List<Attributes> mockInstances = createMockInstances(2);
         when(mockDicomService.retrieveAllStudyInstanceMetadata(any(UserI.class), anyString(), anyString()))
-            .thenReturn(mockInstances);
+            .thenReturn(mockInstances.stream());
 
         HttpServletRequest mockRequest = mock(HttpServletRequest.class);
         when(mockRequest.getRequestURL()).thenReturn(new StringBuffer(

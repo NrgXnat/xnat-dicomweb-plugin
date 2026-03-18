@@ -35,7 +35,7 @@ public class GlobalExceptionHandler {
     public ResponseEntity<String> handleDicomWebException(DicomWebException ex, HttpServletRequest request) {
         String requestId = getRequestId();
 
-        logger.warn("DICOMweb error [{}]: {} - {}", requestId, ex.getErrorCode(), ex.getMessage());
+        logger.debug("DICOMweb error [{}]: {} - {}", requestId, ex.getErrorCode(), ex.getMessage());
 
         ErrorResponse errorResponse = new ErrorResponse(
             ex.getErrorCode(),
@@ -59,7 +59,7 @@ public class GlobalExceptionHandler {
     public ResponseEntity<String> handleStowRsException(StowRsException ex, HttpServletRequest request) {
         String requestId = getRequestId();
 
-        logger.warn("STOW-RS error [{}]: {}", requestId, ex.getMessage());
+        logger.debug("STOW-RS error [{}]: {}", requestId, ex.getMessage());
 
         ErrorResponse errorResponse = new ErrorResponse(
             "StowRsError",
@@ -83,7 +83,7 @@ public class GlobalExceptionHandler {
     public ResponseEntity<String> handleUnsupportedOperationException(UnsupportedOperationException ex, HttpServletRequest request) {
         String requestId = getRequestId();
 
-        logger.warn("Unsupported operation [{}]: {}", requestId, ex.getMessage());
+        logger.error("Unsupported operation [{}]: {}", requestId, ex.getMessage());
 
         ErrorResponse errorResponse = new ErrorResponse(
             "UnsupportedOperation",
@@ -107,7 +107,7 @@ public class GlobalExceptionHandler {
     public ResponseEntity<String> handleGenericException(Exception ex, HttpServletRequest request) {
         String requestId = getRequestId();
 
-        logger.error("Unexpected error [{}]: {}", requestId, ex.getMessage(), ex);
+        logger.warn("Unexpected error [{}]: {}", requestId, ex.getMessage(), ex);
 
         ErrorResponse errorResponse = new ErrorResponse(
             "InternalError",

@@ -6,6 +6,7 @@ import io.swagger.annotations.ApiResponse;
 import io.swagger.annotations.ApiResponses;
 import lombok.extern.slf4j.Slf4j;
 import org.dcm4che3.data.Attributes;
+import org.dcm4che3.data.Tag;
 import org.nrg.framework.annotations.XapiRestController;
 import org.nrg.xapi.rest.AbstractXapiRestController;
 import org.nrg.xapi.rest.XapiRequestMapping;
@@ -45,6 +46,7 @@ import java.util.Collections;
 import java.util.List;
 import java.util.UUID;
 import java.util.stream.Collectors;
+import java.util.stream.Stream;
 
 import static org.nrg.xnatx.dicomweb.core.toolkit.MediaTypes.*;
 import static org.springframework.http.MediaType.APPLICATION_OCTET_STREAM_VALUE;
@@ -168,8 +170,7 @@ public class WadoRsApi extends AbstractXapiRestController {
         String requestUrl = request.getRequestURL().toString();
         String baseUri = BulkDataHandler.extractBaseUri(requestUrl, projectId);
 
-        return buildMetadataResponse(
-                Collections.singletonList(attrs), selected, baseUri, studyUID);
+        return buildMetadataResponse(Stream.of(attrs), selected, baseUri, studyUID);
     }
 
     // backward-compatible overload used by tests
@@ -237,15 +238,16 @@ public class WadoRsApi extends AbstractXapiRestController {
             @PathVariable String projectId,
             @PathVariable String studyUID,
             @RequestParam(value = "accept", required = false) String acceptParam,
-            HttpServletRequest request) throws Exception {
+            HttpServletRequest request) {
         String selected = negotiateMediaType(request, acceptParam, METADATA_TYPES, METADATA_DEFAULT);
 
         UserI user = getSessionUser();
         log.debug("Retrieving study metadata for project={}, study={}", projectId, studyUID);
 
-        List<Attributes> instances = dicomService.retrieveAllStudyInstanceMetadata(user, projectId, studyUID);
+        List<Attributes> instances = dicomService.retrieveAllStudyInstanceMetadata(user, projectId, studyUID)
+                .collect(Collectors.toList());
 
-        if (instances == null || instances.isEmpty()) {
+        if (instances.isEmpty()) {
             log.warn("No instances found for study {}", studyUID);
             throw new ResourceNotFoundException("Study", studyUID);
         }
@@ -254,7 +256,7 @@ public class WadoRsApi extends AbstractXapiRestController {
         String baseUri = BulkDataHandler.extractBaseUri(requestUrl, projectId);
 
         log.debug("Returning {} metadata for {} instances", selected, instances.size());
-        return buildMetadataResponse(instances, selected, baseUri, studyUID);
+        return buildMetadataResponse(instances.stream(), selected, baseUri, studyUID);
     }
 
     // backward-compatible overload used by tests
@@ -1070,16 +1072,16 @@ public class WadoRsApi extends AbstractXapiRestController {
         String selected = negotiateMediaType(request, acceptParam, METADATA_TYPES, METADATA_DEFAULT);
 
         UserI user = getSessionUser();
-        List<Attributes> instances = dicomService.searchInstances(user, projectId, studyUID, seriesUID, null);
-
-        if (instances == null || instances.isEmpty()) {
+        List<Attributes> instances = dicomService.searchMetadata(user, projectId, studyUID, seriesUID, null)
+                .collect(Collectors.toList());
+        if (instances.isEmpty()) {
             throw new ResourceNotFoundException("Series metadata", seriesUID);
         }
 
         String requestUrl = request.getRequestURL().toString();
         String baseUri = BulkDataHandler.extractBaseUri(requestUrl, projectId);
 
-        return buildMetadataResponse(instances, selected, baseUri, studyUID);
+        return buildMetadataResponse(instances.stream(), selected, baseUri, studyUID);
     }
 
     // backward-compatible overload used by tests
@@ -1145,41 +1147,36 @@ public class WadoRsApi extends AbstractXapiRestController {
     /**
      * Build a metadata response (JSON or XML) from a list of instance attributes.
      */
-    private ResponseEntity<String> buildMetadataResponse(
-            List<Attributes> instances, String mediaType, String baseUri, String studyUID) {
-        boolean wantsXml = APPLICATION_DICOM_XML_VALUE.equals(mediaType);
-        String responseBody;
-        String contentType;
+    private ResponseEntity<String> buildMetadataResponse(Stream<Attributes> instances, String mediaType, String baseUri, String studyUID) {
+        final boolean wantsXml = APPLICATION_DICOM_XML_VALUE.equals(mediaType);
+        final String responseBody;
+        final String contentType;
 
         if (wantsXml) {
-            StringBuilder xmlBuilder = new StringBuilder();
-            for (Attributes attrs : instances) {
-                String seriesUID = attrs.getString(org.dcm4che3.data.Tag.SeriesInstanceUID);
-                String instanceUID = attrs.getString(org.dcm4che3.data.Tag.SOPInstanceUID);
+            final StringBuilder xmlBuilder = new StringBuilder();
+            instances.forEach(attrs -> {
                 try {
-                    xmlBuilder.append(DicomWebUtils.toXmlWithBulkDataURI(
-                            attrs, baseUri, studyUID, seriesUID, instanceUID));
+                    final String instance = DicomWebUtils.toXmlWithBulkDataURI(attrs, baseUri,
+                            studyUID, attrs.getString(Tag.SeriesInstanceUID), attrs.getString(Tag.SOPInstanceUID));
+                    xmlBuilder.append(instance);
                 } catch (Exception e) {
                     log.error("Error converting instance metadata to XML", e);
                 }
-            }
+            });
             responseBody = xmlBuilder.toString();
             contentType = APPLICATION_DICOM_XML_VALUE;
         } else {
-            String json = "[" + instances.stream()
+            responseBody = instances
                     .map(attrs -> {
                         try {
-                            String seriesUID = attrs.getString(org.dcm4che3.data.Tag.SeriesInstanceUID);
-                            String instanceUID = attrs.getString(org.dcm4che3.data.Tag.SOPInstanceUID);
-                            return DicomWebUtils.toJsonWithBulkDataURI(
-                                    attrs, baseUri, studyUID, seriesUID, instanceUID);
+                            return DicomWebUtils.toJsonWithBulkDataURI(attrs, baseUri, studyUID,
+                                    attrs.getString(Tag.SeriesInstanceUID), attrs.getString(Tag.SOPInstanceUID));
                         } catch (Exception e) {
                             log.error("Error converting instance metadata to JSON", e);
                             return "{}";
                         }
                     })
-                    .collect(Collectors.joining(",")) + "]";
-            responseBody = json;
+                    .collect(Collectors.joining(",", "[", "]"));
             contentType = APPLICATION_DICOM_JSON_VALUE;
         }
 

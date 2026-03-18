@@ -9,6 +9,7 @@ import org.nrg.xnat.dicomweb.utils.BulkDataHandler;
 import java.io.IOException;
 import java.io.InputStream;
 import java.util.List;
+import java.util.stream.Stream;
 
 /**
  * Service interface for accessing DICOM data from XNAT
@@ -45,6 +46,18 @@ public interface XnatDicomService {
     List<Attributes> searchInstances(UserI user, String projectId, String studyInstanceUID, String seriesInstanceUID, Attributes queryAttributes);
 
     /**
+     * Search of instances within a series, returning the metadata view (Bulk Data via URI)
+     * @param user calling user
+     * @param projectId project to search
+     * @param studyInstanceUID containing study
+     * @param seriesInstanceUID containing series
+     * @param queryAttributes search constraints as specified in PS 3.18 10.6.1.2.3 Required Matching Attributes
+     *                        if null or empty, all instances match
+     * @return metadata search results
+     */
+    Stream<Attributes> searchMetadata(UserI user, String projectId, String studyInstanceUID, String seriesInstanceUID, Attributes queryAttributes);
+
+    /**
      * Retrieve a DICOM instance
      * PS 3.18 is vague about what's included, but examples in Appendix B include Transfer Syntax UID, suggesting
      * that the intended response is FMI + full dataset.
@@ -71,7 +84,7 @@ public interface XnatDicomService {
     /**
      * Retrieve metadata for all instances in a study
      */
-    List<Attributes> retrieveAllStudyInstanceMetadata(UserI user, String projectId, String studyInstanceUID);
+    Stream<Attributes> retrieveAllStudyInstanceMetadata(UserI user, String projectId, String studyInstanceUID);
 
     /**
      * Retrieve all instances in a study

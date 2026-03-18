@@ -1,17 +1,22 @@
 package org.nrg.xnat.dicomweb.utils;
 
+import lombok.Getter;
+import lombok.extern.slf4j.Slf4j;
 import org.dcm4che3.data.Attributes;
 import org.dcm4che3.data.BulkData;
+import org.dcm4che3.data.ItemPointer;
 import org.dcm4che3.data.Tag;
 import org.dcm4che3.data.VR;
+import org.dcm4che3.io.BulkDataDescriptor;
 import org.nrg.xnat.dicomweb.config.DicomWebProperties;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
 
-import java.util.HashSet;
+import java.util.List;
 import java.util.Set;
+import java.util.stream.Collectors;
+import java.util.stream.IntStream;
+import java.util.stream.Stream;
 
 /**
  * Utility class for handling DICOM bulk data and generating BulkDataURI references.
@@ -22,10 +27,8 @@ import java.util.Set;
  * This is now a Spring component that uses configurable threshold values.
  */
 @Component
-public class BulkDataHandler {
-
-    private static final Logger logger = LoggerFactory.getLogger(BulkDataHandler.class);
-
+@Slf4j
+public class BulkDataHandler implements BulkDataDescriptor {
     /**
      * Default size threshold (in bytes) above which attributes should use BulkDataURI.
      * Used for static methods and as fallback.
@@ -42,33 +45,24 @@ public class BulkDataHandler {
      * DICOM tags that should always use BulkDataURI regardless of size.
      * These are typically large binary data elements.
      */
-    private static final Set<Integer> BULK_DATA_TAGS = new HashSet<>();
-
-    static {
-        BULK_DATA_TAGS.add(Tag.PixelData);                    // 7FE0,0010
-        BULK_DATA_TAGS.add(Tag.FloatPixelData);               // 7FE0,0008
-        BULK_DATA_TAGS.add(Tag.DoubleFloatPixelData);         // 7FE0,0009
-        BULK_DATA_TAGS.add(Tag.OverlayData);                  // 60xx,3000
-        BULK_DATA_TAGS.add(Tag.AudioSampleData);              // 003A,0208
-        BULK_DATA_TAGS.add(Tag.CurveData);                    // 50xx,3000
-        BULK_DATA_TAGS.add(Tag.SpectroscopyData);             // 5600,0020
-        BULK_DATA_TAGS.add(Tag.EncapsulatedDocument);         // 0042,0011
-        BULK_DATA_TAGS.add(Tag.WaveformData);                 // 5400,1010
-    }
-
+    private static final Set<Integer> BULK_DATA_TAGS = IntStream.of(
+                    Tag.PixelData,              // 7FE0,0010
+                    Tag.FloatPixelData,         // 7FE0,0008
+                    Tag.DoubleFloatPixelData,   // 7FE0,0009
+                    Tag.OverlayData,            // 60xx,3000
+                    Tag.AudioSampleData,        // 003A,0208
+                    Tag.CurveData,              // 50xx,3000
+                    Tag.SpectroscopyData,       // 5600,0020
+                    Tag.EncapsulatedDocument,   // 0042,0011
+                    Tag.WaveformData            // 5400,1010
+            )
+            .boxed()
+            .collect(Collectors.toSet());
     /**
      * Value Representations that can contain bulk data.
      */
-    private static final Set<VR> BULK_DATA_VRS = new HashSet<>();
-
-    static {
-        BULK_DATA_VRS.add(VR.OB);  // Other Byte
-        BULK_DATA_VRS.add(VR.OD);  // Other Double
-        BULK_DATA_VRS.add(VR.OF);  // Other Float
-        BULK_DATA_VRS.add(VR.OL);  // Other Long
-        BULK_DATA_VRS.add(VR.OW);  // Other Word
-        BULK_DATA_VRS.add(VR.UN);  // Unknown
-    }
+    private static final Set<VR> BULK_DATA_VRS = Stream.of(VR.OB, VR.OD, VR.OF, VR.OL, VR.OV, VR.OW, VR.UC, VR.UN, VR.UT)
+            .collect(Collectors.toSet());
 
     /**
      * Constructor with configuration injection
@@ -76,7 +70,7 @@ public class BulkDataHandler {
     @Autowired
     public BulkDataHandler(DicomWebProperties properties) {
         this.bulkDataThreshold = properties.getBulkData().getThreshold();
-        logger.info("BulkDataHandler initialized with threshold: {} bytes", this.bulkDataThreshold);
+        log.debug("BulkDataHandler initialized with threshold: {} bytes", this.bulkDataThreshold);
     }
 
     /**
@@ -106,8 +100,7 @@ public class BulkDataHandler {
                         // We'll use a custom Attributes entry with VR.UR (URI/URL)
                         processed.setString(tag, VR.UR, bulkDataURI);
 
-                        logger.debug("Replaced tag {} with BulkDataURI: {}",
-                            String.format("%08X", tag), bulkDataURI);
+                        log.trace("Replaced tag {} with BulkDataURI: {}", String.format("%08X", tag), bulkDataURI);
                     } else {
                         // Copy non-bulk-data attributes as-is
                         processed.setValue(tag, vr, value);
@@ -116,7 +109,7 @@ public class BulkDataHandler {
                 }
             }, false);
         } catch (Exception e) {
-            logger.error("Error processing bulk data", e);
+            log.error("Error processing bulk data", e);
             // Return original attributes if processing fails
             return attrs;
         }
@@ -147,9 +140,7 @@ public class BulkDataHandler {
         // 3. Large byte arrays with bulk data VRs
         if (BULK_DATA_VRS.contains(vr) && value instanceof byte[]) {
             byte[] bytes = (byte[]) value;
-            if (bytes.length > bulkDataThreshold) {
-                return true;
-            }
+            return bytes.length > bulkDataThreshold;
         }
 
         return false;
@@ -173,9 +164,7 @@ public class BulkDataHandler {
         }
         if (BULK_DATA_VRS.contains(vr) && value instanceof byte[]) {
             byte[] bytes = (byte[]) value;
-            if (bytes.length > DEFAULT_BULK_DATA_THRESHOLD) {
-                return true;
-            }
+            return bytes.length > DEFAULT_BULK_DATA_THRESHOLD;
         }
         return false;
     }
@@ -238,13 +227,13 @@ public class BulkDataHandler {
     /**
      * DICOM tags that represent pixel data.
      */
-    private static final Set<Integer> PIXEL_DATA_TAGS = new HashSet<>();
-
-    static {
-        PIXEL_DATA_TAGS.add(Tag.PixelData);           // 7FE0,0010
-        PIXEL_DATA_TAGS.add(Tag.FloatPixelData);       // 7FE0,0008
-        PIXEL_DATA_TAGS.add(Tag.DoubleFloatPixelData); // 7FE0,0009
-    }
+    private static final Set<Integer> PIXEL_DATA_TAGS = IntStream.of(
+                    Tag.PixelData,            // 7FE0,0010
+                    Tag.FloatPixelData,       // 7FE0,0008
+                    Tag.DoubleFloatPixelData  // 7FE0,0009
+            )
+            .boxed()
+            .collect(Collectors.toSet());
 
     /**
      * Check if a tag is a pixel data tag.
@@ -257,8 +246,17 @@ public class BulkDataHandler {
     }
 
     /**
+     * {@inheritDoc}
+     */
+    @Override
+    public boolean isBulkData(List<ItemPointer> list, String s, int tag, VR vr, int i1) {
+        return BULK_DATA_VRS.contains(vr) || BULK_DATA_TAGS.contains(tag);
+    }
+
+    /**
      * A single bulk data element extracted from a DICOM instance.
      */
+    @Getter
     public static class BulkDataItem {
         private final String contentLocation;
         private final byte[] data;
@@ -266,14 +264,6 @@ public class BulkDataHandler {
         public BulkDataItem(String contentLocation, byte[] data) {
             this.contentLocation = contentLocation;
             this.data = data;
-        }
-
-        public String getContentLocation() {
-            return contentLocation;
-        }
-
-        public byte[] getData() {
-            return data;
         }
     }
 }
