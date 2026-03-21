@@ -809,7 +809,7 @@ public class XnatDicomServiceImpl implements XnatDicomService {
         }
     }
 
-    private final Map<String,String> xnatToDicomModalities = Arrays.stream(new String[][]{
+    private static final Map<String,String> xnatToDicomModalities = Arrays.stream(new String[][]{
             {"PET", "PT"},  // PET is the only one we know we need to rename
             {"MR"},   // the rest are common cases, avoid the cleanup cost
             {"CT"},
@@ -829,7 +829,7 @@ public class XnatDicomServiceImpl implements XnatDicomService {
      * @param scan scan representing a DICOM series
      * @return Optional.of(DICOM modality) if a modality is present in the scan, or empty otherwise.
      */
-    private Optional<String> getDicomModality(final XnatImagescandataI scan) {
+    private static Optional<String> getDicomModality(final XnatImagescandataI scan) {
         return Optional.ofNullable(scan.getModality())
                 .filter(m -> !m.isEmpty())
                 .map(m -> Optional.ofNullable(xnatToDicomModalities.get(m))
