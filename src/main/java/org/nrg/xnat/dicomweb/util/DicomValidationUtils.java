@@ -4,7 +4,7 @@
  * All rights reserved.
  */
 
-package org.nrg.xnat.dicomweb.utils;
+package org.nrg.xnat.dicomweb.util;
 
 import org.nrg.xnat.dicomweb.parser.Mime4jHybridParser.MultipartPart;
 import org.nrg.xnat.dicomweb.service.FailedInstance;

@@ -1,4 +1,4 @@
-package org.nrg.xnat.dicomweb.utils;
+package org.nrg.xnat.dicomweb.util;
 
 import org.dcm4che3.data.Attributes;
 import org.dcm4che3.data.BulkData;
@@ -10,7 +10,6 @@ import org.dcm4che3.json.JSONWriter;
 
 import javax.json.Json;
 import javax.json.stream.JsonGenerator;
-import javax.xml.transform.TransformerConfigurationException;
 import javax.xml.transform.sax.SAXTransformerFactory;
 import javax.xml.transform.sax.TransformerHandler;
 import javax.xml.transform.stream.StreamResult;

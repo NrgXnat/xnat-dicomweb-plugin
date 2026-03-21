@@ -27,7 +27,7 @@ import org.nrg.xnat.dicomweb.service.SuccessfulInstance;
 import org.nrg.xnat.dicomweb.service.impl.strategy.DicomImportStrategy;
 import org.nrg.xnat.dicomweb.service.impl.strategy.DirectArchiveStrategy;
 import org.nrg.xnat.dicomweb.service.impl.strategy.GradualDicomImporterStrategy;
-import org.nrg.xnat.dicomweb.utils.DicomWebUtils;
+import org.nrg.xnat.dicomweb.util.DicomWebUtils;
 import org.nrg.xnat.helpers.prearchive.PrearcDatabase;
 import org.nrg.xnat.helpers.prearchive.PrearcSession;
 import org.nrg.xnat.helpers.prearchive.PrearcUtils;

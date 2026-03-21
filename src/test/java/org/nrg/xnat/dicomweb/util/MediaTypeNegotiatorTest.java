@@ -1,11 +1,10 @@
-package org.nrg.xnat.dicomweb.utils;
+package org.nrg.xnat.dicomweb.util;
 
 import org.junit.Test;
 import org.nrg.xnat.dicomweb.exceptions.BadRequestException;
 import org.nrg.xnat.dicomweb.exceptions.NotAcceptableException;
 
 import java.util.Arrays;
-import java.util.Collections;
 import java.util.List;
 
 import static org.junit.Assert.*;

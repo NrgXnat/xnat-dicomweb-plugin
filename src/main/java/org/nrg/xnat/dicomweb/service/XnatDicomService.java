@@ -1,10 +1,9 @@
 package org.nrg.xnat.dicomweb.service;
 
 import org.dcm4che3.data.Attributes;
-import org.dcm4che3.data.Tag;
 import org.nrg.xft.security.UserI;
 
-import org.nrg.xnat.dicomweb.utils.BulkDataHandler;
+import org.nrg.xnat.dicomweb.util.BulkDataHandler;
 
 import java.io.IOException;
 import java.io.InputStream;
@@ -76,10 +75,6 @@ public interface XnatDicomService {
      */
     Attributes retrieveMetadata(UserI user, String projectId, String studyInstanceUID, String seriesInstanceUID, String sopInstanceUID);
 
-    /**
-     * Retrieve study-level metadata
-     */
-    Attributes retrieveStudyMetadata(UserI user, String projectId, String studyInstanceUID);
 
     /**
      * Retrieve metadata for all instances in a study
@@ -95,16 +90,6 @@ public interface XnatDicomService {
      * Retrieve all instances in a series
      */
     List<InputStream> retrieveSeries(UserI user, String projectId, String studyInstanceUID, String seriesInstanceUID);
-
-    /**
-     * Retrieve a rendered instance as image (JPEG or GIF)
-     * @param frameNumber optional frame number (1-based), null for default (middle frame for JPEG, all frames for GIF)
-     * @param format desired output format (JPEG or GIF)
-     * @return RenderedInstanceResult containing image data and metadata
-     */
-    RenderedInstanceResult retrieveRenderedInstance(UserI user, String projectId, String studyInstanceUID,
-                                                   String seriesInstanceUID, String sopInstanceUID,
-                                                   Integer frameNumber, ImageFormat format);
 
     /**
      * Retrieve a rendered instance with rendering parameters.

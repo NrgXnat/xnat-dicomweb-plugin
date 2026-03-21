@@ -5,8 +5,8 @@ import org.junit.Test;
 import org.mockito.Mock;
 import org.mockito.MockitoAnnotations;
 import org.nrg.xnat.dicomweb.config.DicomWebPreferenceBean;
-import org.nrg.xnatx.dicomweb.core.service.query.DicomwebDataService;
-import org.nrg.xnatx.dicomweb.core.service.query.DwInstanceDataService;
+import org.nrg.xnat.dicomweb.service.impl.XnatDicomServiceImpl;
+import org.nrg.xnat.dicomweb.util.BulkDataHandler;
 
 import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Method;
@@ -21,20 +21,14 @@ import static org.junit.Assert.assertNotNull;
  * Focused tests for helper methods in {@link XnatDicomServiceImpl}.
  */
 public class XnatDicomServiceImplTest {
-
-    @Mock
-    private DicomwebDataService dicomwebDataService;
-
-    @Mock
-    private DwInstanceDataService dwInstanceDataService;
-
     @Mock
     private DicomWebPreferenceBean dwPreferenceBean;
 
+    @Mock
+    private BulkDataHandler bulkDataHandler;
+
     private XnatDicomServiceImpl service;
     private Method matchesDescriptor;
-    private Method buildFallbackArchivePath;
-    private Method joinPaths;
     private Method parseFrameNumbers;
     private Method matchesDicomValue;
     private Method matchesDicomDate;
@@ -42,18 +36,10 @@ public class XnatDicomServiceImplTest {
     @Before
     public void setUp() throws Exception {
         MockitoAnnotations.initMocks(this);
-        service = new XnatDicomServiceImpl(dicomwebDataService, dwInstanceDataService, dwPreferenceBean);
+        service = new XnatDicomServiceImpl(dwPreferenceBean, bulkDataHandler);
 
         matchesDescriptor = XnatDicomServiceImpl.class.getDeclaredMethod("matchesDicomDescriptor", String.class);
         matchesDescriptor.setAccessible(true);
-
-        buildFallbackArchivePath = XnatDicomServiceImpl.class.getDeclaredMethod(
-                "buildFallbackArchivePath", String.class, String.class, String.class);
-        buildFallbackArchivePath.setAccessible(true);
-
-        joinPaths = XnatDicomServiceImpl.class.getDeclaredMethod(
-                "joinPaths", String.class, String[].class);
-        joinPaths.setAccessible(true);
 
         parseFrameNumbers = XnatDicomServiceImpl.class.getDeclaredMethod(
                 "parseFrameNumbers", String.class);
@@ -72,19 +58,6 @@ public class XnatDicomServiceImplTest {
     public void matchesDicomDescriptorRecognizesSecondaryLabels() throws Exception {
         boolean result = (boolean) matchesDescriptor.invoke(service, "Secondary Review");
         assertTrue("Descriptors containing 'secondary' should be treated as DICOM", result);
-    }
-
-    @Test
-    public void buildFallbackArchivePathDefaultsToArc001() throws Exception {
-        String path = (String) buildFallbackArchivePath.invoke(service,
-                "/data/xnat/archive/", "ProjectA", "Session01");
-        assertEquals("/data/xnat/archive/ProjectA/arc001/Session01", path);
-    }
-
-    @Test
-    public void joinPathsAvoidsDuplicateSeparators() throws InvocationTargetException, IllegalAccessException {
-        String result = (String) joinPaths.invoke(service, "/root/", new String[]{"/nested", "child"});
-        assertEquals("/root/nested/child", result.replace('\\', '/'));
     }
 
     @Test

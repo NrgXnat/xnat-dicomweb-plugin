@@ -17,7 +17,7 @@ plugins {
 }
 
 group = "org.nrg.xnatx.plugins"
-version = "1.2.0-rc1"
+version = "1.2.0-rc2"
 description = "XNAT DICOMweb Proxy Plugin"
 
 repositories {
@@ -90,9 +90,6 @@ dependencyManagement.imports {
 }
 
 dependencies {
-    // Shared DICOMweb core library (from mavenLocal)
-    implementAndInclude "org.nrg.xnatx.plugins:xnat-dicomweb-core:1.2.0-rc1"
-
     // EtherJ for exception handling (used by DicomwebMetadataException)
     implementAndInclude "icr.etherj:etherj-core:1.1.6"
 
@@ -124,6 +121,7 @@ dependencies {
     compileOnly "org.dcm4che:dcm4che-image"
     compileOnly "org.dcm4che:dcm4che-net"
     implementAndInclude "org.dcm4che:dcm4che-json"
+    implementAndInclude "org.dcm4che:dcm4che-ws-rs:5.31.0"
     // OpenCV image I/O for advanced compression formats (JPEG-LS, JPEG 2000)
     implementAndInclude "org.dcm4che:dcm4che-imageio-opencv:5.31.0"
 

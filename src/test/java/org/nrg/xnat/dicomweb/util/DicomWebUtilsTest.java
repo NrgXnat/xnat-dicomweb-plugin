@@ -1,4 +1,4 @@
-package org.nrg.xnat.dicomweb.utils;
+package org.nrg.xnat.dicomweb.util;
 
 import org.dcm4che3.data.Attributes;
 import org.dcm4che3.data.Tag;

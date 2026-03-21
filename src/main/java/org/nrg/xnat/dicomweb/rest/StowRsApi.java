@@ -21,7 +21,7 @@ import org.nrg.xnat.dicomweb.exceptions.ForbiddenException;
 import org.nrg.xnat.dicomweb.service.StowRsException;
 import org.nrg.xnat.dicomweb.service.StowRsResult;
 import org.nrg.xnat.dicomweb.service.StowRsService;
-import org.nrg.xnat.dicomweb.utils.DicomWebUtils;
+import org.nrg.xnat.dicomweb.util.DicomWebUtils;
 import org.nrg.xnat.helpers.uri.URIManager;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;

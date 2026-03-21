@@ -11,14 +11,12 @@ import org.nrg.xdat.security.services.RoleHolder;
 import org.nrg.xdat.security.services.UserManagementServiceI;
 import org.nrg.xft.security.UserI;
 import org.nrg.xnat.dicomweb.exceptions.BadRequestException;
-import org.nrg.xnat.dicomweb.exceptions.NotAcceptableException;
 import org.nrg.xnat.dicomweb.exceptions.ResourceNotFoundException;
 import org.nrg.xnat.dicomweb.service.ImageFormat;
 import org.nrg.xnat.dicomweb.service.RenderedInstanceResult;
 import org.nrg.xnat.dicomweb.service.RenderingParams;
 import org.nrg.xnat.dicomweb.service.XnatDicomService;
-import org.nrg.xnat.dicomweb.utils.BulkDataHandler;
-import org.nrg.xnat.dicomweb.utils.BulkDataHandler.BulkDataItem;
+import org.nrg.xnat.dicomweb.util.BulkDataHandler.BulkDataItem;
 import org.springframework.core.io.InputStreamResource;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
@@ -383,9 +381,9 @@ public class WadoRsApiTest {
 
         List<Attributes> mockInstances = createMockInstances(3);
 
-        when(mockDicomService.searchInstances(any(UserI.class), eq(projectId), eq(studyUID),
+        when(mockDicomService.searchMetadata(any(UserI.class), eq(projectId), eq(studyUID),
                 eq(seriesUID), any()))
-            .thenReturn(mockInstances);
+            .thenReturn(mockInstances.stream());
 
         HttpServletRequest mockRequest = mock(HttpServletRequest.class);
         when(mockRequest.getRequestURL()).thenReturn(new StringBuffer(
@@ -395,7 +393,7 @@ public class WadoRsApiTest {
 
         // Act
         ResponseEntity<String> response = wadoRsApi.retrieveSeriesMetadata(projectId, studyUID,
-                seriesUID, mockRequest);
+                seriesUID, null, mockRequest);
 
         // Assert
         assertEquals("Should return 200 OK", HttpStatus.OK, response.getStatusCode());
@@ -423,7 +421,7 @@ public class WadoRsApiTest {
                 "/series/" + seriesUID + "/metadata"));
 
         // Act - should throw ResourceNotFoundException
-        wadoRsApi.retrieveSeriesMetadata(projectId, studyUID, seriesUID, mockRequest);
+        wadoRsApi.retrieveSeriesMetadata(projectId, studyUID, seriesUID, null, mockRequest);
     }
 
     // ========== Rendered Instance Tests ==========
@@ -763,9 +761,9 @@ public class WadoRsApiTest {
     @Test
     public void testSeriesMetadata_QualityPrefersJson_ReturnsJson() throws Exception {
         List<Attributes> mockInstances = createMockInstances(2);
-        when(mockDicomService.searchInstances(any(UserI.class), anyString(), anyString(),
+        when(mockDicomService.searchMetadata(any(UserI.class), anyString(), anyString(),
                 anyString(), any()))
-            .thenReturn(mockInstances);
+            .thenReturn(mockInstances.stream());
 
         HttpServletRequest mockRequest = mock(HttpServletRequest.class);
         when(mockRequest.getRequestURL()).thenReturn(new StringBuffer(
@@ -774,7 +772,7 @@ public class WadoRsApiTest {
                 "application/dicom+xml;q=0.8, application/dicom+json;q=1.0");
 
         ResponseEntity<String> response = wadoRsApi.retrieveSeriesMetadata(
-                "P", "1", "2", mockRequest);
+                "P", "1", "2", null, mockRequest);
 
         assertEquals(HttpStatus.OK, response.getStatusCode());
         assertEquals("application/dicom+json", response.getHeaders().getContentType().toString());

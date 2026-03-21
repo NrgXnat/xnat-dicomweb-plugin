@@ -18,8 +18,8 @@ import org.nrg.xnat.dicomweb.parser.Mime4jHybridParser.MultipartPart;
 import org.nrg.xnat.dicomweb.service.FailedInstance;
 import org.nrg.xnat.dicomweb.service.StowRsImportResult;
 import org.nrg.xnat.dicomweb.service.SuccessfulInstance;
-import org.nrg.xnat.dicomweb.utils.DicomValidationUtils;
-import org.nrg.xnat.dicomweb.utils.DicomWebUtils;
+import org.nrg.xnat.dicomweb.util.DicomValidationUtils;
+import org.nrg.xnat.dicomweb.util.DicomWebUtils;
 import org.nrg.xnat.helpers.prearchive.PrearcUtils;
 import org.nrg.xnat.helpers.prearchive.SessionData;
 import org.nrg.xnat.helpers.uri.URIManager;
@@ -42,8 +42,6 @@ import java.text.SimpleDateFormat;
 import java.util.*;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
-import java.util.concurrent.TimeUnit;
-import java.util.concurrent.TimeoutException;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 /**

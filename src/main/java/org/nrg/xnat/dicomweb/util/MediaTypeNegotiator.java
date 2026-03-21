@@ -4,7 +4,7 @@
  * All rights reserved.
  */
 
-package org.nrg.xnat.dicomweb.utils;
+package org.nrg.xnat.dicomweb.util;
 
 import lombok.extern.slf4j.Slf4j;
 import org.nrg.xnat.dicomweb.exceptions.NotAcceptableException;

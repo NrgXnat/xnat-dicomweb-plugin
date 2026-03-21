@@ -1,4 +1,4 @@
-package org.nrg.xnat.dicomweb.utils;
+package org.nrg.xnat.dicomweb.util;
 
 import lombok.Getter;
 import lombok.extern.slf4j.Slf4j;
