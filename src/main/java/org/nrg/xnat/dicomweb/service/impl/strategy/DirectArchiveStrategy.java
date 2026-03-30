@@ -92,6 +92,13 @@ public class DirectArchiveStrategy implements DicomImportStrategy {
     private final DirectArchiveSessionService directArchiveSessionService;
     private final DirectArchiveSessionHibernateService directArchiveSessionHibernateService;
 
+    /**
+     * Whether the XNAT runtime supports the 3-arg getOrCreate (with overwriteMode).
+     * Detected at construction time. When true, DirectArchive fully supports append/overwrite
+     * and is suitable as the default import strategy.
+     */
+    private final boolean supportsOverwriteMode;
+
     // ========================================================================
     // Concurrent Build Protection
     // ========================================================================
@@ -112,6 +119,27 @@ public class DirectArchiveStrategy implements DicomImportStrategy {
                                   DirectArchiveSessionHibernateService directArchiveSessionHibernateService) {
         this.directArchiveSessionService = directArchiveSessionService;
         this.directArchiveSessionHibernateService = directArchiveSessionHibernateService;
+        this.supportsOverwriteMode = detectOverwriteSupport();
+    }
+
+    private boolean detectOverwriteSupport() {
+        try {
+            directArchiveSessionService.getClass()
+                    .getMethod("getOrCreate", SessionData.class, AtomicBoolean.class, String.class);
+            logger.info("XNAT supports DirectArchive overwrite mode (3-arg getOrCreate)");
+            return true;
+        } catch (NoSuchMethodException e) {
+            logger.info("XNAT does not support DirectArchive overwrite mode (2-arg getOrCreate only)");
+            return false;
+        }
+    }
+
+    /**
+     * Whether this XNAT version fully supports DirectArchive with append/overwrite.
+     * Used by StowRsServiceImpl to determine the appropriate default strategy.
+     */
+    public boolean supportsOverwriteMode() {
+        return supportsOverwriteMode;
     }
 
     // ========================================================================
@@ -276,11 +304,16 @@ public class DirectArchiveStrategy implements DicomImportStrategy {
     /**
      * Process a single study with per-study build locks.
      *
-     * <p>This method implements concurrent upload protection:
+     * <p>This method implements concurrent upload protection for threads within the
+     * same STOW request that upload to the same study:
      * <ul>
      *   <li>First thread: Creates session, writes files, builds and archives</li>
-     *   <li>Subsequent threads: Write files and reuse build result from first thread</li>
+     *   <li>Concurrent threads (same request): Write files and reuse build result</li>
      * </ul>
+     *
+     * <p>After the build completes (success or failure), the entry is removed from
+     * {@code buildFutures} so that subsequent STOW requests to the same study
+     * perform their own build cycle (supporting append/overwrite).
      *
      * <p>Build lock key format: {projectId}/{studyInstanceUID}
      */
@@ -294,7 +327,10 @@ public class DirectArchiveStrategy implements DicomImportStrategy {
         String buildKey = project.getId() + "/" + studyUid;
         logger.debug("Processing study with build key: {}", buildKey);
 
-        // Get or create build future for this study (atomic operation)
+        // Get or create build future for this study (atomic operation).
+        // Within a single STOW request, concurrent threads uploading to the same study
+        // will share this future. The first thread to reach the build step performs
+        // the build; others wait and reuse the result.
         CompletableFuture<String> buildFuture = buildFutures.computeIfAbsent(buildKey, k -> {
             logger.info("First thread for study {}, will perform build", buildKey);
             return new CompletableFuture<>();
@@ -337,10 +373,11 @@ public class DirectArchiveStrategy implements DicomImportStrategy {
             logger.error("Error processing study {}", buildKey, e);
             buildFuture.completeExceptionally(e);
             throw new RuntimeException("Error processing study: " + e.getMessage(), e);
+        } finally {
+            // Remove the build future so subsequent STOW requests to the same study
+            // get a fresh future and perform their own build (supporting append/overwrite).
+            buildFutures.remove(buildKey);
         }
-        // Note: buildFutures are kept in memory for the lifetime of the service.
-        // This is acceptable since the number of unique studies is typically limited.
-        // If memory becomes a concern, implement a cleanup strategy using a ScheduledExecutorService.
     }
 
     /**
@@ -381,13 +418,42 @@ public class DirectArchiveStrategy implements DicomImportStrategy {
         SessionData initialize = buildSessionData(project, studyUid, firstInstance, timestamp, params);
 
         AtomicBoolean isNew = new AtomicBoolean();
-        SessionData session = directArchiveSessionService.getOrCreate(initialize, isNew);
+        SessionData session = invokeGetOrCreate(initialize, isNew, params);
 
         logger.info("{} DirectArchiveSession: {}",
                    isNew.get() ? "Created new" : "Using existing",
                    session.getSessionDataTriple());
 
         return session;
+    }
+
+    /**
+     * Invoke DirectArchiveSessionService.getOrCreate, handling the signature difference between
+     * XNAT versions (2-arg in 1.9.3-RC, 3-arg with overwriteMode in later versions).
+     */
+    private SessionData invokeGetOrCreate(SessionData initialize, AtomicBoolean isNew,
+                                           Map<String, Object> params) throws ArchivingException {
+        // Try 3-arg version first (newer XNAT with overwrite support)
+        try {
+            java.lang.reflect.Method method = directArchiveSessionService.getClass()
+                    .getMethod("getOrCreate", SessionData.class, AtomicBoolean.class, String.class);
+            String overwriteMode = (String) params.getOrDefault("overwrite", "append");
+            return (SessionData) method.invoke(directArchiveSessionService, initialize, isNew, overwriteMode);
+        } catch (NoSuchMethodException e) {
+            // Fall back to 2-arg version (older XNAT)
+            logger.debug("Using 2-arg getOrCreate (overwrite mode not supported by this XNAT version)");
+        } catch (java.lang.reflect.InvocationTargetException e) {
+            Throwable cause = e.getCause();
+            if (cause instanceof ArchivingException) {
+                throw (ArchivingException) cause;
+            }
+            throw new ArchivingException(cause != null ? cause.getMessage() : e.getMessage());
+        } catch (Exception e) {
+            throw new ArchivingException("Failed to invoke getOrCreate: " + e.getMessage());
+        }
+
+        // 2-arg fallback
+        return directArchiveSessionService.getOrCreate(initialize, isNew);
     }
 
     /**

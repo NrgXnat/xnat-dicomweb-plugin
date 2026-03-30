@@ -3,6 +3,11 @@ package org.nrg.xnat.dicomweb.config;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
 
+import java.util.Arrays;
+import java.util.Collections;
+import java.util.Set;
+import java.util.stream.Collectors;
+
 /**
  * DICOMweb plugin configuration properties facade
  *
@@ -42,6 +47,14 @@ public class DicomWebProperties {
 
     public BulkDataConfig getBulkData() {
         return new BulkDataConfig(preferenceBean.getBulkDataThreshold());
+    }
+
+    public SiteWideConfig getSiteWide() {
+        return new SiteWideConfig(
+            preferenceBean.getSiteWideEnabled(),
+            preferenceBean.getFilterMode(),
+            preferenceBean.getProjectList()
+        );
     }
 
     /**
@@ -92,6 +105,39 @@ public class DicomWebProperties {
 
         public int getThreshold() {
             return threshold;
+        }
+    }
+
+    /**
+     * Site-wide DICOMweb querying configuration
+     */
+    public static class SiteWideConfig {
+        private final boolean enabled;
+        private final String filterMode;
+        private final String projectList;
+
+        public SiteWideConfig(boolean enabled, String filterMode, String projectList) {
+            this.enabled = enabled;
+            this.filterMode = filterMode;
+            this.projectList = projectList;
+        }
+
+        public boolean isEnabled() {
+            return enabled;
+        }
+
+        public String getFilterMode() {
+            return filterMode != null ? filterMode : "blacklist";
+        }
+
+        public Set<String> getProjectSet() {
+            if (projectList == null || projectList.trim().isEmpty()) {
+                return Collections.emptySet();
+            }
+            return Arrays.stream(projectList.split(","))
+                    .map(String::trim)
+                    .filter(s -> !s.isEmpty())
+                    .collect(Collectors.toSet());
         }
     }
 }

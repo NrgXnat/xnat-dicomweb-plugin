@@ -1,0 +1,20 @@
+####
+#### DICOMweb Plugin Project Settings
+####
+
+dicomwebProjectSettingsPanel:
+    kind: panel
+    name: dicomwebProjectSettingsPanel
+    label: "DICOMweb Site-Wide Visibility"
+    contents:
+        projectSettingsScript:
+            tag: script|src="~/scripts/xnat/plugin/dicomweb/dicomweb-projectSettings.js"
+        projectSettingsContainer:
+            tag: div#dicomweb-project-settings
+
+projectSettings:
+    kind: panel
+    name: dicomwebProjectSettings
+    label: DICOMweb
+    contents:
+        ${dicomwebProjectSettingsPanel}

@@ -5,6 +5,7 @@ import org.junit.Test;
 import org.mockito.Mock;
 import org.mockito.MockitoAnnotations;
 import org.nrg.xnat.dicomweb.config.DicomWebPreferenceBean;
+import org.nrg.xnat.dicomweb.service.SiteWideProjectFilter;
 import org.nrg.xnat.dicomweb.service.impl.XnatDicomServiceImpl;
 import org.nrg.xnat.dicomweb.util.BulkDataHandler;
 
@@ -27,6 +28,9 @@ public class XnatDicomServiceImplTest {
     @Mock
     private BulkDataHandler bulkDataHandler;
 
+    @Mock
+    private SiteWideProjectFilter siteWideProjectFilter;
+
     private XnatDicomServiceImpl service;
     private Method matchesDescriptor;
     private Method parseFrameNumbers;
@@ -36,7 +40,7 @@ public class XnatDicomServiceImplTest {
     @Before
     public void setUp() throws Exception {
         MockitoAnnotations.initMocks(this);
-        service = new XnatDicomServiceImpl(dwPreferenceBean, bulkDataHandler);
+        service = new XnatDicomServiceImpl(dwPreferenceBean, bulkDataHandler, siteWideProjectFilter);
 
         matchesDescriptor = XnatDicomServiceImpl.class.getDeclaredMethod("matchesDicomDescriptor", String.class);
         matchesDescriptor.setAccessible(true);

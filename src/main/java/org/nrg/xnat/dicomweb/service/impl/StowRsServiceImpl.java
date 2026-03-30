@@ -128,21 +128,43 @@ public class StowRsServiceImpl implements StowRsService {
      * Select import strategy based on params.
      * Supports query parameter: ?strategy=GradualDicomImporter or ?strategy=DirectArchive
      * Default: Configured via Admin UI (dicomweb.defaultStrategy preference)
+     *
+     * For site-wide requests (no projectId), GradualDicomImporter is used by default
+     * since it integrates with XNAT's DicomObjectIdentifier for project routing.
+     * DirectArchive can still be used for site-wide if the project can be resolved.
      */
     private DicomImportStrategy selectStrategy(Map<String, Object> params) {
         String strategyName = (String) params.get("strategy");
+        String projectId = (String) params.get(URIManager.PROJECT_ID);
 
         if (strategyName == null) {
-            // Use configured default from preferences
-            strategyName = preferenceBean.getDefaultStrategy();
-            if (strategyName == null || strategyName.isEmpty()) {
-                strategyName = "GradualDicomImporter";  // Fallback
+            if (projectId == null) {
+                // Site-wide: default to GradualDicomImporter for DICOM-based project routing
+                strategyName = "GradualDicomImporter";
+                logger.debug("Site-wide STOW-RS: defaulting to GradualDicomImporter for project routing");
+            } else {
+                // Use configured default from preferences
+                strategyName = preferenceBean.getDefaultStrategy();
+                if (strategyName == null || strategyName.isEmpty()) {
+                    // Default based on XNAT version capability
+                    strategyName = directArchiveStrategy.supportsOverwriteMode()
+                            ? "DirectArchive" : "GradualDicomImporter";
+                }
+                logger.debug("Using configured default strategy: {}", strategyName);
             }
-            logger.debug("Using configured default strategy: {}", strategyName);
         }
 
+        // For site-wide DirectArchive, the project must be resolved from DICOM data.
+        // DirectArchiveStrategy.validateAndGetProject() will fail if projectId is null.
+        // The project resolution happens inside the strategy — if it can't determine
+        // the project, the import will fail and the caller should retry with GradualDicomImporter.
         switch (strategyName) {
             case "DirectArchive":
+                if (projectId == null) {
+                    logger.info("Site-wide STOW-RS with DirectArchive requested — " +
+                            "falling back to GradualDicomImporter for DICOM-based project routing");
+                    return gradualDicomImporterStrategy;
+                }
                 logger.info("Using DirectArchive strategy");
                 return directArchiveStrategy;
             case "GradualDicomImporter":
@@ -741,8 +763,9 @@ public class StowRsServiceImpl implements StowRsService {
     }
 
     /**
-     * Build base DICOMweb URL from HTTP request
-     * Example: http://localhost:8080/xapi/dicomweb/projects/ProjectID
+     * Build base DICOMweb URL from HTTP request.
+     * For project-scoped: http://localhost:8080/xapi/dicomweb/projects/ProjectID
+     * For site-wide:      http://localhost:8080/xapi/dicomweb
      */
     private String buildBaseUrl(HttpServletRequest request, String projectId) {
         String scheme = request.getScheme();
@@ -758,7 +781,11 @@ public class StowRsServiceImpl implements StowRsService {
             baseUrl.append(":").append(serverPort);
         }
 
-        baseUrl.append("/xapi/dicomweb/projects/").append(projectId);
+        if (projectId != null) {
+            baseUrl.append("/xapi/dicomweb/projects/").append(projectId);
+        } else {
+            baseUrl.append("/xapi/dicomweb");
+        }
         return baseUrl.toString();
     }
 

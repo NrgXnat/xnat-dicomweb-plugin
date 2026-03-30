@@ -107,10 +107,10 @@ public class DicomWebPreferenceBean extends AbstractPreferenceBean {
 
     /**
      * Default import strategy for STOW-RS uploads
-     * - GradualDicomImporter: Full XNAT import pipeline with prearchive (recommended)
-     * - DirectArchive: Direct archive writing, bypasses prearchive (experimental, has limitations)
+     * - DirectArchive: Direct archive writing, bypasses prearchive (default)
+     * - GradualDicomImporter: Full XNAT import pipeline with prearchive
      *
-     * @return Default strategy name (default: GradualDicomImporter)
+     * @return Default strategy name (default: DirectArchive)
      */
     @NrgPreference(property = "dicomweb.defaultStrategy")
     public String getDefaultStrategy() {
@@ -130,5 +130,51 @@ public class DicomWebPreferenceBean extends AbstractPreferenceBean {
 
     public void setBaseUrl(final String baseUrl) throws InvalidPreferenceName {
         set(baseUrl, "dicomweb.baseUrl");
+    }
+
+    /**
+     * Master toggle for site-wide DICOMweb querying.
+     * When false, site-wide endpoints return 404.
+     *
+     * @return true if site-wide querying is enabled
+     */
+    @NrgPreference(property = "dicomweb.siteWideEnabled")
+    public boolean getSiteWideEnabled() {
+        return getBooleanValue("dicomweb.siteWideEnabled");
+    }
+
+    public void setSiteWideEnabled(final boolean siteWideEnabled) throws InvalidPreferenceName {
+        setBooleanValue(siteWideEnabled, "dicomweb.siteWideEnabled");
+    }
+
+    /**
+     * Project filter mode for site-wide queries.
+     * "blacklist" = include all projects except those in projectList.
+     * "whitelist" = exclude all projects except those in projectList.
+     *
+     * @return "blacklist" or "whitelist"
+     */
+    @NrgPreference(property = "dicomweb.filterMode")
+    public String getFilterMode() {
+        return getValue("dicomweb.filterMode");
+    }
+
+    public void setFilterMode(final String filterMode) throws InvalidPreferenceName {
+        set(filterMode, "dicomweb.filterMode");
+    }
+
+    /**
+     * Comma-separated list of project IDs for the site-wide filter.
+     * Interpretation depends on filterMode.
+     *
+     * @return comma-separated project IDs
+     */
+    @NrgPreference(property = "dicomweb.projectList")
+    public String getProjectList() {
+        return getValue("dicomweb.projectList");
+    }
+
+    public void setProjectList(final String projectList) throws InvalidPreferenceName {
+        set(projectList, "dicomweb.projectList");
     }
 }

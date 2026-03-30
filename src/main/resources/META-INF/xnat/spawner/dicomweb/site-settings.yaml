@@ -88,22 +88,54 @@ dicomwebConfigPanel:
             element:
                 title: Select the default strategy for STOW-RS uploads
             options:
-                GradualDicomImporter: "GradualDicomImporter (Recommended)"
-                DirectArchive: "DirectArchive (Experimental)"
+                DirectArchive: "DirectArchive"
+                GradualDicomImporter: "GradualDicomImporter"
             description: >
                 Default import strategy for STOW-RS uploads. Can be overridden per-request with ?strategy= parameter.
+                DirectArchive writes files directly to the archive. GradualDicomImporter routes through the prearchive.
 
-        strategyWarning:
-            tag: div.warning
+        siteWideHeader:
+            tag: h3
+            contents: "Site-Wide DICOMweb Settings"
+
+        siteWideEnabled:
+            kind: panel.select.single
+            name: siteWideEnabled
+            label: Enable Site-Wide Queries
             element:
-                style: "background-color: #fff3cd; border: 1px solid #ffc107; padding: 10px; margin: 10px 0; border-radius: 4px;"
-            contents: >
-                <strong>Strategy Comparison:</strong><br/>
-                <strong>GradualDicomImporter (Recommended):</strong> Full XNAT import pipeline with prearchive.
-                Supports session merging, append to existing sessions, and full DICOM validation.<br/><br/>
-                <strong>DirectArchive (Experimental):</strong> Direct archive writing, bypasses prearchive.
-                <span style="color: #dc3545;"><strong>Limitations:</strong> Cannot append to existing sessions,
-                limited concurrent support, no prearchive review. Use only for fresh uploads to new sessions.</span>
+                title: Enable DICOMweb queries across all projects
+            options:
+                false: "Disabled"
+                true: "Enabled"
+            description: >
+                When enabled, DICOMweb endpoints are available without a project in the URL
+                (e.g., /xapi/dicomweb/studies). Queries return results across all permitted projects,
+                subject to user permissions and the project filter below.
+
+        filterMode:
+            kind: panel.select.single
+            name: filterMode
+            label: Project Filter Mode
+            element:
+                title: How the project list below is applied to site-wide queries
+            options:
+                blacklist: "Blacklist (exclude listed projects)"
+                whitelist: "Whitelist (include only listed projects)"
+            description: >
+                Controls how the project list is applied to site-wide queries.
+                Blacklist mode includes all projects except those listed.
+                Whitelist mode includes only the listed projects.
+
+        projectList:
+            kind: panel.input.text
+            name: projectList
+            label: Project List
+            element:
+                title: Comma-separated list of project IDs for the filter
+            description: >
+                Comma-separated list of project IDs. In blacklist mode, these projects are excluded
+                from site-wide queries. In whitelist mode, only these projects are included.
+                Individual projects can also opt out via their own project settings.
 
 ####
 #### Tab Definition
