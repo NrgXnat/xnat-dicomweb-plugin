@@ -34,6 +34,89 @@ dicomwebConfigPanel:
             and Bulk Data URIs in WADO-RS responses.
             Defaults to the XNAT Site URL, which is usually correct.
 
+        endpointPathsHeader:
+            tag: h3
+            contents: "DICOMweb Endpoint Paths"
+
+        endpointPathsDescription:
+            tag: div.message
+            contents: >
+                Use these paths when configuring DICOMweb clients (e.g., OHIF, 3D Slicer, Horos).
+                Replace {PROJECT} with the actual project ID.
+
+        endpointPathsTable:
+            tag: "table.xnat-table"
+            contents:
+                endpointPathsTableHead:
+                    tag: thead
+                    contents:
+                        endpointPathsTableHeadRow:
+                            tag: tr
+                            contents:
+                                thScope:
+                                    tag: th
+                                    contents: "Scope"
+                                thQido:
+                                    tag: th
+                                    contents: "QIDO-RS Path"
+                                thWado:
+                                    tag: th
+                                    contents: "WADO-RS Path"
+                                thStow:
+                                    tag: th
+                                    contents: "STOW-RS Path"
+                endpointPathsTableBody:
+                    tag: tbody
+                    contents:
+                        projectRow:
+                            tag: tr
+                            contents:
+                                tdProjectScope:
+                                    tag: td
+                                    contents: "Project"
+                                tdProjectQido:
+                                    tag: td
+                                    contents:
+                                        tdProjectQidoCode:
+                                            tag: code
+                                            contents: "/xapi/dicomweb/projects/{PROJECT}/studies"
+                                tdProjectWado:
+                                    tag: td
+                                    contents:
+                                        tdProjectWadoCode:
+                                            tag: code
+                                            contents: "/xapi/dicomweb/projects/{PROJECT}/studies"
+                                tdProjectStow:
+                                    tag: td
+                                    contents:
+                                        tdProjectStowCode:
+                                            tag: code
+                                            contents: "/xapi/dicomweb/projects/{PROJECT}/studies"
+                        siteWideRow:
+                            tag: tr
+                            contents:
+                                tdSiteScope:
+                                    tag: td
+                                    contents: "Site-Wide"
+                                tdSiteQido:
+                                    tag: td
+                                    contents:
+                                        tdSiteQidoCode:
+                                            tag: code
+                                            contents: "/xapi/dicomweb/studies"
+                                tdSiteWado:
+                                    tag: td
+                                    contents:
+                                        tdSiteWadoCode:
+                                            tag: code
+                                            contents: "/xapi/dicomweb/studies"
+                                tdSiteStow:
+                                    tag: td
+                                    contents:
+                                        tdSiteStowCode:
+                                            tag: code
+                                            contents: "/xapi/dicomweb/studies"
+
         qidoBehaviorHeader:
             tag: h3
             contents: "QIDO-RS Response Settings"
