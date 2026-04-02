@@ -1,5 +1,6 @@
 package org.nrg.xnat.dicomweb.service;
 
+import org.nrg.config.entities.Configuration;
 import org.nrg.framework.constants.Scope;
 import org.nrg.xdat.XDAT;
 import org.nrg.xdat.om.XnatProjectdata;
@@ -7,6 +8,11 @@ import org.nrg.xft.security.UserI;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
+
+import java.util.Collections;
+import java.util.Objects;
+import java.util.Set;
+import java.util.stream.Collectors;
 
 /**
  * Per-project DICOMweb configuration using XNAT's config service.
@@ -32,6 +38,28 @@ public class DicomWebProjectConfig {
         } catch (Exception e) {
             log.debug("No site-wide opt-out config for project {}, defaulting to included", projectId);
             return false;
+        }
+    }
+
+    /**
+     * Get the set of project IDs that have opted out of site-wide DICOMweb queries.
+     *
+     * @return set of project IDs that have opted out
+     */
+    public Set<String> getOptedOutProjectIds() {
+        try {
+            return XDAT.getConfigService().getConfigsByTool(TOOL).stream()
+                    .filter(c -> PATH.equals(c.getPath()))
+                    .filter(c -> Scope.Project.equals(c.getScope()))
+                    .filter(c -> Configuration.ENABLED_STRING.equals(c.getStatus()))
+                    .filter(c -> "true".equalsIgnoreCase(
+                            c.getContents() != null ? c.getContents().trim() : ""))
+                    .map(Configuration::getEntityId)
+                    .filter(Objects::nonNull)
+                    .collect(Collectors.toSet());
+        } catch (Exception e) {
+            log.debug("Failed to get opted-out projects, defaulting to empty set", e);
+            return Collections.emptySet();
         }
     }
 

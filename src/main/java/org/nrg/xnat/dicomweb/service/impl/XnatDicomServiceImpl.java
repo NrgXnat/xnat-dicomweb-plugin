@@ -428,6 +428,11 @@ public class XnatDicomServiceImpl implements XnatDicomService {
                     sqlBuilder.append(SEARCH_STUDIES_SITE_WIDE_SQL);
                     params.addValue("username", user.getUsername());
                 }
+                // Apply site-wide project whitelist/blacklist and per-project opt-out as SQL filter.
+                // Admin queries use e.project directly; non-admin queries use pe.project_id
+                // (the project through which the user has access, which may differ for shared experiments).
+                siteWideProjectFilter.addProjectFilterToSql(sqlBuilder, params,
+                        isAdmin ? "e.project" : "pe.project_id");
             } else {
                 isAdmin = false;
                 sqlBuilder.append(SEARCH_STUDIES_SQL);
@@ -449,11 +454,7 @@ public class XnatDicomServiceImpl implements XnatDicomService {
             results = jdbcTemplate.query(sql, params, (rs, rowNum) -> {
                 String studyUID = rs.getString("uid");
 
-                // For site-wide queries, get the project from the result and apply filter
                 String rowProjectId = siteWide ? rs.getString("project_id") : projectId;
-                if (siteWide && !siteWideProjectFilter.isProjectAllowed(rowProjectId)) {
-                    return null;
-                }
 
                 Attributes attrs = new Attributes();
 
@@ -540,9 +541,6 @@ public class XnatDicomServiceImpl implements XnatDicomService {
 
                 return attrs;
             });
-
-            // Remove nulls (filtered out projects in site-wide mode)
-            results.removeIf(Objects::isNull);
 
             // Deduplicate by StudyInstanceUID for site-wide queries (shared sessions)
             if (siteWide) {
