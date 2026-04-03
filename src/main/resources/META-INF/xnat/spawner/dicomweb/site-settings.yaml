@@ -53,69 +53,75 @@ dicomwebConfigPanel:
                         endpointPathsTableHeadRow:
                             tag: tr
                             contents:
-                                thScope:
+                                thService:
                                     tag: th
-                                    contents: "Scope"
-                                thQido:
+                                    contents: "Service"
+                                thProject:
                                     tag: th
-                                    contents: "QIDO-RS Path"
-                                thWado:
+                                    contents: "Project Path"
+                                thSiteWide:
                                     tag: th
-                                    contents: "WADO-RS Path"
-                                thStow:
-                                    tag: th
-                                    contents: "STOW-RS Path"
+                                    contents: "Site-Wide Path"
                 endpointPathsTableBody:
                     tag: tbody
                     contents:
-                        projectRow:
+                        qidoRow:
                             tag: tr
                             contents:
-                                tdProjectScope:
+                                tdQidoService:
                                     tag: td
-                                    contents: "Project"
-                                tdProjectQido:
-                                    tag: td
-                                    contents:
-                                        tdProjectQidoCode:
-                                            tag: code
-                                            contents: "/xapi/dicomweb/projects/{PROJECT}/studies"
-                                tdProjectWado:
+                                    contents: "QIDO-RS"
+                                tdQidoProject:
                                     tag: td
                                     contents:
-                                        tdProjectWadoCode:
+                                        tdQidoProjectCode:
                                             tag: code
                                             contents: "/xapi/dicomweb/projects/{PROJECT}/studies"
-                                tdProjectStow:
+                                tdQidoSiteWide:
                                     tag: td
                                     contents:
-                                        tdProjectStowCode:
+                                        tdQidoSiteWideCode:
                                             tag: code
-                                            contents: "/xapi/dicomweb/projects/{PROJECT}/studies"
-                        siteWideRow:
+                                            contents: "/xapi/dicomweb/studies"
+                        wadoRow:
                             tag: tr
                             contents:
-                                tdSiteScope:
+                                tdWadoService:
                                     tag: td
-                                    contents: "Site-Wide"
-                                tdSiteQido:
-                                    tag: td
-                                    contents:
-                                        tdSiteQidoCode:
-                                            tag: code
-                                            contents: "/xapi/dicomweb/studies"
-                                tdSiteWado:
+                                    contents: "WADO-RS"
+                                tdWadoProject:
                                     tag: td
                                     contents:
-                                        tdSiteWadoCode:
+                                        tdWadoProjectCode:
                                             tag: code
-                                            contents: "/xapi/dicomweb/studies"
-                                tdSiteStow:
+                                            contents: "/xapi/dicomweb/projects/{PROJECT}/studies"
+                                tdWadoSiteWide:
                                     tag: td
                                     contents:
-                                        tdSiteStowCode:
+                                        tdWadoSiteWideCode:
                                             tag: code
                                             contents: "/xapi/dicomweb/studies"
+                        stowRow:
+                            tag: tr
+                            contents:
+                                tdStowService:
+                                    tag: td
+                                    contents: "STOW-RS"
+                                tdStowProject:
+                                    tag: td
+                                    contents:
+                                        tdStowProjectCode:
+                                            tag: code
+                                            contents: "/xapi/dicomweb/projects/{PROJECT}/studies"
+                                tdStowSiteWide:
+                                    tag: td
+                                    contents:
+                                        tdStowSiteWideCode:
+                                            tag: code
+                                            contents: "/xapi/dicomweb/studies"
+
+        endpointPathsSpacer:
+            tag: br
 
         qidoBehaviorHeader:
             tag: h3
