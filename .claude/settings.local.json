@@ -57,7 +57,14 @@
       "Bash(python3 -m json.tool)",
       "Bash(find /xnat/110rc3/build/xnat_dicomweb_proxy -type f \\\\\\(-name *.html -o -name *.jsp -o -name *.vm -o -name *.js \\\\\\))",
       "Bash(find /xnat/110rc3/build/xnat_dicomweb_proxy -name *test* -o -name *upload*)",
-      "Bash(grep -E \"\\\\.\\(html|js|jsp|vm\\)$\")"
+      "Bash(grep -E \"\\\\.\\(html|js|jsp|vm\\)$\")",
+      "Bash(./gradlew xnatPluginJar --stacktrace)",
+      "WebFetch(domain:plugins.gradle.org)",
+      "WebSearch",
+      "WebFetch(domain:github.com)",
+      "WebFetch(domain:mvnrepository.com)",
+      "WebFetch(domain:central.sonatype.com)",
+      "WebFetch(domain:www.massapi.com)"
     ]
   }
 }

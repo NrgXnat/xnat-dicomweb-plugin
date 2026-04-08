@@ -13,7 +13,6 @@ plugins {
     id "io.freefair.lombok" version "8.14.3"
     id "net.linguica.maven-settings" version "0.5"
     id "org.nrg.xnat.build.xnat-data-builder" version "${vXnat}"
-    id "io.spring.dependency-management" version "1.1.7"
 }
 
 group = "org.nrg.xnatx.plugins"
@@ -54,10 +53,6 @@ configurations {
     }
 }
 
-dependencyManagement.imports {
-    mavenBom "org.nrg:parent:${vXnat}"
-}
-
 idea {
     module {
         inheritOutputDirs = false
@@ -85,11 +80,13 @@ configurations.testRuntimeClasspath {
     exclude group: 'com.sun.media', module: 'jai_imageio'
 }
 
-dependencyManagement.imports {
-    mavenBom "org.nrg:parent:${vXnat}"
-}
-
 dependencies {
+    // Import BOM for version management (replaces io.spring.dependency-management plugin)
+    implementAndInclude platform("org.nrg:parent:${vXnat}")
+    implementation platform("org.nrg:parent:${vXnat}")
+    compileOnly platform("org.nrg:parent:${vXnat}")
+    testImplementation platform("org.nrg:parent:${vXnat}")
+
     // EtherJ for exception handling (used by DicomwebMetadataException)
     implementAndInclude "icr.etherj:etherj-core:1.1.6"
 
