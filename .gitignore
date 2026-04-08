@@ -18,3 +18,5 @@ deploy_*.sh
 test/data/**/*.dcm
 test/data/**/DICOM/
 !test/data/README.md
+
+.claude/settings.local.json
