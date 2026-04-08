@@ -298,7 +298,7 @@ This is more conservative but requires updating for each plugin that needs `mult
 
 ## Related Issues
 
-- DICOMweb Plugin: https://github.com/mrjamesdickson/xnat_dicomweb_proxy/pull/19
+- DICOMweb Plugin: https://github.com/mrjamesdickson/xnat_dicomweb_plugin/pull/19
 - DICOM PS3.18 Section 10.5 - STOW-RS specification
 - Spring Framework multipart resolver documentation
 

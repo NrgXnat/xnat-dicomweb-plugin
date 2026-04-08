@@ -64,7 +64,14 @@
       "WebFetch(domain:github.com)",
       "WebFetch(domain:mvnrepository.com)",
       "WebFetch(domain:central.sonatype.com)",
-      "WebFetch(domain:www.massapi.com)"
+      "WebFetch(domain:www.massapi.com)",
+      "Bash(find:*)",
+      "Bash(./gradlew dependencies:*)",
+      "Bash(javap -cp /home/tim/.gradle/caches/modules-2/files-2.1/org.dcm4che/dcm4che-json/5.31.0/efb564b477ee35cbefd13ddd4bf92c1c00781345/dcm4che-json-5.31.0.jar org.dcm4che3.json.JSONWriter)",
+      "Bash(javap -cp /home/tim/.gradle/caches/modules-2/files-2.1/org.dcm4che/dcm4che-json/5.33.1/7a2d16632eb08afe9b01fde4a021a727c6d6696e/dcm4che-json-5.33.1.jar org.dcm4che3.json.JSONWriter)",
+      "Bash(./gradlew dependencyInsight --dependency slf4j-api --configuration implementAndInclude)",
+      "Bash(grep '\\\\.class$')",
+      "Bash(ls:*)"
     ]
   }
 }

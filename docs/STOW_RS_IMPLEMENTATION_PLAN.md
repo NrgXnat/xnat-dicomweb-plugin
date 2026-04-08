@@ -5,7 +5,7 @@
 **Version:** 1.1.3
 **Last Updated:** December 10, 2025
 
-This document describes the STOW-RS (STore Over the Web by RESTful Services) implementation for the XNAT DICOMweb Proxy Plugin.
+This document describes the STOW-RS (STore Over the Web by RESTful Services) implementation for the XNAT DICOMweb Plugin.
 
 ## Overview
 

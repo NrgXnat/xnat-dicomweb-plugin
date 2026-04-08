@@ -1,4 +1,4 @@
-# XNAT DICOMweb Proxy Plugin
+# XNAT DICOMweb Plugin
 
 This XNAT plugin provides a DICOMweb-compliant REST API that exposes XNAT projects as DICOMweb endpoints. This enables DICOM viewers like OHIF and VolView to connect to XNAT and browse/view DICOM data.
 
@@ -20,7 +20,7 @@ This XNAT plugin provides a DICOMweb-compliant REST API that exposes XNAT projec
 
 2. Copy the generated JAR file from `build/libs/` to your XNAT plugins directory:
    ```bash
-   cp build/libs/xnat-dicomweb-proxy-1.2.0-rc1-xpl.jar /path/to/xnat/plugins/
+   cp build/libs/xnat-dicomweb-plugin-1.2.0-rc1-xpl.jar /path/to/xnat/plugins/
    ```
 
 3. Restart XNAT
@@ -203,7 +203,7 @@ The plugin uses XNAT's built-in authentication. Users must be authenticated with
 
 The plugin consists of:
 
-- **DicomWebProxyPlugin**: Main plugin class
+- **DicomWebPlugin**: Main plugin class
 - **DicomWebConfig**: Spring configuration and CORS setup
 - **QidoRsApi**: REST controller for QIDO-RS queries
 - **WadoRsApi**: REST controller for WADO-RS retrieval

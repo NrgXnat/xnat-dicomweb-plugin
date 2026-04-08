@@ -245,7 +245,7 @@ ssh demo02 'docker logs xnat-docker-compose_xnat-web_1 2>&1 | grep "STOW-RS" | t
 
 - ✅ **Compiles:** Yes (Java 8 compatible)
 - ✅ **Tests Pass:** 76/76 unit tests (100%)
-- ✅ **JAR Built:** `build/libs/xnat-dicomweb-proxy-1.1.3.jar` (51KB)
+- ✅ **JAR Built:** `build/libs/xnat-dicomweb-plugin-1.1.3.jar` (51KB)
 - ✅ **Deploys:** Yes
 - ❌ **Runtime:** Blocked by multipart resolver
 
@@ -285,7 +285,7 @@ ssh demo02 'docker logs xnat-docker-compose_xnat-web_1 2>&1 | grep "STOW-RS" | t
 
 ## Additional Notes
 
-- Plugin ID: `xnat-dicomweb-proxy`
+- Plugin ID: `xnat-dicomweb-plugin`
 - Version: `1.1.3`
 - XNAT Version: `1.9.0`
 - Java: `1.8`

@@ -3,7 +3,7 @@
 **Date:** November 17, 2025 (Updated: 21:05)
 **Task:** Implement STOW-RS (DICOMweb storage) for XNAT DICOMweb Plugin
 **Status:** Implementation Complete - Awaiting XNAT Environment Fix for Testing
-**PR:** https://github.com/mrjamesdickson/xnat_dicomweb_proxy/pull/19
+**PR:** https://github.com/mrjamesdickson/xnat_dicomweb_plugin/pull/19
 
 ---
 
@@ -50,7 +50,7 @@
    - Debug output appears in docker logs for troubleshooting
 
 5. **Build Status**
-   - Plugin builds successfully: `build/libs/xnat-dicomweb-proxy-1.1.3.jar` (52KB)
+   - Plugin builds successfully: `build/libs/xnat-dicomweb-plugin-1.1.3.jar` (52KB)
    - All 76 unit tests pass
    - Ready for deployment
 
@@ -83,13 +83,13 @@
 ├── test/
 │   └── test_stow_rs.sh                         # Integration test script
 └── build/libs/
-    └── xnat-dicomweb-proxy-1.1.3.jar          # Built plugin (50KB)
+    └── xnat-dicomweb-plugin-1.1.3.jar          # Built plugin (50KB)
 ```
 
 ### XNAT Deployment:
 ```
 Container: xnat-docker-compose-xnat-web-1
-Plugin: /data/xnat/home/plugins/xnat-dicomweb-proxy-1.1.3.jar
+Plugin: /data/xnat/home/plugins/xnat-dicomweb-plugin-1.1.3.jar
 Logs: /Users/james/projects/xnat_docker_testing/xnat-data/home/logs/
   - application.log (STOW-RS logs should be here)
   - xapi.log
@@ -257,7 +257,7 @@ cd /Users/james/projects/xnat_dicomweb_plugin
 ./gradlew jar
 
 # Deploy to local
-docker cp build/libs/xnat-dicomweb-proxy-1.1.3.jar xnat-docker-compose-xnat-web-1:/data/xnat/home/plugins/
+docker cp build/libs/xnat-dicomweb-plugin-1.1.3.jar xnat-docker-compose-xnat-web-1:/data/xnat/home/plugins/
 
 # Restart (if using local docker)
 docker restart xnat-docker-compose-xnat-web-1
@@ -428,7 +428,7 @@ $ curl -u admin:admin http://localhost/xapi/dicomweb/projects/test/studies
 - Tests required for all code (currently have 37 passing unit tests)
 - Plugin completes DICOMweb triumvirate: QIDO-RS, WADO-RS, STOW-RS
 
-**PR Link:** https://github.com/mrjamesdickson/xnat_dicomweb_proxy/pull/19
+**PR Link:** https://github.com/mrjamesdickson/xnat_dicomweb_plugin/pull/19
 
 ---
 

@@ -5,7 +5,7 @@
 **Version:** 1.1.3
 **Last Updated:** March 11, 2026
 
-This document describes the WADO-RS (Web Access to DICOM Objects by RESTful Services) implementation for the XNAT DICOMweb Proxy Plugin.
+This document describes the WADO-RS (Web Access to DICOM Objects by RESTful Services) implementation for the XNAT DICOMweb Plugin.
 
 ## Overview
 

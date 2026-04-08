@@ -1,8 +1,8 @@
-# Testing Guide for XNAT DICOMweb Proxy Plugin
+# Testing Guide for XNAT DICOMweb Plugin
 
 ## Overview
 
-This document describes the test suite for the XNAT DICOMweb Proxy Plugin and how to run the tests.
+This document describes the test suite for the XNAT DICOMweb Plugin and how to run the tests.
 
 ## Test Structure
 

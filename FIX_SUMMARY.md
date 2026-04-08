@@ -40,5 +40,5 @@ After this fix, XNAT will produce output matching the Orthanc format.
 
 ## Impact
 - Fixes 406 error reported by user
-- Makes XNAT DICOMweb proxy compliant with DICOM PS3.18 standard
+- Makes XNAT DICOMweb Plugin compliant with DICOM PS3.18 standard
 - Output now matches Orthanc and other DICOMweb servers

@@ -80,7 +80,7 @@
 - WadoRsApiTest: 9/9
 - DicomWebUtilsTest: 7/7
 
-**Build Status**: ✅ Successful (xnat-dicomweb-proxy-1.1.3.jar, 52KB)
+**Build Status**: ✅ Successful (xnat-dicomweb-plugin-1.1.3.jar, 52KB)
 
 **Deployment Status**: ⏸️ Blocked by XNAT environment issues (webapp not loading)
 

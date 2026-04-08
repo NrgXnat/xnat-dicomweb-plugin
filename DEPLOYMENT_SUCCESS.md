@@ -142,7 +142,7 @@ cd xnat_docker_testing
 
 ```bash
 cd xnat_docker_testing
-cp ../xnat_dicomweb_plugin/build/libs/xnat-dicomweb-proxy-1.1.3.jar ./xnat/plugins/
+cp ../xnat_dicomweb_plugin/build/libs/xnat-dicomweb-plugin-1.1.3.jar ./xnat/plugins/
 docker-compose restart xnat-web
 ```
 

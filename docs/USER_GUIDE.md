@@ -1,4 +1,4 @@
-# XNAT DICOMweb Proxy Plugin - User Guide
+# XNAT DICOMweb Plugin - User Guide
 
 **Version:** 1.1.3
 **Last Updated:** December 11, 2025
@@ -23,7 +23,7 @@
 
 ## Introduction
 
-The XNAT DICOMweb Proxy Plugin enables your XNAT server to communicate with modern DICOM viewers and applications using the DICOMweb standard. This allows you to:
+The XNAT DICOMweb Plugin enables your XNAT server to communicate with modern DICOM viewers and applications using the DICOMweb standard. This allows you to:
 
 - Browse XNAT imaging data in web-based DICOM viewers (OHIF, VolView)
 - Search for studies using standard DICOMweb queries
@@ -104,20 +104,20 @@ If successful, you'll see a JSON array of studies.
 **1. Build the Plugin:**
 
 ```bash
-cd /path/to/xnat_dicomweb_proxy
+cd /path/to/xnat_dicomweb_plugin
 ./gradlew clean xnatPluginJar
 ```
 
-This creates: `build/libs/xnat-dicomweb-proxy-1.1.3-xpl.jar`
+This creates: `build/libs/xnat-dicomweb-plugin-1.1.3-xpl.jar`
 
 **2. Deploy to XNAT:**
 
 ```bash
 # Copy to XNAT plugins directory
-cp build/libs/xnat-dicomweb-proxy-1.1.3-xpl.jar /path/to/xnat-home/plugins/
+cp build/libs/xnat-dicomweb-plugin-1.1.3-xpl.jar /path/to/xnat-home/plugins/
 
 # Example for Tomcat deployment
-cp build/libs/xnat-dicomweb-proxy-1.1.3-xpl.jar ~/xnathome/plugins/
+cp build/libs/xnat-dicomweb-plugin-1.1.3-xpl.jar ~/xnathome/plugins/
 ```
 
 **3. Restart XNAT:**
@@ -135,7 +135,7 @@ sudo systemctl restart tomcat9
 
 Check XNAT logs for:
 ```
-INFO - Loading plugin: xnat-dicomweb-proxy version 1.1.3
+INFO - Loading plugin: xnat-dicomweb-plugin version 1.1.3
 INFO - Registered DICOMweb endpoints
 ```
 
@@ -1355,4 +1355,4 @@ curl -u user:pass "https://xnat/xapi/dicomweb/projects/test/.../rendered" -o ima
 
 ---
 
-*This user guide is maintained as part of the XNAT DICOMweb Proxy Plugin. For corrections or additions, please submit an issue or pull request.*
+*This user guide is maintained as part of the XNAT DICOMweb Plugin. For corrections or additions, please submit an issue or pull request.*

@@ -213,7 +213,7 @@ location /xnat/xapi/dicomweb/ {
 
 **Checks**:
 1. Verify plugin is deployed: `ls $XNAT_HOME/plugins/ | grep dicomweb`
-2. Check plugin loaded: XNAT logs should show "Loading plugin: xnat-dicomweb-proxy"
+2. Check plugin loaded: XNAT logs should show "Loading plugin: xnat-dicomweb-plugin"
 3. Verify endpoint exists: `curl -u admin:admin http://localhost:1026/xnat/xapi/dicomweb/projects/test/studies/.../metadata`
 4. Check frame endpoint specifically
 
@@ -276,6 +276,6 @@ Upload a multi-frame DICOM to XNAT:
 
 ## Questions?
 
-- Check GitHub issues: https://github.com/mrjamesdickson/xnat_dicomweb_proxy/issues
+- Check GitHub issues: https://github.com/mrjamesdickson/xnat_dicomweb_plugin/issues
 - Review DICOM PS3.18 spec: Section 10.4 (WADO-RS Retrieve Transaction)
 - OHIF documentation: https://docs.ohif.org/

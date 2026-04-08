@@ -30,7 +30,7 @@ import org.springframework.beans.factory.annotation.Autowired;
 @NrgPreferenceBean(
     toolId = "dicomweb",
     toolName = "DICOMweb Plugin Configuration",
-    description = "Configuration settings for the DICOMweb proxy plugin including pagination, upload, and bulk data thresholds",
+    description = "Configuration settings for the DICOMweb plugin including pagination, upload, and bulk data thresholds",
     properties = "config/dicomweb/dicomweb.properties"
 )
 public class DicomWebPreferenceBean extends AbstractPreferenceBean {

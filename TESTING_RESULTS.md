@@ -12,7 +12,7 @@
 - Plugin successfully installed and accessible
 - Test page loads correctly at `/xapi/dicomweb/test`
 - Plugin version: 1.1.1
-- Plugin ID: dicomwebproxy
+- Plugin ID: dicomwebplugin
 
 ### ❌ API Endpoint Issue Found
 
@@ -71,7 +71,7 @@ ArrayList sessions = XnatImagesessiondata.getXnatImagesessiondatasByField(
    - Updated `findSessionByUID()` helper (lines 271-293)
    - Removed unused imports
 
-2. **src/main/java/org/nrg/xnat/dicomweb/plugin/DicomWebProxyPlugin.java**
+2. **src/main/java/org/nrg/xnat/dicomweb/plugin/DicomWebPlugin.java**
    - Fixed `openUrls` path from `/dicomweb/test` to `/xapi/dicomweb/test` (line 11)
 
 ### Build Status
@@ -79,7 +79,7 @@ ArrayList sessions = XnatImagesessiondata.getXnatImagesessiondatasByField(
 ✅ **Build Successful**
 ```
 BUILD SUCCESSFUL in 1s
-JAR: build/libs/xnat-dicomweb-proxy-1.1.1.jar
+JAR: build/libs/xnat-dicomweb-plugin-1.1.1.jar
 Size: 26KB
 ```
 
@@ -98,11 +98,11 @@ sudo /etc/init.d/tomcat stop
 ### 2. Replace Plugin JAR
 ```bash
 # Backup old plugin
-mv $XNAT_HOME/plugins/xnat-dicomweb-proxy-1.1.1.jar \
-   $XNAT_HOME/plugins/xnat-dicomweb-proxy-1.1.1.jar.old
+mv $XNAT_HOME/plugins/xnat-dicomweb-plugin-1.1.1.jar \
+   $XNAT_HOME/plugins/xnat-dicomweb-plugin-1.1.1.jar.old
 
 # Copy new plugin
-scp build/libs/xnat-dicomweb-proxy-1.1.1.jar \
+scp build/libs/xnat-dicomweb-plugin-1.1.1.jar \
     user@demo02.xnatworks.io:$XNAT_HOME/plugins/
 ```
 
@@ -118,7 +118,7 @@ sudo /etc/init.d/tomcat start
 # Wait for XNAT to start (30-60 seconds)
 # Check plugin loaded
 curl -u admin:admin "http://demo02.xnatworks.io/xapi/plugins" | \
-     jq '.[] | select(.id == "dicomwebproxy")'
+     jq '.[] | select(.id == "dicomwebplugin")'
 
 # Test API endpoint
 curl -u admin:admin -H "Accept: application/dicom+json" \

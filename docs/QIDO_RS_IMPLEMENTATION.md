@@ -5,7 +5,7 @@
 **Version:** 1.1.3
 **Last Updated:** December 11, 2025
 
-This document describes the QIDO-RS (Query based on ID for DICOM Objects over RESTful Services) implementation for the XNAT DICOMweb Proxy Plugin.
+This document describes the QIDO-RS (Query based on ID for DICOM Objects over RESTful Services) implementation for the XNAT DICOMweb Plugin.
 
 ## Overview
 

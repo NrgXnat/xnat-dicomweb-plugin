@@ -101,7 +101,7 @@ After deploying updated JAR (built Nov 10 09:51):
 
 1. Copy JAR to demo02:
    ```bash
-   scp ~/projects/xnat_dicomweb_plugin/build/libs/xnat-dicomweb-proxy-1.1.1.jar \
+   scp ~/projects/xnat_dicomweb_plugin/build/libs/xnat-dicomweb-plugin-1.1.1.jar \
        demo02:/home/james/xnat-docker-compose/xnat/plugins/
    ```
 
@@ -128,7 +128,7 @@ After deploying updated JAR (built Nov 10 09:51):
 - `FIX_SUMMARY.md` - Initial fix documentation
 
 ## Build Info
-- JAR: `xnat-dicomweb-proxy-1.1.1.jar`
+- JAR: `xnat-dicomweb-plugin-1.1.1.jar`
 - Built: Nov 10 2025, 09:51
 - Size: 30KB
 - Location: `~/projects/xnat_dicomweb_plugin/build/libs/`

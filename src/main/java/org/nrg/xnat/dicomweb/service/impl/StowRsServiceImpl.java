@@ -1,5 +1,5 @@
 /*
- * XNAT DICOMweb Proxy Plugin
+ * XNAT DICOMweb Plugin
  * Copyright (c) 2025 XNATWorks.
  * All rights reserved.
  */

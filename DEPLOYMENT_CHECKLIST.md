@@ -1,4 +1,4 @@
-# XNAT DICOMweb Proxy Plugin - Deployment Checklist
+# XNAT DICOMweb Plugin - Deployment Checklist
 
 ## Pre-Deployment
 
@@ -34,16 +34,16 @@
 
 - [ ] **Build Plugin**
   ```bash
-  cd /path/to/xnat_dicomweb_proxy
+  cd /path/to/xnat_dicomweb_plugin
   ./gradlew clean build -x test
   ```
   - Expected output: `BUILD SUCCESSFUL`
-  - JAR location: `build/libs/xnat-dicomweb-proxy-1.1.1.jar`
+  - JAR location: `build/libs/xnat-dicomweb-plugin-1.1.1.jar`
   - JAR size: ~20KB
 
 - [ ] **Verify JAR Contents**
   ```bash
-  jar tf build/libs/xnat-dicomweb-proxy-1.1.1.jar | grep DicomWeb
+  jar tf build/libs/xnat-dicomweb-plugin-1.1.1.jar | grep DicomWeb
   ```
   - Should see plugin classes
 
@@ -57,8 +57,8 @@
 
 - [ ] **Copy Plugin to XNAT**
   ```bash
-  cp build/libs/xnat-dicomweb-proxy-1.1.1.jar $XNAT_HOME/plugins/
-  chmod 644 $XNAT_HOME/plugins/xnat-dicomweb-proxy-1.1.1.jar
+  cp build/libs/xnat-dicomweb-plugin-1.1.1.jar $XNAT_HOME/plugins/
+  chmod 644 $XNAT_HOME/plugins/xnat-dicomweb-plugin-1.1.1.jar
   ```
 
 - [ ] **Configure Archive Path (if custom)**
@@ -79,8 +79,8 @@
   ```bash
   tail -100 $XNAT_HOME/logs/catalina.out | grep -i dicomweb
   ```
-  - Look for: "Loading plugin: dicomwebproxy"
-  - Look for: "Loaded plugin: DICOMweb Proxy Plugin"
+  - Look for: "Loading plugin: dicomwebplugin"
+  - Look for: "Loaded plugin: DICOMweb Plugin"
   - No errors should appear
 
 - [ ] **Verify Swagger UI**
@@ -251,7 +251,7 @@ If issues occur:
 
 - [ ] **Remove Plugin**
   ```bash
-  rm $XNAT_HOME/plugins/xnat-dicomweb-proxy-1.1.1.jar
+  rm $XNAT_HOME/plugins/xnat-dicomweb-plugin-1.1.1.jar
   ```
 
 - [ ] **Clear Cache**

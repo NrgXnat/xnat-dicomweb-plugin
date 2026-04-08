@@ -1,6 +1,6 @@
 # Changelog
 
-All notable changes to the XNAT DICOMweb Proxy Plugin will be documented in this file.
+All notable changes to the XNAT DICOMweb Plugin will be documented in this file.
 
 ## [1.1.3] - 2025-11-12
 
@@ -233,7 +233,7 @@ All notable changes to the XNAT DICOMweb Proxy Plugin will be documented in this
 
 ## Contributors
 
-- Implementation: XNAT DICOMweb Proxy Plugin Team
+- Implementation: XNAT DICOMweb Plugin Team
 - Architecture: Based on DICOM PS3.18 standard
 - Testing: Comprehensive test suite included
 

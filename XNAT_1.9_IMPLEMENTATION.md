@@ -2,7 +2,7 @@
 
 ## Overview
 
-This document describes the XNAT 1.9.x-specific implementation of the DICOMweb Proxy Plugin.
+This document describes the XNAT 1.9.x-specific implementation of the DICOMweb Plugin.
 
 ## Implementation Details
 
@@ -213,7 +213,7 @@ With a running XNAT 1.9.x instance:
 
 ```bash
 # 1. Install plugin
-cp build/libs/xnat-dicomweb-proxy-1.1.1.jar $XNAT_HOME/plugins/
+cp build/libs/xnat-dicomweb-plugin-1.1.1.jar $XNAT_HOME/plugins/
 service tomcat restart
 
 # 2. Test search studies

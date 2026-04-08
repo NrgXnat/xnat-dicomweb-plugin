@@ -15,7 +15,7 @@ import org.springframework.context.annotation.Configuration;
  *
  * <p>Component scanning includes:
  * <ul>
- *   <li>org.nrg.xnat.dicomweb - DICOMweb proxy plugin components</li>
+ *   <li>org.nrg.xnat.dicomweb - DICOMweb plugin components</li>
  *   <li>org.nrg.xnatx.dicomweb.core - Shared DICOMweb core library components</li>
  * </ul>
  */

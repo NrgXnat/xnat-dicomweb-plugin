@@ -1,13 +1,13 @@
-# XNAT DICOMweb Proxy Plugin - Implementation Details
+# XNAT DICOMweb Plugin - Implementation Details
 
 ## Overview
 
-This document provides detailed implementation information for developers working on or extending the XNAT DICOMweb Proxy Plugin.
+This document provides detailed implementation information for developers working on or extending the XNAT DICOMweb Plugin.
 
 ## Project Structure
 
 ```
-xnat-dicomweb-proxy/
+xnat-dicomweb-plugin/
 ├── build.gradle                    # Build configuration
 ├── settings.gradle                 # Project settings
 ├── gradle.properties              # Gradle properties
@@ -20,7 +20,7 @@ xnat-dicomweb-proxy/
 ├── src/main/
 │   ├── java/org/nrg/xnat/dicomweb/
 │   │   ├── plugin/
-│   │   │   └── DicomWebProxyPlugin.java       # Plugin entry point
+│   │   │   └── DicomWebPlugin.java       # Plugin entry point
 │   │   ├── config/
 │   │   │   └── DicomWebConfig.java            # Spring configuration
 │   │   ├── rest/
@@ -34,7 +34,7 @@ xnat-dicomweb-proxy/
 │   │
 │   └── resources/
 │       ├── META-INF/xnat/
-│       │   └── dicomwebproxy-plugin.properties  # Plugin metadata
+│       │   └── dicomweb-plugin.properties  # Plugin metadata
 │       └── config/features/
 │           └── dicomweb-feature-definition.properties  # Feature config
 │
@@ -60,8 +60,8 @@ The `@XnatPlugin` annotation registers the plugin with XNAT:
 
 ```java
 @XnatPlugin(
-    value = "dicomwebproxy",           // Plugin ID
-    name = "DICOMweb Proxy Plugin",    // Display name
+    value = "dicomwebplugin",           // Plugin ID
+    name = "DICOMweb Plugin",    // Display name
     description = "...",                // Description
     entityPackages = "org.nrg.xnat.dicomweb",  // Package to scan
     openUrls = {"/dicomweb/**"}        // URLs accessible without auth
@@ -413,14 +413,14 @@ compileOnly "org.dcm4che:dcm4che-imageio:5.29.2"
 
 ### Plugin Metadata
 
-`src/main/resources/META-INF/xnat/dicomwebproxy-plugin.properties`:
+`src/main/resources/META-INF/xnat/dicomweb-plugin.properties`:
 
 ```properties
-id=dicomwebproxy
-class=org.nrg.xnat.dicomweb.plugin.DicomWebProxyPlugin
-name=DICOMweb Proxy Plugin
+id=dicomwebplugin
+class=org.nrg.xnat.dicomweb.plugin.DicomWebPlugin
+name=DICOMweb Plugin
 description=Exposes XNAT projects as DICOMweb endpoints
-beanName=dicomWebProxyPlugin
+beanName=dicomWebPlugin
 entityPackages=org.nrg.xnat.dicomweb
 openUrls=/dicomweb, /dicomweb/**
 ```

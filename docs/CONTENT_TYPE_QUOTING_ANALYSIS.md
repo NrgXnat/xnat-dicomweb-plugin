@@ -189,7 +189,7 @@ msg['Content-Type'] = 'multipart/related; type=application/dicom; boundary=x'
 | **DCM4CHE** | ✅ Yes | Reference implementation |
 | **dicomweb-client** (JS) | ✅ Yes | Fixed in Oct 2020 |
 | **DICOMcloud** (.NET) | ✅ Required | Strict validation |
-| **XNAT DICOMweb Proxy** | ✅ Required | Spring MVC enforces |
+| **XNAT DICOMweb Plugin** | ✅ Required | Spring MVC enforces |
 | **OHIF Viewer** | ✅ Yes | Uses dicomweb-client |
 
 **Conclusion**: **All major implementations use quoted parameters**.
@@ -243,7 +243,7 @@ Content-Type: multipart/related; type="application/dicom"; boundary="myboundary1
 
 **Accept both formats** if possible (lenient parsing), but **recommend quoted format** in documentation.
 
-**This implementation** (XNAT DICOMweb Proxy):
+**This implementation** (XNAT DICOMweb Plugin):
 - Spring MVC requires quotes (enforces RFC strictly)
 - Apache Mime4J parser accepts both (lenient)
 - HTTP 415 error returned for unquoted type parameter

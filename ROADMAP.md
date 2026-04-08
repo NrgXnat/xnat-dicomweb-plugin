@@ -1,6 +1,6 @@
-# XNAT DICOMweb Proxy - Development Roadmap
+# XNAT DICOMweb Plugin - Development Roadmap
 
-This document outlines the planned improvements for the XNAT DICOMweb Proxy plugin, organized by priority and implementation phases.
+This document outlines the planned improvements for the XNAT DICOMweb Plugin plugin, organized by priority and implementation phases.
 
 ## Overview
 

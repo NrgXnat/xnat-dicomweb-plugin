@@ -1,8 +1,8 @@
-# XNAT DICOMweb Proxy Plugin - Architecture Documentation
+# XNAT DICOMweb Plugin - Architecture Documentation
 
 ## Overview
 
-The XNAT DICOMweb Proxy Plugin provides a standards-compliant DICOMweb REST API that exposes XNAT projects as DICOMweb endpoints. This enables third-party DICOM viewers (OHIF, VolView, etc.) to access XNAT imaging data using standard DICOMweb protocols.
+The XNAT DICOMweb Plugin provides a standards-compliant DICOMweb REST API that exposes XNAT projects as DICOMweb endpoints. This enables third-party DICOM viewers (OHIF, VolView, etc.) to access XNAT imaging data using standard DICOMweb protocols.
 
 ## Architecture Diagram
 
@@ -14,7 +14,7 @@ The XNAT DICOMweb Proxy Plugin provides a standards-compliant DICOMweb REST API 
                          │ DICOMweb Protocol
                          │ (QIDO-RS, WADO-RS)
 ┌────────────────────────▼────────────────────────────────────────┐
-│                 XNAT DICOMweb Proxy Plugin                       │
+│                 XNAT DICOMweb Plugin                       │
 │  ┌──────────────────────────────────────────────────────────┐  │
 │  │              REST API Layer                               │  │
 │  │  ┌────────────────┐      ┌────────────────┐             │  │
@@ -50,14 +50,14 @@ The XNAT DICOMweb Proxy Plugin provides a standards-compliant DICOMweb REST API 
 
 ### 1. Plugin Entry Point
 
-**File:** `DicomWebProxyPlugin.java`
+**File:** `DicomWebPlugin.java`
 
 The main plugin class that registers the plugin with XNAT.
 
 ```java
 @XnatPlugin(
-    value = "dicomwebproxy",
-    name = "DICOMweb Proxy Plugin",
+    value = "dicomwebplugin",
+    name = "DICOMweb Plugin",
     entityPackages = "org.nrg.xnat.dicomweb",
     openUrls = {"/dicomweb/**"}
 )
@@ -417,7 +417,7 @@ Plugin auto-registers on XNAT startup. No additional configuration required.
 
 Check XNAT logs:
 ```
-INFO  org.nrg.framework.services.impl.XnatPluginService - Loading plugin: dicomwebproxy
+INFO  org.nrg.framework.services.impl.XnatPluginService - Loading plugin: dicomwebplugin
 ```
 
 Test endpoint:

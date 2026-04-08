@@ -84,7 +84,7 @@ Added `DicomWebPluginE2ETest.java` with 6 tests:
 
 **Deploy to XNAT:**
 ```bash
-docker cp build/libs/xnat-dicomweb-proxy-1.1.2.jar xnat-web:/data/xnat/home/plugins/
+docker cp build/libs/xnat-dicomweb-plugin-1.1.2.jar xnat-web:/data/xnat/home/plugins/
 docker restart xnat-web
 ```
 
