@@ -183,6 +183,18 @@ dicomwebConfigPanel:
                 Default import strategy for STOW-RS uploads. Can be overridden per-request with ?strategy= parameter.
                 DirectArchive writes files directly to the archive. GradualDicomImporter routes through the prearchive.
 
+        buildDelayMs:
+            kind: panel.input.text
+            name: buildDelayMs
+            label: Build Delay (ms)
+            validation: "onblur integer greaterThanOrEqualTo:0"
+            element:
+                title: Delay before finalizing a session after the last upload
+            description: >
+                How long to wait (in milliseconds) after the last file upload before building and archiving a session.
+                This allows multiple STOW-RS requests for the same study to be grouped into a single session.
+                Set to 0 for immediate build (no delay). Default: 5000 (5 seconds)
+
         siteWideHeader:
             tag: h3
             contents: "Site-Wide DICOMweb Settings"
@@ -194,8 +206,8 @@ dicomwebConfigPanel:
             element:
                 title: Enable DICOMweb queries across all projects
             options:
-                false: "Disabled"
-                true: "Enabled"
+                "false": "Disabled"
+                "true": "Enabled"
             description: >
                 When enabled, DICOMweb endpoints are available without a project in the URL
                 (e.g., /xapi/dicomweb/studies). Queries return results across all permitted projects,

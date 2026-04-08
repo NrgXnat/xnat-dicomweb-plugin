@@ -43,7 +43,21 @@
       "Bash(grep -r \"projectSettings\\\\|project-level\\\\|kind: tab\" /c/XNAT/110-ddd/build/xnat_dicomweb_proxy/src/main/resources --include=*.yaml --include=*.yml)",
       "Bash(find /c/XNAT/110-ddd -name *.yaml -type f)",
       "Bash(find /c/XNAT/110-ddd -path *xnat-web* -name project-settings.yaml -o -path *xnat-web* -name *project*.yaml)",
-      "Bash(find /c/XNAT/110-ddd -name *.md -type f)"
+      "Bash(find /c/XNAT/110-ddd -name *.md -type f)",
+      "Bash(ls -la /xnat/110rc3/build/xnat_dicomweb_proxy/src/main/java/org/nrg/xnat/dicomweb/service/*.java)",
+      "Bash(chmod:*)",
+      "Bash(grep -r \"too early\\\\|early\\\\|batch\\\\|multiple batch\\\\|multiple request\" /xnat/110rc3/build/xnat_dicomweb_proxy --include=*.md --include=*.txt --include=*.java)",
+      "Bash(xargs ls:*)",
+      "Bash(grep -r \"class DirectArchiveSessionService\\\\|interface DirectArchiveSessionService\" /xnat/110rc3 --include=*.java)",
+      "Bash(grep -r \"BUILD_DELAY\\\\|timeout\\\\|500\" /xnat/110rc3/build/xnat_dicomweb_proxy/src --include=*.java --include=*.properties)",
+      "Bash(./gradlew clean:*)",
+      "Bash(grep -E \"\\\\.\\(html|js|jsp|vm|velocity|ftl\\)$\")",
+      "Bash(grep -E \"\\\\.\\(yaml|yml\\)$\")",
+      "Bash(curl:*)",
+      "Bash(python3 -m json.tool)",
+      "Bash(find /xnat/110rc3/build/xnat_dicomweb_proxy -type f \\\\\\(-name *.html -o -name *.jsp -o -name *.vm -o -name *.js \\\\\\))",
+      "Bash(find /xnat/110rc3/build/xnat_dicomweb_proxy -name *test* -o -name *upload*)",
+      "Bash(grep -E \"\\\\.\\(html|js|jsp|vm\\)$\")"
     ]
   }
 }

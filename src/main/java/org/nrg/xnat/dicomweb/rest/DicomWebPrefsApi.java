@@ -60,7 +60,8 @@ public class DicomWebPrefsApi extends AbstractXapiRestController {
         prefs.put("maxPageSize", preferenceBean.getMaxPageSize());
         prefs.put("bulkDataThreshold", preferenceBean.getBulkDataThreshold());
         prefs.put("defaultStrategy", preferenceBean.getDefaultStrategy());
-        prefs.put("siteWideEnabled", preferenceBean.getSiteWideEnabled());
+        prefs.put("buildDelayMs", preferenceBean.getBuildDelayMs());
+        prefs.put("siteWideEnabled", String.valueOf(preferenceBean.getSiteWideEnabled()));
         prefs.put("filterMode", preferenceBean.getFilterMode());
         prefs.put("projectList", preferenceBean.getProjectList());
         // Note: memoryThreshold is not exposed here as it requires restart to take effect
@@ -107,6 +108,16 @@ public class DicomWebPrefsApi extends AbstractXapiRestController {
                     logger.warn("Invalid strategy name: {}. Must be 'GradualDicomImporter' or 'DirectArchive'", value);
                     return new ResponseEntity<>(HttpStatus.BAD_REQUEST);
                 }
+            }
+
+            if (preferences.containsKey("buildDelayMs")) {
+                long value = getLongValue(preferences, "buildDelayMs");
+                if (value < 0) {
+                    logger.warn("Invalid buildDelayMs: {}. Must be >= 0", value);
+                    return new ResponseEntity<>(HttpStatus.BAD_REQUEST);
+                }
+                preferenceBean.setBuildDelayMs(value);
+                logger.info("Updated buildDelayMs to: {}", value);
             }
 
             if (preferences.containsKey("siteWideEnabled")) {

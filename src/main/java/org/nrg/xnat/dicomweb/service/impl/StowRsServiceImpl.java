@@ -74,7 +74,8 @@ public class StowRsServiceImpl implements StowRsService {
     private static final Logger logger = LoggerFactory.getLogger(StowRsServiceImpl.class);
 
     private static final String SLASH = "/";
-    private static final long BUILD_DELAY_MS = 500;  // 500ms delay before building
+    private static final long MIN_BUILD_DELAY_MS = 500;  // Minimum delay for GradualDicomImporter
+    private static final String UNASSIGNED_PROJECT = "Unassigned";
 
     private final Mime4jHybridParser multipartParser;
     private final DirectArchiveStrategy directArchiveStrategy;
@@ -453,6 +454,25 @@ public class StowRsServiceImpl implements StowRsService {
 
             logger.debug("Processing session {} with {} URIs", sessionKey, urisForSession.size());
 
+            // Skip sessions routed to the "Unassigned" project.
+            // In site-wide mode, when XNAT cannot determine the project from DICOM headers,
+            // GradualDicomImporter places files in the "Unassigned" prearchive.
+            // These sessions cannot be built or archived — they must remain in the prearchive
+            // for manual assignment by an administrator.
+            if (sessionKey.startsWith(UNASSIGNED_PROJECT + SLASH)) {
+                logger.info("Session {} is in the Unassigned project — leaving in prearchive (no build/archive)",
+                           sessionKey);
+                // Clean up thread-local import future if present
+                CompletableFuture<Void> myImportFuture = threadImportFuture.get();
+                if (myImportFuture != null) {
+                    myImportFuture.complete(null);
+                    threadImportFuture.remove();
+                }
+                // Return the prearchive URIs as-is (no archive mapping)
+                allArchiveUrls.addAll(urisForSession);
+                continue;
+            }
+
             // 1. Move this thread's import future to the correct session key
             //    (import has completed, now we know the session key)
             CompletableFuture<Void> myImportFuture = threadImportFuture.get();
@@ -527,12 +547,29 @@ public class StowRsServiceImpl implements StowRsService {
     }
 
     /**
+     * Get the effective build delay for GradualDicomImporter.
+     * Uses the configured {@code dicomweb.buildDelayMs} preference, but enforces a minimum
+     * of {@link #MIN_BUILD_DELAY_MS} since GradualDicomImporter always needs some delay
+     * for its prearchive import pipeline.
+     */
+    private long getEffectiveBuildDelayMs() {
+        long configured = preferenceBean.getBuildDelayMs();
+        return Math.max(configured, MIN_BUILD_DELAY_MS);
+    }
+
+    /**
      * Schedule periodic build check for a session using last activity time approach.
-     * If no new uploads arrive within BUILD_DELAY_MS, the session will be built.
+     * If no new uploads arrive within the configured build delay, the session will be built.
      * Otherwise, reschedule the check.
      */
     private void scheduleBuildCheck(String sessionKey, UserI user, Map<String, Object> params) {
+        long buildDelayMs = getEffectiveBuildDelayMs();
+        scheduleBuildCheck(sessionKey, user, params, buildDelayMs);
+    }
+
+    private void scheduleBuildCheck(String sessionKey, UserI user, Map<String, Object> params, long delayMs) {
         buildScheduler.schedule(() -> {
+            long buildDelayMs = getEffectiveBuildDelayMs();
             AtomicLong lastActivity = lastActivityTime.get(sessionKey);
             if (lastActivity == null) {
                 logger.warn("No last activity time found for session {}, skipping build", sessionKey);
@@ -542,7 +579,7 @@ public class StowRsServiceImpl implements StowRsService {
             long timeSinceLastActivity = System.currentTimeMillis() - lastActivity.get();
 
             // Check 1: Time condition - has enough time passed since last activity?
-            boolean timeConditionMet = timeSinceLastActivity >= BUILD_DELAY_MS;
+            boolean timeConditionMet = timeSinceLastActivity >= buildDelayMs;
 
             // Check 2: Import condition - are all imports complete?
             Set<CompletableFuture<Void>> futures = importFutures.get(sessionKey);
@@ -551,8 +588,8 @@ public class StowRsServiceImpl implements StowRsService {
 
             if (timeConditionMet && allImportsComplete) {
                 // Both conditions met: time passed AND all imports complete → start build
-                logger.info("Build conditions met for session {} (time: {}ms, imports: complete), starting build",
-                           sessionKey, timeSinceLastActivity);
+                logger.info("Build conditions met for session {} (time: {}ms, delay: {}ms, imports: complete), starting build",
+                           sessionKey, timeSinceLastActivity, buildDelayMs);
 
                 CompletableFuture<Set<String>> buildFuture = buildFutures.get(sessionKey);
                 if (buildFuture == null) {
@@ -589,15 +626,20 @@ public class StowRsServiceImpl implements StowRsService {
             } else {
                 // Conditions not met: either time not ready OR imports still running → reschedule
                 String reason = !timeConditionMet ?
-                    String.format("time not ready (only %dms passed)", timeSinceLastActivity) :
+                    String.format("time not ready (only %dms of %dms passed)", timeSinceLastActivity, buildDelayMs) :
                     String.format("imports still running (%d pending)",
                         futures.stream().filter(f -> !f.isDone()).count());
 
                 logger.debug("Session {} not ready to build ({}), rescheduling check",
                            sessionKey, reason);
-                scheduleBuildCheck(sessionKey, user, params);
+
+                // Reschedule with remaining time if time hasn't elapsed, otherwise full delay
+                long rescheduleMs = !timeConditionMet
+                    ? buildDelayMs - timeSinceLastActivity
+                    : buildDelayMs;
+                scheduleBuildCheck(sessionKey, user, params, rescheduleMs);
             }
-        }, BUILD_DELAY_MS, TimeUnit.MILLISECONDS);
+        }, delayMs, TimeUnit.MILLISECONDS);
     }
 
     /**

@@ -60,7 +60,7 @@ public class SiteWideQidoRsApi extends AbstractXapiRestController {
             @ApiResponse(code = 200, message = "Successfully retrieved studies"),
             @ApiResponse(code = 404, message = "Site-wide querying is not enabled")
     })
-    @XapiRequestMapping(value = "/dicomweb/studies", method = RequestMethod.GET, produces = MediaType.APPLICATION_JSON_VALUE)
+    @XapiRequestMapping(value = "/dicomweb/studies", method = RequestMethod.GET, produces = MediaType.ALL_VALUE)
     public ResponseEntity<String> searchStudies(
             @RequestParam(required = false) final Map<String, String> queryParameters) {
         if (!siteWideProjectFilter.isSiteWideEnabled()) {
@@ -95,7 +95,7 @@ public class SiteWideQidoRsApi extends AbstractXapiRestController {
             @ApiResponse(code = 200, message = "Successfully retrieved series"),
             @ApiResponse(code = 404, message = "Site-wide querying is not enabled")
     })
-    @XapiRequestMapping(value = "/dicomweb/studies/{studyUID}/series", method = RequestMethod.GET, produces = MediaType.APPLICATION_JSON_VALUE)
+    @XapiRequestMapping(value = "/dicomweb/studies/{studyUID}/series", method = RequestMethod.GET, produces = MediaType.ALL_VALUE)
     public ResponseEntity<String> searchSeries(
             @PathVariable final String studyUID,
             @RequestParam(required = false) final Map<String, String> queryParameters) {
@@ -131,7 +131,7 @@ public class SiteWideQidoRsApi extends AbstractXapiRestController {
             @ApiResponse(code = 200, message = "Successfully retrieved instances"),
             @ApiResponse(code = 404, message = "Site-wide querying is not enabled")
     })
-    @XapiRequestMapping(value = "/dicomweb/studies/{studyUID}/series/{seriesUID}/instances", method = RequestMethod.GET, produces = MediaType.APPLICATION_JSON_VALUE)
+    @XapiRequestMapping(value = "/dicomweb/studies/{studyUID}/series/{seriesUID}/instances", method = RequestMethod.GET, produces = MediaType.ALL_VALUE)
     public ResponseEntity<String> searchInstances(
             @PathVariable final String studyUID,
             @PathVariable final String seriesUID,

@@ -18,6 +18,7 @@ import org.nrg.xnat.dicomweb.parser.Mime4jHybridParser.MultipartPart;
 import org.nrg.xnat.dicomweb.service.FailedInstance;
 import org.nrg.xnat.dicomweb.service.StowRsImportResult;
 import org.nrg.xnat.dicomweb.service.SuccessfulInstance;
+import org.nrg.xnat.dicomweb.config.DicomWebPreferenceBean;
 import org.nrg.xnat.dicomweb.util.DicomValidationUtils;
 import org.nrg.xnat.dicomweb.util.DicomWebUtils;
 import org.nrg.xnat.helpers.prearchive.PrearcUtils;
@@ -42,7 +43,11 @@ import java.text.SimpleDateFormat;
 import java.util.*;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.Executors;
+import java.util.concurrent.ScheduledExecutorService;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicLong;
 
 /**
  * DICOM import strategy using XNAT's Direct Archive mechanism.
@@ -114,11 +119,41 @@ public class DirectArchiveStrategy implements DicomImportStrategy {
      */
     private final ConcurrentHashMap<String, CompletableFuture<String>> buildFutures = new ConcurrentHashMap<>();
 
+    // ========================================================================
+    // Deferred Build Support (when buildDelayMs > 0)
+    // ========================================================================
+
+    private final DicomWebPreferenceBean preferenceBean;
+
+    /** Per-study last activity timestamp for deferred build scheduling. */
+    private final ConcurrentHashMap<String, AtomicLong> lastActivityTime = new ConcurrentHashMap<>();
+
+    /** Cached session data for deferred builds (keyed by buildKey). */
+    private final ConcurrentHashMap<String, SessionData> deferredSessions = new ConcurrentHashMap<>();
+
+    /** Cached user for deferred builds (keyed by buildKey). */
+    private final ConcurrentHashMap<String, UserI> deferredUsers = new ConcurrentHashMap<>();
+
+    /** Cached params for deferred builds (keyed by buildKey). */
+    private final ConcurrentHashMap<String, Map<String, Object>> deferredParams = new ConcurrentHashMap<>();
+
+    /** Cached sessionUris references for deferred builds (keyed by buildKey). */
+    private final ConcurrentHashMap<String, Set<String>> deferredSessionUris = new ConcurrentHashMap<>();
+
+    /** Scheduler for deferred build checks. */
+    private final ScheduledExecutorService buildScheduler = Executors.newScheduledThreadPool(2, r -> {
+        Thread t = new Thread(r, "direct-archive-build-scheduler");
+        t.setDaemon(true);
+        return t;
+    });
+
     @Autowired
     public DirectArchiveStrategy(DirectArchiveSessionService directArchiveSessionService,
-                                  DirectArchiveSessionHibernateService directArchiveSessionHibernateService) {
+                                  DirectArchiveSessionHibernateService directArchiveSessionHibernateService,
+                                  DicomWebPreferenceBean preferenceBean) {
         this.directArchiveSessionService = directArchiveSessionService;
         this.directArchiveSessionHibernateService = directArchiveSessionHibernateService;
+        this.preferenceBean = preferenceBean;
         this.supportsOverwriteMode = detectOverwriteSupport();
     }
 
@@ -304,16 +339,23 @@ public class DirectArchiveStrategy implements DicomImportStrategy {
     /**
      * Process a single study with per-study build locks.
      *
-     * <p>This method implements concurrent upload protection for threads within the
-     * same STOW request that upload to the same study:
+     * <p>Operates in two modes based on the {@code dicomweb.buildDelayMs} preference:
+     *
+     * <h3>Immediate mode (buildDelayMs == 0)</h3>
      * <ul>
      *   <li>First thread: Creates session, writes files, builds and archives</li>
      *   <li>Concurrent threads (same request): Write files and reuse build result</li>
+     *   <li>Build future removed immediately after build completes</li>
      * </ul>
      *
-     * <p>After the build completes (success or failure), the entry is removed from
-     * {@code buildFutures} so that subsequent STOW requests to the same study
-     * perform their own build cycle (supporting append/overwrite).
+     * <h3>Deferred mode (buildDelayMs &gt; 0)</h3>
+     * <ul>
+     *   <li>All threads: Write files to archive directory immediately</li>
+     *   <li>First thread for a study: Schedules a deferred build check</li>
+     *   <li>Build is deferred until no new uploads arrive within the delay window</li>
+     *   <li>All threads block on a shared future until the build completes</li>
+     *   <li>Allows multi-request uploads to be grouped into a single session build</li>
+     * </ul>
      *
      * <p>Build lock key format: {projectId}/{studyInstanceUID}
      */
@@ -323,30 +365,42 @@ public class DirectArchiveStrategy implements DicomImportStrategy {
                              List<SuccessfulInstance> successfulInstances,
                              List<FailedInstance> failedInstances) {
 
-        // Create build key for this study
-        String buildKey = project.getId() + "/" + studyUid;
-        logger.debug("Processing study with build key: {}", buildKey);
+        long buildDelayMs = preferenceBean.getBuildDelayMs();
 
-        // Get or create build future for this study (atomic operation).
-        // Within a single STOW request, concurrent threads uploading to the same study
-        // will share this future. The first thread to reach the build step performs
-        // the build; others wait and reuse the result.
+        if (buildDelayMs <= 0) {
+            processStudyImmediate(user, project, studyUid, instances, timestamp, params,
+                                 sessionUris, successfulInstances, failedInstances);
+        } else {
+            processStudyDeferred(user, project, studyUid, instances, timestamp, params,
+                                sessionUris, successfulInstances, failedInstances, buildDelayMs);
+        }
+    }
+
+    /**
+     * Immediate mode: build and archive within the current request (original behavior).
+     */
+    private void processStudyImmediate(UserI user, XnatProjectdata project, String studyUid,
+                                       List<DicomInstanceInfo> instances, String timestamp,
+                                       Map<String, Object> params, Set<String> sessionUris,
+                                       List<SuccessfulInstance> successfulInstances,
+                                       List<FailedInstance> failedInstances) {
+
+        String buildKey = project.getId() + "/" + studyUid;
+        logger.debug("Processing study (immediate mode) with build key: {}", buildKey);
+
         CompletableFuture<String> buildFuture = buildFutures.computeIfAbsent(buildKey, k -> {
             logger.info("First thread for study {}, will perform build", buildKey);
             return new CompletableFuture<>();
         });
 
         try {
-            // Create or get session (all threads need to do this)
             SessionData session = createOrGetSession(user, project, studyUid,
                                                     instances.get(0), timestamp, params);
             logger.info("Using DirectArchiveSession: {}", session.getSessionDataTriple());
 
-            // Write instances to archive (all threads write their files)
             List<DicomInstanceInfo> writtenInstances = writeInstancesToArchive(session, instances, failedInstances);
             logger.info("Wrote {} instances to archive for study {}", writtenInstances.size(), studyUid);
 
-            // Now check if we need to build, or if another thread already built
             if (buildFuture.isDone()) {
                 logger.info("Study {} already built by another thread, reusing result", buildKey);
                 String finalUri = buildFuture.get();
@@ -354,15 +408,12 @@ public class DirectArchiveStrategy implements DicomImportStrategy {
                 return;
             }
 
-            // We're the first thread to get here - build and archive
             logger.info("Building and archiving session for study {}", buildKey);
             String finalUri = buildAndArchiveSession(user, session, params, sessionUris);
 
-            // Complete the future to notify waiting threads
             buildFuture.complete(finalUri);
             logger.info("Completed build future for study {} with URI: {}", buildKey, finalUri);
 
-            // Add successful instances with final URI
             addSuccessfulInstances(writtenInstances, finalUri, successfulInstances);
 
         } catch (ArchivingException e) {
@@ -374,10 +425,176 @@ public class DirectArchiveStrategy implements DicomImportStrategy {
             buildFuture.completeExceptionally(e);
             throw new RuntimeException("Error processing study: " + e.getMessage(), e);
         } finally {
-            // Remove the build future so subsequent STOW requests to the same study
-            // get a fresh future and perform their own build (supporting append/overwrite).
             buildFutures.remove(buildKey);
         }
+    }
+
+    /**
+     * Deferred mode: write files now, return immediately with a pending URI,
+     * and defer the build/archive until no new uploads arrive within the delay window.
+     *
+     * <p>The HTTP response returns as soon as files are written, allowing the caller
+     * to send subsequent batches without waiting. The build fires asynchronously
+     * in the background after the delay elapses.
+     */
+    private void processStudyDeferred(UserI user, XnatProjectdata project, String studyUid,
+                                      List<DicomInstanceInfo> instances, String timestamp,
+                                      Map<String, Object> params, Set<String> sessionUris,
+                                      List<SuccessfulInstance> successfulInstances,
+                                      List<FailedInstance> failedInstances, long buildDelayMs) {
+
+        String buildKey = project.getId() + "/" + studyUid;
+        logger.debug("Processing study (deferred mode, delay={}ms) with build key: {}", buildDelayMs, buildKey);
+
+        // Get or create shared future. Track whether this thread is the first for this study.
+        AtomicBoolean isFirstThread = new AtomicBoolean(false);
+        buildFutures.computeIfAbsent(buildKey, k -> {
+            isFirstThread.set(true);
+            logger.info("First thread for deferred study {}, will schedule build check", buildKey);
+            return new CompletableFuture<>();
+        });
+
+        try {
+            // Create or get session and write files (every thread does this)
+            SessionData session = createOrGetSession(user, project, studyUid,
+                                                    instances.get(0), timestamp, params);
+            logger.info("Using DirectArchiveSession (deferred): {}", session.getSessionDataTriple());
+
+            List<DicomInstanceInfo> writtenInstances = writeInstancesToArchive(session, instances, failedInstances);
+            logger.info("Wrote {} instances to archive for study {} (deferred build pending)",
+                       writtenInstances.size(), studyUid);
+
+            // Update last activity time (signals "files just arrived for this study")
+            lastActivityTime.computeIfAbsent(buildKey, k -> new AtomicLong())
+                            .set(System.currentTimeMillis());
+
+            // Cache context needed by the deferred build (idempotent - first writer wins)
+            deferredSessions.putIfAbsent(buildKey, session);
+            deferredUsers.putIfAbsent(buildKey, user);
+            deferredParams.putIfAbsent(buildKey, params);
+            deferredSessionUris.putIfAbsent(buildKey, sessionUris);
+
+            // If first thread for this study, schedule the deferred build check
+            if (isFirstThread.get()) {
+                scheduleDeferredBuildCheck(buildKey, buildDelayMs);
+            }
+
+            // Return immediately with a pending DirectArchive URI.
+            // The build will happen asynchronously after the delay elapses.
+            String pendingUri = String.format(DIRECT_ARCHIVE_URL_FORMAT,
+                    session.getProject(), session.getTag(), session.getName());
+            sessionUris.add(pendingUri);
+            logger.info("Returning pending URI for study {} (build deferred): {}", buildKey, pendingUri);
+
+            addSuccessfulInstances(writtenInstances, pendingUri, successfulInstances);
+
+        } catch (ArchivingException e) {
+            logger.error("Failed to create DirectArchiveSession for study {}", studyUid, e);
+            throw new RuntimeException("Failed to create DirectArchiveSession: " + e.getMessage(), e);
+        } catch (Exception e) {
+            logger.error("Error processing study {}", buildKey, e);
+            throw new RuntimeException("Error processing study: " + e.getMessage(), e);
+        }
+        // NOTE: No buildFutures.remove() here - cleanup happens in executeDeferredBuild()
+    }
+
+    // ========================================================================
+    // Deferred Build Scheduling
+    // ========================================================================
+
+    /**
+     * Schedule a deferred build check for a study.
+     * After {@code scheduleDelayMs} elapses, checks whether at least {@code buildDelayMs}
+     * has passed since the last upload activity. If so, triggers the build.
+     * Otherwise, reschedules with the remaining time.
+     *
+     * <p>The two delay parameters serve different purposes:
+     * <ul>
+     *   <li>{@code buildDelayMs} — the full activity threshold (how long since last upload
+     *       before considering the session complete). Always compared against the full value.</li>
+     *   <li>{@code scheduleDelayMs} — how long to wait before the next check. On reschedule,
+     *       this is shortened to the remaining time to avoid unnecessary waiting.</li>
+     * </ul>
+     */
+    private void scheduleDeferredBuildCheck(String buildKey, long buildDelayMs, long scheduleDelayMs) {
+        buildScheduler.schedule(() -> {
+            AtomicLong lastActivity = lastActivityTime.get(buildKey);
+            if (lastActivity == null) {
+                logger.warn("No last activity time found for deferred study {}, skipping", buildKey);
+                return;
+            }
+
+            long timeSinceLastActivity = System.currentTimeMillis() - lastActivity.get();
+
+            if (timeSinceLastActivity >= buildDelayMs) {
+                // Full delay window elapsed with no new uploads - build now
+                logger.info("Build delay elapsed for study {} ({}ms since last activity, threshold {}ms), triggering build",
+                           buildKey, timeSinceLastActivity, buildDelayMs);
+                executeDeferredBuild(buildKey);
+            } else {
+                // Activity happened recently - reschedule for remaining time
+                long remainingMs = buildDelayMs - timeSinceLastActivity;
+                logger.debug("Study {} not ready ({}ms of {}ms since last activity), rescheduling in {}ms",
+                           buildKey, timeSinceLastActivity, buildDelayMs, remainingMs);
+                scheduleDeferredBuildCheck(buildKey, buildDelayMs, remainingMs);
+            }
+        }, scheduleDelayMs, TimeUnit.MILLISECONDS);
+    }
+
+    /**
+     * Schedule a deferred build check with the initial delay equal to the full build delay.
+     */
+    private void scheduleDeferredBuildCheck(String buildKey, long buildDelayMs) {
+        scheduleDeferredBuildCheck(buildKey, buildDelayMs, buildDelayMs);
+    }
+
+    /**
+     * Execute the deferred build for a study. Called by the scheduler when the
+     * delay window has elapsed with no new uploads.
+     */
+    private void executeDeferredBuild(String buildKey) {
+        CompletableFuture<String> buildFuture = buildFutures.get(buildKey);
+        if (buildFuture == null || buildFuture.isDone()) {
+            logger.debug("Deferred build for {} already completed or missing, skipping", buildKey);
+            return;
+        }
+
+        SessionData session = deferredSessions.get(buildKey);
+        UserI user = deferredUsers.get(buildKey);
+        Map<String, Object> params = deferredParams.get(buildKey);
+        Set<String> sessionUris = deferredSessionUris.get(buildKey);
+
+        if (session == null || user == null || params == null || sessionUris == null) {
+            logger.error("Missing deferred build context for {}", buildKey);
+            buildFuture.completeExceptionally(
+                new RuntimeException("Missing deferred build context for " + buildKey));
+            cleanupDeferredState(buildKey);
+            return;
+        }
+
+        try {
+            logger.info("Executing deferred build for study {}", buildKey);
+            String finalUri = buildAndArchiveSession(user, session, params, sessionUris);
+            buildFuture.complete(finalUri);
+            logger.info("Deferred build completed for study {} with URI: {}", buildKey, finalUri);
+        } catch (Exception e) {
+            logger.error("Deferred build failed for study {}", buildKey, e);
+            buildFuture.completeExceptionally(e);
+        } finally {
+            cleanupDeferredState(buildKey);
+        }
+    }
+
+    /**
+     * Clean up all deferred state maps for a given build key.
+     */
+    private void cleanupDeferredState(String buildKey) {
+        buildFutures.remove(buildKey);
+        lastActivityTime.remove(buildKey);
+        deferredSessions.remove(buildKey);
+        deferredUsers.remove(buildKey);
+        deferredParams.remove(buildKey);
+        deferredSessionUris.remove(buildKey);
     }
 
     /**

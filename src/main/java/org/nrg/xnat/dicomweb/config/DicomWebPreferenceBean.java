@@ -122,6 +122,24 @@ public class DicomWebPreferenceBean extends AbstractPreferenceBean {
     }
 
     /**
+     * Build delay for DirectArchive multi-batch STOW-RS uploads (milliseconds).
+     * When greater than 0, DirectArchive defers the build/archive step until no new files
+     * arrive for a study within this delay window. Allows multi-request uploads to be
+     * grouped into a single session build.
+     * Set to 0 for immediate build (original behavior).
+     *
+     * @return Build delay in milliseconds (default: 5000)
+     */
+    @NrgPreference(property = "dicomweb.buildDelayMs")
+    public long getBuildDelayMs() {
+        return getLongValue("dicomweb.buildDelayMs");
+    }
+
+    public void setBuildDelayMs(final long buildDelayMs) throws InvalidPreferenceName {
+        setLongValue(buildDelayMs, "dicomweb.buildDelayMs");
+    }
+
+    /**
      * Base URL for DICOMweb requests. Used to build URLs in responses. If empty, defaults to the Site URL
      * @return DICOMweb base URL
      */

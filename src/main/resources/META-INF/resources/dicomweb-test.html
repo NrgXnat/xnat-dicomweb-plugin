@@ -289,15 +289,27 @@
                 <div class="info-box">
                     <h3>ℹ️ How to Use</h3>
                     <ul>
-                        <li>Enter your XNAT project ID below</li>
+                        <li>Select <b>Project</b> scope and enter a project ID, or select <b>Site-Wide</b> to query across all projects</li>
                         <li>Click any test button to query the DICOMweb API</li>
                         <li>For series and instance queries, you'll need valid UIDs from the study search results</li>
+                        <li>Site-Wide mode must be enabled in Plugin Settings for site-wide queries to work</li>
                         <li>All requests use your current XNAT session authentication</li>
                     </ul>
                 </div>
 
                 <h2>Configuration</h2>
                 <div class="form-group">
+                    <label>Scope:</label>
+                    <div style="display: flex; gap: 20px; margin-bottom: 10px;">
+                        <label style="display: inline-flex; align-items: center; gap: 6px; font-weight: normal; cursor: pointer;">
+                            <input type="radio" name="scope" value="project" checked onchange="onScopeChange()"> Project
+                        </label>
+                        <label style="display: inline-flex; align-items: center; gap: 6px; font-weight: normal; cursor: pointer;">
+                            <input type="radio" name="scope" value="site-wide" onchange="onScopeChange()"> Site-Wide
+                        </label>
+                    </div>
+                </div>
+                <div class="form-group" id="projectIdGroup">
                     <label for="projectId">Project ID:</label>
                     <input type="text" id="projectId" placeholder="Enter XNAT Project ID (e.g., MY_PROJECT)" value="">
                 </div>
@@ -341,7 +353,7 @@
                 <h2>STOW-RS Tests (Store)</h2>
                 <div class="form-group">
                     <label for="dicomFile">Select DICOM File:</label>
-                    <input type="file" id="dicomFile" accept=".dcm,.dicom" style="padding: 10px; border: 2px dashed #667eea; border-radius: 6px; width: 100%; cursor: pointer;">
+                    <input type="file" id="dicomFile" accept=".dcm,.dicom" multiple style="padding: 10px; border: 2px dashed #667eea; border-radius: 6px; width: 100%; cursor: pointer;">
                 </div>
                 <div class="button-group">
                     <button onclick="testStowRsUpload()">Upload DICOM Instance</button>
@@ -381,6 +393,55 @@
     <script>
         let startTime;
 
+        // =====================================================================
+        // Scope Management
+        // =====================================================================
+
+        function isSiteWide() {
+            return document.querySelector('input[name="scope"]:checked').value === 'site-wide';
+        }
+
+        function onScopeChange() {
+            const projectGroup = document.getElementById('projectIdGroup');
+            if (isSiteWide()) {
+                projectGroup.style.opacity = '0.4';
+                document.getElementById('projectId').placeholder = 'Not required for site-wide queries';
+                showStatus('Site-Wide mode selected. Project ID is optional.', 'info');
+            } else {
+                projectGroup.style.opacity = '1';
+                document.getElementById('projectId').placeholder = 'Enter XNAT Project ID (e.g., MY_PROJECT)';
+                showStatus('Project mode selected. Enter a Project ID.', 'info');
+            }
+        }
+
+        /**
+         * Build base URL prefix based on current scope.
+         * Project scope:   /xapi/dicomweb/projects/{projectId}
+         * Site-wide scope: /xapi/dicomweb
+         */
+        function getBaseUrl() {
+            if (isSiteWide()) {
+                return '/xapi/dicomweb';
+            }
+            const projectId = document.getElementById('projectId').value.trim();
+            if (!projectId) {
+                showStatus('Please enter a Project ID or switch to Site-Wide mode', 'error');
+                return null;
+            }
+            return `/xapi/dicomweb/projects/${projectId}`;
+        }
+
+        function getScopeLabel() {
+            if (isSiteWide()) {
+                return 'Site-Wide';
+            }
+            return document.getElementById('projectId').value.trim();
+        }
+
+        // =====================================================================
+        // UI Helpers
+        // =====================================================================
+
         function showStatus(message, type) {
             const status = document.getElementById('status');
             status.textContent = message;
@@ -414,14 +475,18 @@
             document.getElementById('responseContainer').className = 'response-container';
         }
 
-        function getProjectId() {
-            const projectId = document.getElementById('projectId').value.trim();
-            if (!projectId) {
-                showStatus('Please enter a Project ID', 'error');
-                return null;
-            }
-            return projectId;
+        function copyResponse() {
+            const responseBody = document.getElementById('responseBody').textContent;
+            navigator.clipboard.writeText(responseBody).then(() => {
+                showStatus('Response copied to clipboard', 'success');
+            }).catch(err => {
+                showStatus('Failed to copy: ' + err.message, 'error');
+            });
         }
+
+        // =====================================================================
+        // Generic Request Helper
+        // =====================================================================
 
         async function makeRequest(url, description) {
             showStatus('Testing: ' + description, 'info');
@@ -451,30 +516,34 @@
                 showLoader(false);
 
                 if (response.ok) {
-                    showStatus('✅ Success: ' + description, 'success');
+                    showStatus('Success: ' + description, 'success');
                     showResponse(response.status, contentType, body, elapsed);
                 } else {
-                    showStatus('❌ Error: ' + response.status + ' - ' + response.statusText, 'error');
+                    showStatus('Error: ' + response.status + ' - ' + response.statusText, 'error');
                     showResponse(response.status, contentType, body, elapsed);
                 }
             } catch (error) {
                 showLoader(false);
-                showStatus('❌ Network Error: ' + error.message, 'error');
+                showStatus('Network Error: ' + error.message, 'error');
                 console.error('Error:', error);
             }
         }
 
-        function testSearchStudies() {
-            const projectId = getProjectId();
-            if (!projectId) return;
+        // =====================================================================
+        // QIDO-RS Tests
+        // =====================================================================
 
-            const url = `/xapi/dicomweb/projects/${projectId}/studies`;
-            makeRequest(url, 'Search Studies in ' + projectId);
+        function testSearchStudies() {
+            const base = getBaseUrl();
+            if (!base) return;
+
+            const url = `${base}/studies`;
+            makeRequest(url, 'Search Studies (' + getScopeLabel() + ')');
         }
 
         function testSearchSeries() {
-            const projectId = getProjectId();
-            if (!projectId) return;
+            const base = getBaseUrl();
+            if (!base) return;
 
             const studyUID = document.getElementById('studyUID').value.trim();
             if (!studyUID) {
@@ -482,13 +551,13 @@
                 return;
             }
 
-            const url = `/xapi/dicomweb/projects/${projectId}/studies/${studyUID}/series`;
-            makeRequest(url, 'Search Series in Study');
+            const url = `${base}/studies/${studyUID}/series`;
+            makeRequest(url, 'Search Series in Study (' + getScopeLabel() + ')');
         }
 
         function testSearchInstances() {
-            const projectId = getProjectId();
-            if (!projectId) return;
+            const base = getBaseUrl();
+            if (!base) return;
 
             const studyUID = document.getElementById('studyUID').value.trim();
             const seriesUID = document.getElementById('seriesUID').value.trim();
@@ -498,45 +567,31 @@
                 return;
             }
 
-            const url = `/xapi/dicomweb/projects/${projectId}/studies/${studyUID}/series/${seriesUID}/instances`;
-            makeRequest(url, 'Search Instances in Series');
+            const url = `${base}/studies/${studyUID}/series/${seriesUID}/instances`;
+            makeRequest(url, 'Search Instances in Series (' + getScopeLabel() + ')');
         }
 
-        function testRetrieveInstanceMetadata() {
-            const projectId = getProjectId();
-            if (!projectId) return;
-
-            const studyUID = document.getElementById('studyUID').value.trim();
-            const seriesUID = document.getElementById('seriesUID').value.trim();
-            const instanceUID = document.getElementById('instanceUID').value.trim();
-
-            if (!studyUID || !seriesUID || !instanceUID) {
-                showStatus('Please enter Study, Series, and Instance UIDs', 'error');
-                return;
-            }
-
-            const url = `/xapi/dicomweb/projects/${projectId}/studies/${studyUID}/series/${seriesUID}/instances/${instanceUID}/metadata`;
-            makeRequest(url, 'Retrieve Instance Metadata');
-        }
+        // =====================================================================
+        // WADO-RS Tests
+        // =====================================================================
 
         function testRetrieveStudyMetadata() {
-            const projectId = getProjectId();
-            if (!projectId) return;
+            const base = getBaseUrl();
+            if (!base) return;
 
             const studyUID = document.getElementById('studyUID').value.trim();
-
             if (!studyUID) {
                 showStatus('Please enter a Study Instance UID', 'error');
                 return;
             }
 
-            const url = `/xapi/dicomweb/projects/${projectId}/studies/${studyUID}/metadata`;
-            makeRequest(url, 'Retrieve Study Metadata (All Instances)');
+            const url = `${base}/studies/${studyUID}/metadata`;
+            makeRequest(url, 'Retrieve Study Metadata (' + getScopeLabel() + ')');
         }
 
         function testRetrieveSeriesMetadata() {
-            const projectId = getProjectId();
-            if (!projectId) return;
+            const base = getBaseUrl();
+            if (!base) return;
 
             const studyUID = document.getElementById('studyUID').value.trim();
             const seriesUID = document.getElementById('seriesUID').value.trim();
@@ -546,13 +601,13 @@
                 return;
             }
 
-            const url = `/xapi/dicomweb/projects/${projectId}/studies/${studyUID}/series/${seriesUID}/metadata`;
-            makeRequest(url, 'Retrieve Series Metadata');
+            const url = `${base}/studies/${studyUID}/series/${seriesUID}/metadata`;
+            makeRequest(url, 'Retrieve Series Metadata (' + getScopeLabel() + ')');
         }
 
-        function testRetrieveInstance() {
-            const projectId = getProjectId();
-            if (!projectId) return;
+        function testRetrieveInstanceMetadata() {
+            const base = getBaseUrl();
+            if (!base) return;
 
             const studyUID = document.getElementById('studyUID').value.trim();
             const seriesUID = document.getElementById('seriesUID').value.trim();
@@ -563,28 +618,36 @@
                 return;
             }
 
-            const url = `/xapi/dicomweb/projects/${projectId}/studies/${studyUID}/series/${seriesUID}/instances/${instanceUID}`;
+            const url = `${base}/studies/${studyUID}/series/${seriesUID}/instances/${instanceUID}/metadata`;
+            makeRequest(url, 'Retrieve Instance Metadata (' + getScopeLabel() + ')');
+        }
 
+        function testRetrieveInstance() {
+            const base = getBaseUrl();
+            if (!base) return;
+
+            const studyUID = document.getElementById('studyUID').value.trim();
+            const seriesUID = document.getElementById('seriesUID').value.trim();
+            const instanceUID = document.getElementById('instanceUID').value.trim();
+
+            if (!studyUID || !seriesUID || !instanceUID) {
+                showStatus('Please enter Study, Series, and Instance UIDs', 'error');
+                return;
+            }
+
+            const url = `${base}/studies/${studyUID}/series/${seriesUID}/instances/${instanceUID}`;
             showStatus('Downloading DICOM instance...', 'info');
-
-            // Open in new window/tab to trigger download
             window.open(url, '_blank');
-
-            showStatus('✅ Download initiated. Check your browser downloads.', 'success');
+            showStatus('Download initiated. Check your browser downloads.', 'success');
         }
 
-        function copyResponse() {
-            const responseBody = document.getElementById('responseBody').textContent;
-            navigator.clipboard.writeText(responseBody).then(() => {
-                showStatus('✅ Response copied to clipboard', 'success');
-            }).catch(err => {
-                showStatus('❌ Failed to copy: ' + err.message, 'error');
-            });
-        }
+        // =====================================================================
+        // STOW-RS Tests
+        // =====================================================================
 
         async function testStowRsUpload() {
-            const projectId = getProjectId();
-            if (!projectId) return;
+            const base = getBaseUrl();
+            if (!base) return;
 
             const fileInput = document.getElementById('dicomFile');
             const file = fileInput.files[0];
@@ -594,21 +657,20 @@
                 return;
             }
 
-            showStatus(`Uploading ${file.name} to project ${projectId}...`, 'info');
+            showStatus(`Uploading ${file.name} (${getScopeLabel()})...`, 'info');
             showLoader(true);
             hideResponse();
             startTime = Date.now();
 
             try {
-                // Create multipart/related request
                 const boundary = 'DicomWebBoundary' + Date.now();
                 const body = await createMultipartBody([file], boundary);
 
-                const url = `/xapi/dicomweb/projects/${projectId}/studies`;
+                const url = `${base}/studies`;
                 const response = await fetch(url, {
                     method: 'POST',
                     headers: {
-                        'Content-Type': `multipart/related; type=application/dicom; boundary=${boundary}`
+                        'Content-Type': `multipart/related; type="application/dicom"; boundary=${boundary}`
                     },
                     body: body,
                     credentials: 'same-origin'
@@ -627,29 +689,78 @@
                 showLoader(false);
 
                 if (response.ok) {
-                    showStatus(`✅ Upload successful: ${file.name}`, 'success');
+                    showStatus(`Upload successful: ${file.name} (${getScopeLabel()})`, 'success');
                     showResponse(response.status, contentType, responseBody, elapsed);
                 } else {
-                    showStatus(`❌ Upload failed: ${response.status} - ${response.statusText}`, 'error');
+                    showStatus(`Upload failed: ${response.status} - ${response.statusText}`, 'error');
                     showResponse(response.status, contentType, responseBody, elapsed);
                 }
             } catch (error) {
                 showLoader(false);
-                showStatus('❌ Upload error: ' + error.message, 'error');
+                showStatus('Upload error: ' + error.message, 'error');
                 console.error('Error:', error);
             }
         }
 
         async function testStowRsMultiple() {
-            const projectId = getProjectId();
-            if (!projectId) return;
+            const base = getBaseUrl();
+            if (!base) return;
 
             const fileInput = document.getElementById('dicomFile');
-            fileInput.setAttribute('multiple', 'multiple');
-            fileInput.click();
+            if (!fileInput.files || fileInput.files.length < 2) {
+                showStatus('Please select multiple DICOM files using the file picker (hold Ctrl/Cmd to select multiple)', 'error');
+                return;
+            }
 
-            showStatus('Multiple file upload not yet implemented. Use single file upload for now.', 'info');
+            const files = Array.from(fileInput.files);
+            showStatus(`Uploading ${files.length} files (${getScopeLabel()})...`, 'info');
+            showLoader(true);
+            hideResponse();
+            startTime = Date.now();
+
+            try {
+                const boundary = 'DicomWebBoundary' + Date.now();
+                const body = await createMultipartBody(files, boundary);
+
+                const url = `${base}/studies`;
+                const response = await fetch(url, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': `multipart/related; type="application/dicom"; boundary=${boundary}`
+                    },
+                    body: body,
+                    credentials: 'same-origin'
+                });
+
+                const elapsed = Date.now() - startTime;
+                const contentType = response.headers.get('Content-Type');
+
+                let responseBody;
+                if (contentType && contentType.includes('json')) {
+                    responseBody = await response.json();
+                } else {
+                    responseBody = await response.text();
+                }
+
+                showLoader(false);
+
+                if (response.ok) {
+                    showStatus(`Upload successful: ${files.length} files (${getScopeLabel()})`, 'success');
+                    showResponse(response.status, contentType, responseBody, elapsed);
+                } else {
+                    showStatus(`Upload failed: ${response.status} - ${response.statusText}`, 'error');
+                    showResponse(response.status, contentType, responseBody, elapsed);
+                }
+            } catch (error) {
+                showLoader(false);
+                showStatus('Upload error: ' + error.message, 'error');
+                console.error('Error:', error);
+            }
         }
+
+        // =====================================================================
+        // Multipart Body Builder
+        // =====================================================================
 
         async function createMultipartBody(files, boundary) {
             const parts = [];
@@ -657,7 +768,6 @@
             for (const file of files) {
                 const fileData = await file.arrayBuffer();
 
-                // Build multipart part
                 let part = `--${boundary}\r\n`;
                 part += `Content-Type: application/dicom\r\n`;
                 part += `\r\n`;
@@ -670,10 +780,8 @@
                 parts.push(partFooter);
             }
 
-            // Add closing boundary
             parts.push(new TextEncoder().encode(`--${boundary}--\r\n`));
 
-            // Concatenate all parts
             const totalLength = parts.reduce((sum, part) => sum + part.byteLength, 0);
             const result = new Uint8Array(totalLength);
             let offset = 0;
@@ -685,9 +793,12 @@
             return result;
         }
 
+        // =====================================================================
         // Initialize
+        // =====================================================================
+
         window.addEventListener('load', function() {
-            showStatus('Ready. Enter a project ID to start testing.', 'info');
+            showStatus('Ready. Select a scope and enter configuration to start testing.', 'info');
         });
     </script>
 </body>
