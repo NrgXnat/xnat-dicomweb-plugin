@@ -25,7 +25,6 @@ import org.nrg.xnat.dicomweb.service.StowRsResult;
 import org.nrg.xnat.dicomweb.service.StowRsService;
 import org.nrg.xnat.dicomweb.service.SuccessfulInstance;
 import org.nrg.xnat.dicomweb.service.impl.strategy.DicomImportStrategy;
-import org.nrg.xnat.dicomweb.service.impl.strategy.DirectArchiveStrategy;
 import org.nrg.xnat.dicomweb.service.impl.strategy.GradualDicomImporterStrategy;
 import org.nrg.xnat.dicomweb.util.DicomWebUtils;
 import org.nrg.xnat.helpers.prearchive.PrearcDatabase;
@@ -77,8 +76,9 @@ public class StowRsServiceImpl implements StowRsService {
     private static final long MIN_BUILD_DELAY_MS = 500;  // Minimum delay for GradualDicomImporter
     private static final String UNASSIGNED_PROJECT = "Unassigned";
 
-    private final Mime4jHybridParser multipartParser;
-    private final DirectArchiveStrategy directArchiveStrategy;
+    private volatile Mime4jHybridParser multipartParser;
+    private final long memoryThreshold;
+    private final DicomImportStrategy directArchiveStrategy;
     private final GradualDicomImporterStrategy gradualDicomImporterStrategy;
     private final DicomWebPreferenceBean preferenceBean;
 
@@ -100,26 +100,49 @@ public class StowRsServiceImpl implements StowRsService {
     });
 
     @Autowired
-    public StowRsServiceImpl(DirectArchiveStrategy directArchiveStrategy,
+    public StowRsServiceImpl(@Autowired(required = false) @org.springframework.beans.factory.annotation.Qualifier("directArchiveStrategy") DicomImportStrategy directArchiveStrategy,
                              GradualDicomImporterStrategy gradualDicomImporterStrategy,
                              DicomWebProperties properties,
                              DicomWebPreferenceBean preferenceBean) {
-        // Create parser with configured memory threshold
-        File tempDir = createTempDirectory();
-        long memoryThreshold = properties.getMultipart().getMemoryThreshold();
-        this.multipartParser = new Mime4jHybridParser(tempDir, memoryThreshold);
+        this.memoryThreshold = properties.getMultipart().getMemoryThreshold();
         this.directArchiveStrategy = directArchiveStrategy;
         this.gradualDicomImporterStrategy = gradualDicomImporterStrategy;
         this.preferenceBean = preferenceBean;
-        logger.info("StowRsServiceImpl initialized with {} strategies and multipart memory threshold: {} bytes",
-                2, memoryThreshold);
+        if (directArchiveStrategy == null) {
+            logger.info("StowRsServiceImpl initialized without DirectArchive support (older XNAT). " +
+                    "Only GradualDicomImporter strategy is available.");
+        } else {
+            logger.info("StowRsServiceImpl initialized with DirectArchive and GradualDicomImporter strategies");
+        }
+    }
+
+    /**
+     * Get or create the multipart parser, deferring temp directory creation
+     * until first use (XDAT.getSiteConfigPreferences() may not be available at construction time).
+     */
+    private Mime4jHybridParser getMultipartParser() {
+        if (multipartParser == null) {
+            synchronized (this) {
+                if (multipartParser == null) {
+                    File tempDir = createTempDirectory();
+                    multipartParser = new Mime4jHybridParser(tempDir, memoryThreshold);
+                }
+            }
+        }
+        return multipartParser;
     }
 
     /**
      * Create temporary directory for multipart parsing
      */
     private static File createTempDirectory() {
-        String baseTempDir = XDAT.getSiteConfigPreferences().getCachePath();
+        String baseTempDir = null;
+        if (XDAT.getSiteConfigPreferences() != null) {
+            baseTempDir = XDAT.getSiteConfigPreferences().getCachePath();
+        }
+        if (baseTempDir == null) {
+            baseTempDir = System.getProperty("java.io.tmpdir");
+        }
         File dir = new File(baseTempDir, "stow-rs-" + System.currentTimeMillis());
         dir.mkdirs();
         return dir;
@@ -148,7 +171,7 @@ public class StowRsServiceImpl implements StowRsService {
                 strategyName = preferenceBean.getDefaultStrategy();
                 if (strategyName == null || strategyName.isEmpty()) {
                     // Default based on XNAT version capability
-                    strategyName = directArchiveStrategy.supportsOverwriteMode()
+                    strategyName = (directArchiveStrategy != null)
                             ? "DirectArchive" : "GradualDicomImporter";
                 }
                 logger.debug("Using configured default strategy: {}", strategyName);
@@ -161,6 +184,11 @@ public class StowRsServiceImpl implements StowRsService {
         // the project, the import will fail and the caller should retry with GradualDicomImporter.
         switch (strategyName) {
             case "DirectArchive":
+                if (directArchiveStrategy == null) {
+                    logger.warn("DirectArchive strategy requested but not available on this XNAT version — " +
+                            "falling back to GradualDicomImporter");
+                    return gradualDicomImporterStrategy;
+                }
                 if (projectId == null) {
                     logger.info("Site-wide STOW-RS with DirectArchive requested — " +
                             "falling back to GradualDicomImporter for DICOM-based project routing");
@@ -203,7 +231,7 @@ public class StowRsServiceImpl implements StowRsService {
 
         try {
             // Parse multipart/related request directly from InputStream
-            parts = multipartParser.parse(request.getContentType(), request.getInputStream());
+            parts = getMultipartParser().parse(request.getContentType(), request.getInputStream());
 
             if (parts.isEmpty()) {
                 logger.warn("No parts found in STOW-RS request");
@@ -247,7 +275,7 @@ public class StowRsServiceImpl implements StowRsService {
             Set<String> archiveUrls;
             Map<String, String> prearchiveToArchiveMap = new HashMap<>();
 
-            if (strategy instanceof DirectArchiveStrategy) {
+            if (strategy == directArchiveStrategy && directArchiveStrategy != null) {
                 // DirectArchive automatically builds and archives sessions
                 // URIs are already the final archive locations
                 logger.info("DirectArchive sessions created. URIs are final locations: {} sessions",
@@ -290,7 +318,7 @@ public class StowRsServiceImpl implements StowRsService {
         } finally {
             // Clean up resources
             if (parts != null) {
-                multipartParser.cleanup(parts);
+                getMultipartParser().cleanup(parts);
             }
             // Clean up thread-local import future (in case of exception)
             threadImportFuture.remove();

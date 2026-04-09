@@ -27,6 +27,7 @@ import org.nrg.xnat.helpers.uri.URIManager;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.context.annotation.Lazy;
 import org.springframework.stereotype.Component;
 
 import javax.servlet.http.HttpServletRequest;
@@ -75,7 +76,6 @@ import java.util.concurrent.atomic.AtomicLong;
  *   </li>
  * </ol>
  */
-@Component
 public class DirectArchiveStrategy implements DicomImportStrategy {
 
     private static final Logger logger = LoggerFactory.getLogger(DirectArchiveStrategy.class);
@@ -147,7 +147,6 @@ public class DirectArchiveStrategy implements DicomImportStrategy {
         return t;
     });
 
-    @Autowired
     public DirectArchiveStrategy(DirectArchiveSessionService directArchiveSessionService,
                                   DirectArchiveSessionHibernateService directArchiveSessionHibernateService,
                                   DicomWebPreferenceBean preferenceBean) {
