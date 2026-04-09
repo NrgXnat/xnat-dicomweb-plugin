@@ -343,7 +343,7 @@ public class XnatDicomServiceImpl implements XnatDicomService {
         // StudyInstanceUID → i.uid
         String studyUid = dicomWildcardToSqlLike(queryAttributes.getString(Tag.StudyInstanceUID));
         if (studyUid != null) {
-            sql.append("AND i.uid ILIKE :q_study_uid ESCAPE '\\' ");
+            sql.append("AND i.uid ILIKE :q_study_uid ESCAPE E'\\\\' ");
             params.addValue("q_study_uid", studyUid);
         }
 
@@ -351,9 +351,9 @@ public class XnatDicomServiceImpl implements XnatDicomService {
         String patientName = dicomWildcardToSqlLike(queryAttributes.getString(Tag.PatientName));
         if (patientName != null) {
             if (isAdmin) {
-                sql.append("AND e.label ILIKE :q_patient_name ESCAPE '\\' ");
+                sql.append("AND e.label ILIKE :q_patient_name ESCAPE E'\\\\' ");
             } else {
-                sql.append("AND pe.experiment_label ILIKE :q_patient_name ESCAPE '\\' ");
+                sql.append("AND pe.experiment_label ILIKE :q_patient_name ESCAPE E'\\\\' ");
             }
             params.addValue("q_patient_name", patientName);
         }
@@ -362,9 +362,9 @@ public class XnatDicomServiceImpl implements XnatDicomService {
         String patientId = dicomWildcardToSqlLike(queryAttributes.getString(Tag.PatientID));
         if (patientId != null) {
             if (siteWide) {
-                sql.append("AND s.label ILIKE :q_patient_id ESCAPE '\\' ");
+                sql.append("AND s.label ILIKE :q_patient_id ESCAPE E'\\\\' ");
             } else {
-                sql.append("AND psl.subject_label ILIKE :q_patient_id ESCAPE '\\' ");
+                sql.append("AND psl.subject_label ILIKE :q_patient_id ESCAPE E'\\\\' ");
             }
             params.addValue("q_patient_id", patientId);
         }
@@ -375,7 +375,7 @@ public class XnatDicomServiceImpl implements XnatDicomService {
             // DICOM date format is yyyyMMdd; convert to yyyy-MM-dd for SQL date comparison
             if (studyDate.contains("*") || studyDate.contains("?")) {
                 String likePat = dicomWildcardToSqlLike(studyDate);
-                sql.append("AND TO_CHAR(e.date, 'YYYYMMDD') ILIKE :q_study_date ESCAPE '\\' ");
+                sql.append("AND TO_CHAR(e.date, 'YYYYMMDD') ILIKE :q_study_date ESCAPE E'\\\\' ");
                 params.addValue("q_study_date", likePat);
             } else if (studyDate.length() == 8) {
                 String sqlDate = studyDate.substring(0, 4) + "-" + studyDate.substring(4, 6) + "-" + studyDate.substring(6, 8);
@@ -388,14 +388,14 @@ public class XnatDicomServiceImpl implements XnatDicomService {
         String studyTime = queryAttributes.getString(Tag.StudyTime);
         if (studyTime != null && !studyTime.isEmpty()) {
             String likePat = dicomWildcardToSqlLike(studyTime);
-            sql.append("AND TO_CHAR(e.time, 'HH24MISS') ILIKE :q_study_time ESCAPE '\\' ");
+            sql.append("AND TO_CHAR(e.time, 'HH24MISS') ILIKE :q_study_time ESCAPE E'\\\\' ");
             params.addValue("q_study_time", likePat);
         }
 
         // AccessionNumber → e.id
         String accessionNumber = dicomWildcardToSqlLike(queryAttributes.getString(Tag.AccessionNumber));
         if (accessionNumber != null) {
-            sql.append("AND e.id ILIKE :q_accession_number ESCAPE '\\' ");
+            sql.append("AND e.id ILIKE :q_accession_number ESCAPE E'\\\\' ");
             params.addValue("q_accession_number", accessionNumber);
         }
 
