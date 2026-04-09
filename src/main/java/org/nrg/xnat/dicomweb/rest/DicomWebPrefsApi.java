@@ -64,6 +64,7 @@ public class DicomWebPrefsApi extends AbstractXapiRestController {
         prefs.put("siteWideEnabled", String.valueOf(preferenceBean.getSiteWideEnabled()));
         prefs.put("filterMode", preferenceBean.getFilterMode());
         prefs.put("projectList", preferenceBean.getProjectList());
+        prefs.put("baseUrl", preferenceBean.getBaseUrl());
         // Note: memoryThreshold is not exposed here as it requires restart to take effect
 
         return new ResponseEntity<>(prefs, HttpStatus.OK);
@@ -141,6 +142,12 @@ public class DicomWebPrefsApi extends AbstractXapiRestController {
                 String value = (String) preferences.get("projectList");
                 preferenceBean.setProjectList(value);
                 logger.info("Updated projectList to: {}", value);
+            }
+
+            if (preferences.containsKey("baseUrl")) {
+                String value = (String) preferences.get("baseUrl");
+                preferenceBean.setBaseUrl(value);
+                logger.info("Updated baseUrl to: {}", value);
             }
 
             return new ResponseEntity<>(HttpStatus.OK);
