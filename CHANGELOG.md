@@ -2,6 +2,79 @@
 
 All notable changes to the XNAT DICOMweb Plugin will be documented in this file.
 
+## [1.2.0] - 2026-04-09
+
+### Added
+- **STOW-RS (Store Over the Web)** — Full DICOMweb upload support via `POST /xapi/dicomweb/projects/{projectId}/studies`
+  - Multipart/related DICOM upload with Mime4J-based parser
+  - Two import strategies: **GradualDicomImporter** (default, prearchive pipeline) and **DirectArchive** (immediate archiving, bypasses prearchive)
+  - Per-request strategy override via `?strategy=DirectArchive` query parameter
+  - Session merging: uploads to the same StudyInstanceUID merge into one session
+  - Concurrent upload support with per-study build locks
+  - Configurable build delay (`buildDelayMs`) for batching multi-request uploads
+  - Overwrite/append mode support for DirectArchive on newer XNAT versions
+- **Site-wide DICOMweb endpoints** — Query and retrieve across all projects without project scoping
+  - `GET /xapi/dicomweb/studies` — site-wide study search
+  - `GET /xapi/dicomweb/studies/{studyUID}/series` — site-wide series search
+  - `GET /xapi/dicomweb/studies/{studyUID}/series/{seriesUID}/instances` — site-wide instance search
+  - Site-wide WADO-RS retrieval, metadata, rendered, and thumbnail endpoints
+  - Site-wide STOW-RS with automatic project routing via DICOM StudyDescription
+  - Master toggle (`siteWideEnabled`) to enable/disable all site-wide endpoints
+  - **Blacklist/whitelist filtering** — control which projects appear in site-wide queries
+  - **Per-project opt-out** — individual projects can exclude themselves from site-wide results
+  - All filtering integrated directly into SQL for efficient permission-aware queries
+- **Rendered image and thumbnail endpoints** for study, series, instance, and frame levels
+  - Rendering parameters: `viewport` (resize), `window` (VOI LUT), `quality` (JPEG compression)
+  - Content negotiation via Accept header: JPEG, PNG, GIF
+  - Animated GIF output for multi-instance study/series rendering
+  - Thumbnail endpoints return smaller default images (128x128)
+- **QIDO-RS query parameter filtering** — filter study queries by:
+  - StudyInstanceUID, PatientName, PatientID, AccessionNumber (exact match and DICOM wildcard `*`/`?`)
+  - StudyDate (exact 8-digit date or wildcard), StudyTime (exact or wildcard)
+  - Modality (mapped from XNAT session type)
+  - Multiple filters combined with AND logic
+- **Pagination** for QIDO-RS — `limit`, `offset` query parameters with `X-Total-Count` response header
+- **Bulk data and pixel data endpoints** at study, series, and instance levels
+- **Plugin preferences API** — `GET/POST /xapi/dicomweb/prefs` (admin only)
+  - `defaultPageSize`, `maxPageSize` — QIDO-RS pagination
+  - `bulkDataThreshold` — size threshold for BulkDataURI substitution in metadata
+  - `defaultStrategy`, `buildDelayMs` — STOW-RS import configuration
+  - `siteWideEnabled`, `filterMode`, `projectList` — site-wide access control
+  - `baseUrl` — custom base URL for RetrieveURL generation
+- **Project-level configuration** — `GET/PUT /xapi/dicomweb/projects/{projectId}/config/site-wide`
+  - Per-project site-wide opt-out flag
+
+### Changed
+- **Renamed plugin** from "DICOMweb Proxy" to "DICOMweb Plugin"
+  - Plugin ID: `dicomwebproxy` → `dicomwebplugin`
+  - Plugin class: `DicomWebProxyPlugin` → `DicomWebPlugin`
+  - Bean name: `dicomWebProxyPlugin` → `dicomWebPlugin`
+  - All documentation, source files, and properties updated
+- **Upgraded dcm4che** from 5.31.0 to 5.33.1
+  - Migrated JSON serialization from `javax.json` to `jakarta.json` API
+  - Fixed `NoSuchMethodError` on `JSONWriter` constructor with newer XNAT versions
+- **Upgraded Gradle** from 7.x to 8.14.3
+  - Replaced `io.spring.dependency-management` plugin with Gradle native `platform()` BOM imports
+- **Improved QIDO-RS SQL** — permission-aware queries with CTEs for efficient access control
+  - Studies without a UID (`xnat_imagesessiondata.uid IS NULL`) are excluded from all results
+  - Modality filtering uses reverse-mapped XNAT element names
+- **Fat JAR optimization** — removed XNAT-provided libraries from plugin JAR
+  - Excluded: SLF4J, Logback, Guava, Gson, commons-io, annotation processors
+  - Kept: dcm4che3 classes (for backward compatibility with older XNAT), Mime4J, OpenCV, Weasis, animated-gif-lib, EtherJ
+  - Prevents SLF4J/Logback classloading conflicts that caused `NOPLoggerFactory` errors
+
+### Fixed
+- **QIDO-RS ILIKE filter SQL** — `ESCAPE '\'` was interpreted as an escaped single quote by PostgreSQL, silently breaking all query parameter filters. Changed to `ESCAPE E'\\\\'` for unambiguous backslash escape.
+- **Duplicate plugin bean** — removed manually maintained `dicomweb-plugin.properties` that duplicated the annotation-processor-generated properties file, causing `Duplicate key` startup error
+- **`siteWideEnabled` preference type** — API returns boolean string via `String.valueOf()` (by design); test expectations aligned
+
+### Compatibility
+- **Backward compatible with older XNAT versions** (1.7.7+)
+  - DirectArchiveStrategy loads conditionally via reflection — only instantiated if `DirectArchiveSessionService` is available
+  - Falls back to GradualDicomImporter-only mode on older XNAT
+  - Temp directory creation deferred to first STOW-RS request (avoids `NullPointerException` when `XDAT.getSiteConfigPreferences()` is unavailable during bean construction)
+  - dcm4che3 classes bundled in JAR to fill gaps in older XNAT's dcm4che (e.g., `BulkDataDescriptor`)
+
 ## [1.1.3] - 2025-11-12
 
 ### Added
