@@ -23,6 +23,7 @@ import org.nrg.xnat.dicomweb.service.SiteWideProjectFilter;
 import org.nrg.xnat.dicomweb.service.XnatDicomService;
 import org.nrg.xnat.dicomweb.util.BulkDataHandler;
 import org.nrg.xnat.dicomweb.util.BulkDataHandler.BulkDataItem;
+import org.nrg.xnat.dicomweb.util.DicomMultipartWriter;
 import org.nrg.xnat.dicomweb.util.DicomWebUtils;
 import org.nrg.xnat.dicomweb.util.MediaTypeNegotiator;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -39,8 +40,11 @@ import javax.servlet.http.HttpServletRequest;
 import javax.servlet.http.HttpServletResponse;
 import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
+import java.io.File;
 import java.io.IOException;
 import java.io.InputStream;
+import java.io.OutputStream;
+import java.nio.file.Files;
 import java.util.Arrays;
 import java.util.Collections;
 import java.util.List;
@@ -167,8 +171,8 @@ public class SiteWideWadoRsApi extends AbstractXapiRestController {
             value = "/dicomweb/studies/{studyUID}/series/{seriesUID}",
             method = RequestMethod.GET)
     public void retrieveSeries(
-            @PathVariable String studyUID,
-            @PathVariable String seriesUID,
+            @PathVariable final String studyUID,
+            @PathVariable final String seriesUID,
             HttpServletRequest request,
             HttpServletResponse response) throws DicomWebException, IOException {
 
@@ -179,11 +183,25 @@ public class SiteWideWadoRsApi extends AbstractXapiRestController {
             return;
         }
 
-        UserI user = getSessionUser();
+        final UserI user = getSessionUser();
 
-        List<InputStream> streams = dicomService.retrieveSeries(user, null, studyUID, seriesUID);
+        // Resolve the files on the request thread, where the request's ThreadLocal context
+        // (Spring TransactionSynchronizationManager, XDAT user/tx stash) is still bound.
+        // The streaming write loop below is pure file I/O — no XDAT calls — so it's safe
+        // even though the async dispatch thread doesn't inherit that context. Empty list
+        // = 404, and the catalog walk parses no DICOM headers.
+        final List<File> files = dicomService.resolveSeriesFiles(user, null, studyUID, seriesUID);
+        if (files.isEmpty()) {
+            throw new ResourceNotFoundException("Series", seriesUID);
+        }
 
-        buildMultipartDicomResponse(response, streams);
+        final String boundary = UUID.randomUUID().toString();
+        response.setContentType("multipart/related; type=\"" + APPLICATION_DICOM + "\"; boundary=" + boundary);
+        response.setStatus(HttpStatus.OK.value());
+        response.flushBuffer(); // commit headers immediately so the client begins reading
+
+        streamFilesAsMultipart(response.getOutputStream(), boundary, files,
+                "site-wide series " + seriesUID);
     }
 
     // ---- Study Metadata ----
@@ -230,7 +248,7 @@ public class SiteWideWadoRsApi extends AbstractXapiRestController {
             value = "/dicomweb/studies/{studyUID}",
             method = RequestMethod.GET)
     public void retrieveStudy(
-            @PathVariable String studyUID,
+            @PathVariable final String studyUID,
             HttpServletRequest request,
             HttpServletResponse response) throws DicomWebException, IOException {
 
@@ -241,11 +259,48 @@ public class SiteWideWadoRsApi extends AbstractXapiRestController {
             return;
         }
 
-        UserI user = getSessionUser();
+        final UserI user = getSessionUser();
 
-        List<InputStream> streams = dicomService.retrieveStudy(user, null, studyUID);
+        // Resolve every file in the study on the request thread; see retrieveSeries above
+        // for the ThreadLocal-context rationale.
+        final List<File> files = dicomService.resolveStudyFiles(user, null, studyUID);
+        if (files.isEmpty()) {
+            throw new ResourceNotFoundException("Study", studyUID);
+        }
 
-        buildMultipartDicomResponse(response, streams);
+        final String boundary = UUID.randomUUID().toString();
+        response.setContentType("multipart/related; type=\"" + APPLICATION_DICOM + "\"; boundary=" + boundary);
+        response.setStatus(HttpStatus.OK.value());
+        response.flushBuffer();
+
+        streamFilesAsMultipart(response.getOutputStream(), boundary, files,
+                "site-wide study " + studyUID);
+    }
+
+    /**
+     * Stream a pre-resolved list of DICOM files as multipart/related parts to the given
+     * output stream. Pure file I/O — no XDAT calls — so this is safe to run on a thread
+     * that doesn't inherit the request thread's ThreadLocal context (e.g. the servlet
+     * container's async-dispatch worker). Per-file errors are logged at WARN and the
+     * response continues with the next part; status + headers are already committed by
+     * the time this runs, so aborting mid-write would produce a truncated multipart
+     * that's worse than a missing part.
+     */
+    private void streamFilesAsMultipart(final OutputStream out,
+                                        final String boundary,
+                                        final List<File> files,
+                                        final String resourceId) throws IOException {
+        try (DicomMultipartWriter writer = new DicomMultipartWriter(out, boundary, APPLICATION_DICOM)) {
+            for (File file : files) {
+                try (InputStream in = Files.newInputStream(file.toPath())) {
+                    writer.writePart(in);
+                } catch (Exception e) {
+                    log.warn("Skipping file {} during multipart retrieval of {} ({}: {}); "
+                            + "response will be missing this part",
+                            file, resourceId, e.getClass().getSimpleName(), e.getMessage());
+                }
+            }
+        }
     }
 
     // ---- Rendered Instance ----
@@ -949,34 +1004,6 @@ public class SiteWideWadoRsApi extends AbstractXapiRestController {
         return ResponseEntity.ok()
                 .contentType(MediaType.parseMediaType(contentType))
                 .body(responseBody);
-    }
-
-    private void buildMultipartDicomResponse(HttpServletResponse response,
-                                             List<InputStream> streams) throws IOException {
-        createMultipartResponse(response, streams, APPLICATION_DICOM);
-    }
-
-    private void createMultipartResponse(HttpServletResponse response,
-                                         List<InputStream> streams,
-                                         String partContentType) throws IOException {
-        String boundary = UUID.randomUUID().toString();
-        response.setContentType("multipart/related; type=\"" + partContentType + "\"; boundary=" + boundary);
-        response.setStatus(HttpStatus.OK.value());
-
-        for (InputStream stream : streams) {
-            response.getOutputStream().write(("--" + boundary + "\r\n").getBytes());
-            response.getOutputStream().write(("Content-Type: " + partContentType + "\r\n\r\n").getBytes());
-
-            byte[] buffer = new byte[8192];
-            int bytesRead;
-            while ((bytesRead = stream.read(buffer)) != -1) {
-                response.getOutputStream().write(buffer, 0, bytesRead);
-            }
-            stream.close();
-            response.getOutputStream().write("\r\n".getBytes());
-        }
-        response.getOutputStream().write(("--" + boundary + "--\r\n").getBytes());
-        response.getOutputStream().flush();
     }
 
     private void buildMultipartBulkDataResponse(HttpServletResponse response,

@@ -23,7 +23,9 @@ import org.springframework.http.ResponseEntity;
 
 import javax.servlet.http.HttpServletRequest;
 import javax.servlet.http.HttpServletResponse;
+import java.io.File;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.List;
 import java.util.stream.Stream;
 
@@ -300,12 +302,12 @@ public class WadoRsApiTest {
         String studyUID = "1.2.3.4.5";
         String seriesUID = "1.2.3.4.5.100";
 
-        List<java.io.InputStream> mockStreams = new ArrayList<>();
-        mockStreams.add(new java.io.ByteArrayInputStream(new byte[]{1, 2, 3}));
-        mockStreams.add(new java.io.ByteArrayInputStream(new byte[]{4, 5, 6}));
-
-        when(mockDicomService.retrieveSeries(any(UserI.class), eq(projectId), eq(studyUID), eq(seriesUID)))
-            .thenReturn(mockStreams);
+        // 404 gate is the resolveSeriesFiles call on the request thread. Non-empty list
+        // means "series exists"; the streaming body iterates the files later. Returning
+        // a stub file is enough for the 200 + multipart Content-Type to be observable on
+        // the ResponseEntity (the StreamingResponseBody is not invoked in this test).
+        when(mockDicomService.resolveSeriesFiles(any(UserI.class), eq(projectId), eq(studyUID), eq(seriesUID)))
+            .thenReturn(Collections.singletonList(new File("/dev/null")));
 
         // Act
         ResponseEntity<?> response = wadoRsApi.retrieveSeries(projectId, studyUID, seriesUID);
@@ -324,8 +326,8 @@ public class WadoRsApiTest {
         String studyUID = "1.2.3.4.5";
         String seriesUID = "1.2.3.4.5.999";
 
-        when(mockDicomService.retrieveSeries(any(UserI.class), eq(projectId), eq(studyUID), eq(seriesUID)))
-            .thenReturn(new ArrayList<>());
+        when(mockDicomService.resolveSeriesFiles(any(UserI.class), eq(projectId), eq(studyUID), eq(seriesUID)))
+            .thenReturn(Collections.emptyList());
 
         // Act - should throw ResourceNotFoundException
         wadoRsApi.retrieveSeries(projectId, studyUID, seriesUID);
@@ -339,13 +341,11 @@ public class WadoRsApiTest {
         String projectId = "TestProject";
         String studyUID = "1.2.3.4.5";
 
-        List<java.io.InputStream> mockStreams = new ArrayList<>();
-        mockStreams.add(new java.io.ByteArrayInputStream(new byte[]{1, 2, 3}));
-        mockStreams.add(new java.io.ByteArrayInputStream(new byte[]{4, 5, 6}));
-        mockStreams.add(new java.io.ByteArrayInputStream(new byte[]{7, 8, 9}));
-
-        when(mockDicomService.retrieveStudy(any(UserI.class), eq(projectId), eq(studyUID)))
-            .thenReturn(mockStreams);
+        // 404 gate is resolveStudyFiles. Non-empty list means "study exists"; the
+        // streaming body iterates the files later. The StreamingResponseBody is not
+        // invoked in this test.
+        when(mockDicomService.resolveStudyFiles(any(UserI.class), eq(projectId), eq(studyUID)))
+            .thenReturn(Collections.singletonList(new File("/dev/null")));
 
         // Act
         ResponseEntity<?> response = wadoRsApi.retrieveStudy(projectId, studyUID);
@@ -363,8 +363,8 @@ public class WadoRsApiTest {
         String projectId = "TestProject";
         String studyUID = "1.2.3.4.5.999";
 
-        when(mockDicomService.retrieveStudy(any(UserI.class), eq(projectId), eq(studyUID)))
-            .thenReturn(new ArrayList<>());
+        when(mockDicomService.resolveStudyFiles(any(UserI.class), eq(projectId), eq(studyUID)))
+            .thenReturn(Collections.emptyList());
 
         // Act - should throw ResourceNotFoundException
         wadoRsApi.retrieveStudy(projectId, studyUID);
@@ -1007,11 +1007,8 @@ public class WadoRsApiTest {
 
     @Test
     public void testRetrieveStudy_AcceptMultipartDicom_Succeeds() throws Exception {
-        List<java.io.InputStream> mockStreams = new ArrayList<>();
-        mockStreams.add(new java.io.ByteArrayInputStream(new byte[]{1, 2, 3}));
-
-        when(mockDicomService.retrieveStudy(any(UserI.class), anyString(), anyString()))
-            .thenReturn(mockStreams);
+        when(mockDicomService.resolveStudyFiles(any(UserI.class), anyString(), anyString()))
+            .thenReturn(Collections.singletonList(new File("/dev/null")));
 
         HttpServletRequest mockRequest = mock(HttpServletRequest.class);
         when(mockRequest.getHeader("Accept")).thenReturn(
@@ -1027,11 +1024,8 @@ public class WadoRsApiTest {
 
     @Test
     public void testRetrieveStudy_WildcardAccept_Succeeds() throws Exception {
-        List<java.io.InputStream> mockStreams = new ArrayList<>();
-        mockStreams.add(new java.io.ByteArrayInputStream(new byte[]{1, 2, 3}));
-
-        when(mockDicomService.retrieveStudy(any(UserI.class), anyString(), anyString()))
-            .thenReturn(mockStreams);
+        when(mockDicomService.resolveStudyFiles(any(UserI.class), anyString(), anyString()))
+            .thenReturn(Collections.singletonList(new File("/dev/null")));
 
         HttpServletRequest mockRequest = mock(HttpServletRequest.class);
         when(mockRequest.getHeader("Accept")).thenReturn("*/*");
@@ -1044,11 +1038,8 @@ public class WadoRsApiTest {
 
     @Test
     public void testRetrieveSeries_NoAcceptHeader_Succeeds() throws Exception {
-        List<java.io.InputStream> mockStreams = new ArrayList<>();
-        mockStreams.add(new java.io.ByteArrayInputStream(new byte[]{1, 2, 3}));
-
-        when(mockDicomService.retrieveSeries(any(UserI.class), anyString(), anyString(), anyString()))
-            .thenReturn(mockStreams);
+        when(mockDicomService.resolveSeriesFiles(any(UserI.class), anyString(), anyString(), anyString()))
+            .thenReturn(Collections.singletonList(new File("/dev/null")));
 
         HttpServletRequest mockRequest = mock(HttpServletRequest.class);
         // No Accept header

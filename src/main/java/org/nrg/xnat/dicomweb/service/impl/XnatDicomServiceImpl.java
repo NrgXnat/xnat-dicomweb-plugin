@@ -650,8 +650,7 @@ public class XnatDicomServiceImpl implements XnatDicomService {
             }
         }
 
-        // Find all sessions with matching StudyInstanceUID (XNAT allows multiple sessions with same UID)
-        List<XnatImagesessiondata> targetSessions = findSessionsByUID(user, projectId, studyInstanceUID);
+        final List<XnatImagesessiondata> targetSessions = findSessionsByUID(user, projectId, studyInstanceUID);
 
         if (!targetSessions.isEmpty()) {
             final List<Attributes> results = targetSessions.stream()
@@ -659,34 +658,90 @@ public class XnatDicomServiceImpl implements XnatDicomService {
                     .filter(Objects::nonNull)
                     .flatMap(this::readInstanceSearchResponseFromScanFiles)
                     .filter(matchesInstanceQuery(queryAttributes))
-                    .peek(attrs -> {
-                        final String uri = makeInstanceUri(projectId, studyInstanceUID, seriesInstanceUID, attrs.getString(Tag.SOPInstanceUID));
-                        attrs.setString(Tag.RetrieveURL, VR.UR, uri);
-                        attrs.setString(Tag.InstanceAvailability, VR.CS, InstanceAvailability.ONLINE.name());
-                    }).collect(Collectors.toList());
+                    .peek(attrs -> annotateInstanceUriAndAvailability(attrs, projectId, studyInstanceUID, seriesInstanceUID))
+                    .collect(Collectors.toList());
             log.debug("Instance search for series {} returned {} instances", seriesInstanceUID, results.size());
             return results;
         }
 
-        // Fallback: check pending DirectToArchive files
-        File pendingDir = findPendingArchiveDir(projectId, studyInstanceUID);
+        final File pendingDir = findPendingArchiveDir(projectId, studyInstanceUID);
         if (pendingDir != null) {
-            List<File> pendingFiles = listFilesInPendingArchive(pendingDir, seriesInstanceUID);
+            final List<File> pendingFiles = listFilesInPendingArchive(pendingDir, seriesInstanceUID);
             if (!pendingFiles.isEmpty()) {
                 final List<Attributes> results = pendingFiles.stream()
                         .flatMap(InstanceResource::fromFile)
                         .filter(matchesInstanceQuery(queryAttributes))
-                        .peek(attrs -> {
-                            final String uri = makeInstanceUri(projectId, studyInstanceUID, seriesInstanceUID, attrs.getString(Tag.SOPInstanceUID));
-                            attrs.setString(Tag.RetrieveURL, VR.UR, uri);
-                            attrs.setString(Tag.InstanceAvailability, VR.CS, InstanceAvailability.ONLINE.name());
-                        }).collect(Collectors.toList());
-                log.debug("Instance search for series {} found {} pending instances", seriesInstanceUID, results.size());
+                        .peek(attrs -> annotateInstanceUriAndAvailability(attrs, projectId, studyInstanceUID, seriesInstanceUID))
+                        .collect(Collectors.toList());
+                log.debug("Instance search for pending series {} returned {} instances", seriesInstanceUID, results.size());
                 return results;
             }
         }
 
         log.warn("Study not found: {}", studyInstanceUID);
+        return Collections.emptyList();
+    }
+
+    private void annotateInstanceUriAndAvailability(final Attributes attrs, final String projectId,
+                                                    final String studyInstanceUID, final String seriesInstanceUID) {
+        final String uri = makeInstanceUri(projectId, studyInstanceUID, seriesInstanceUID, attrs.getString(Tag.SOPInstanceUID));
+        attrs.setString(Tag.RetrieveURL, VR.UR, uri);
+        attrs.setString(Tag.InstanceAvailability, VR.CS, InstanceAvailability.ONLINE.name());
+    }
+
+    @Override
+    public List<File> resolveSeriesFiles(UserI user, String projectId, String studyInstanceUID, String seriesInstanceUID) {
+        if (projectId != null) {
+            XnatProjectdata project = XnatProjectdata.getXnatProjectdatasById(projectId, user, false);
+            if (project == null) {
+                log.warn("Project not found or user does not have access: {}", projectId);
+                return Collections.emptyList();
+            }
+        }
+
+        final List<XnatImagesessiondata> targetSessions = findSessionsByUID(user, projectId, studyInstanceUID);
+        if (!targetSessions.isEmpty()) {
+            return targetSessions.stream()
+                    .map(session -> findScanBySeriesUIDDirect(session.getScans_scan(), seriesInstanceUID))
+                    .filter(Objects::nonNull)
+                    .flatMap(scan -> dicomResourceStream(scan)
+                            .flatMap(resource -> resolveDicomFiles(resource, scan, null)))
+                    .collect(Collectors.toList());
+        }
+
+        final File pendingDir = findPendingArchiveDir(projectId, studyInstanceUID);
+        if (pendingDir != null) {
+            return listFilesInPendingArchive(pendingDir, seriesInstanceUID);
+        }
+
+        return Collections.emptyList();
+    }
+
+    @Override
+    public List<File> resolveStudyFiles(UserI user, String projectId, String studyInstanceUID) {
+        if (projectId != null) {
+            XnatProjectdata project = XnatProjectdata.getXnatProjectdatasById(projectId, user, false);
+            if (project == null) {
+                log.warn("Project not found or user does not have access: {}", projectId);
+                return Collections.emptyList();
+            }
+        }
+
+        final List<XnatImagesessiondata> targetSessions = findSessionsByUID(user, projectId, studyInstanceUID);
+        if (!targetSessions.isEmpty()) {
+            return targetSessions.stream()
+                    .map(XnatImagesessiondata::getScans_scan)
+                    .flatMap(List::stream)
+                    .flatMap(scan -> dicomResourceStream(scan)
+                            .flatMap(resource -> resolveDicomFiles(resource, scan, null)))
+                    .collect(Collectors.toList());
+        }
+
+        final File pendingDir = findPendingArchiveDir(projectId, studyInstanceUID);
+        if (pendingDir != null) {
+            return listFilesInPendingArchive(pendingDir, null);
+        }
+
         return Collections.emptyList();
     }
 
@@ -1607,9 +1662,12 @@ public class XnatDicomServiceImpl implements XnatDicomService {
     }
 
     private Integer getFileCount(XnatImagescandataI scan) {
-        return scan.getFile().stream()
+        // Use the same permissive predicate as dicomResourceStream so QIDO searchSeries
+        // populates NumberOfSeriesRelatedInstances consistently with what the multipart
+        // retrieve path will actually return. A strict "DICOM".equals(label) check here
+        // would leave the count unset for labels like DICOM_RAW / DICOM-orig / *secondary*.
+        return dicomResourceStream(scan)
                 .filter(XnatResourcecatalog.class::isInstance)
-                .filter(resource -> "DICOM".equals(resource.getLabel()))
                 .map(XnatAbstractresourceI::getFileCount)
                 .findAny()
                 .orElse(-1);
@@ -2500,7 +2558,7 @@ public class XnatDicomServiceImpl implements XnatDicomService {
             return attrs -> true;
         }
         return attrs -> IntStream.of(tags)
-                .allMatch(tag -> matchesDicomValue(query.getString(tag), attrs.getString(tag)));
+                .allMatch(tag -> matchesDicomValue(attrs.getString(tag), query.getString(tag)));
     }
 
     /**
