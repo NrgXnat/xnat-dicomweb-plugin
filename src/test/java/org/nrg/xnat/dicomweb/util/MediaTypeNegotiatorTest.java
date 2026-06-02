@@ -1,7 +1,6 @@
 package org.nrg.xnat.dicomweb.util;
 
 import org.junit.Test;
-import org.nrg.xnat.dicomweb.exceptions.BadRequestException;
 import org.nrg.xnat.dicomweb.exceptions.NotAcceptableException;
 
 import java.util.Arrays;
@@ -188,17 +187,9 @@ public class MediaTypeNegotiatorTest {
         assertEquals("application/dicom+xml", result);
     }
 
-    @Test(expected = BadRequestException.class)
-    public void negotiate_AcceptParamRejectsWildcard() {
-        List<String> supported = Arrays.asList("application/dicom+json", "application/dicom+xml");
-        MediaTypeNegotiator.negotiate(null, "*/*", supported, "application/dicom+json");
-    }
-
-    @Test(expected = BadRequestException.class)
-    public void negotiate_AcceptParamRejectsSubtypeWildcard() {
-        List<String> supported = Arrays.asList("image/jpeg", "image/png");
-        MediaTypeNegotiator.negotiate(null, "image/*", supported, "image/jpeg");
-    }
+    // Wildcards in the accept query parameter are rejected by
+    // AcceptParamWildcardInterceptor before reaching this method;
+    // see AcceptParamWildcardInterceptorTest.
 
     @Test
     public void negotiate_MultipleAcceptedTypes_SelectsBestSupported() {

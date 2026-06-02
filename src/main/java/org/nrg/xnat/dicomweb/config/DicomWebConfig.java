@@ -2,10 +2,14 @@ package org.nrg.xnat.dicomweb.config;
 
 import lombok.extern.slf4j.Slf4j;
 import org.nrg.xnat.dicomweb.service.impl.strategy.DicomImportStrategy;
+import org.nrg.xnat.dicomweb.util.AcceptParamWildcardInterceptor;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.ComponentScan;
 import org.springframework.context.annotation.Configuration;
+import org.springframework.web.servlet.config.annotation.ContentNegotiationConfigurer;
+import org.springframework.web.servlet.config.annotation.InterceptorRegistry;
+import org.springframework.web.servlet.config.annotation.WebMvcConfigurer;
 
 /**
  * DICOMweb Plugin Configuration
@@ -31,6 +35,31 @@ public class DicomWebConfig {
     @Autowired
     public DicomWebConfig(DicomWebPreferenceBean preferenceBean) {
         log.info("DicomWebConfig initialized with preference bean: {}", preferenceBean.getClass().getSimpleName());
+    }
+
+    /**
+     * Honor the {@code accept} query parameter as an alternative source of
+     * negotiated media types, per DICOM PS3.18 Section 8.3.3.1. This makes
+     * Spring's {@code produces} matching consult either the {@code Accept}
+     * header or the {@code accept} query parameter, so a client that cannot
+     * set HTTP headers can still reach DICOMweb endpoints by URL alone.
+     * Without this configuration Spring would route purely on the Accept
+     * header and return 406 for query-parameter-only requests.
+     */
+    @Bean
+    public WebMvcConfigurer dicomwebContentNegotiation() {
+        return new WebMvcConfigurer() {
+            @Override
+            public void configureContentNegotiation(ContentNegotiationConfigurer configurer) {
+                configurer.favorParameter(true).parameterName("accept");
+            }
+
+            @Override
+            public void addInterceptors(InterceptorRegistry registry) {
+                registry.addInterceptor(new AcceptParamWildcardInterceptor())
+                        .addPathPatterns("/xapi/dicomweb/**");
+            }
+        };
     }
 
     /**

@@ -78,6 +78,19 @@ public interface XnatDicomService {
     List<File> resolveStudyFiles(UserI user, String projectId, String studyInstanceUID);
 
     /**
+     * Resolve the on-disk DICOM file for the named instance, observing the
+     * request-thread / catalog-only contract of {@link #resolveSeriesFiles}.
+     * @param user              calling user
+     * @param projectId         project to search (may be {@code null} for site-wide)
+     * @param studyInstanceUid  Study Instance UID to resolve
+     * @param seriesInstanceUid Series Instance UID to resolve
+     * @param sopInstanceUid    SOP Instance UID to resolve
+     * @return named DICOM instance
+     * @throws ResourceNotFoundException if no such instance is found
+     */
+    File resolveInstanceFile(UserI user, String projectId, String studyInstanceUid, String seriesInstanceUid, String sopInstanceUid);
+
+    /**
      * Search of instances within a series, returning the metadata view (Bulk Data via URI)
      * @param user calling user
      * @param projectId project to search
@@ -99,8 +112,8 @@ public interface XnatDicomService {
      * @param seriesInstanceUID Series Instance UID of containing series
      * @param sopInstanceUID SOP Instance UID of instance to be retrieved
      * @return byte stream of DICOM instance in Part 10 format, or null in case of failure
-     */
     InputStream retrieveInstance(UserI user, String projectId, String studyInstanceUID, String seriesInstanceUID, String sopInstanceUID) throws IOException;
+    */
 
     /**
      * Retrieve metadata for an instance
