@@ -35,71 +35,39 @@ public class DicomWebUtils {
     }
 
     /**
-     * Convert DICOM Attributes to JSON string with BulkDataURI substitution.
+     * Replace PixelData / FloatPixelData on the given Attributes with BulkDataURI
+     * references per DICOM PS3.18 Section 6.5.6.
      *
-     * Large attributes (PixelData, etc.) will be replaced with BulkDataURI references
-     * per DICOM PS3.18 Section 6.5.6.
+     * <p><b>Mutates {@code attrs} in place.</b> The original pixel data values are
+     * overwritten with {@link BulkData} stubs pointing at the canonical BulkDataURI.
+     * Callers that need to preserve the original values must clone first
+     * (e.g. {@code new Attributes(attrs)}).
      *
-     * @param attrs DICOM attributes
-     * @param baseUri Base URI for BulkDataURI generation (e.g., "http://localhost:8080/xapi/dicomweb/projects/TestProject")
+     * @param attrs DICOM attributes to mutate
+     * @param baseUri Base URI for BulkDataURI generation
      * @param studyUID Study Instance UID
      * @param seriesUID Series Instance UID
      * @param instanceUID SOP Instance UID
-     * @return JSON string with BulkDataURI references
-     * @throws IOException if conversion fails
      */
-    public static String toJsonWithBulkDataURI(Attributes attrs, String baseUri,
-                                                String studyUID, String seriesUID, String instanceUID) throws IOException {
-        // First convert to normal JSON
-        String normalJson = toJson(attrs);
-
-        // Post-process JSON to replace BulkData with BulkDataURI
-        // This is a simple approach: manually construct BulkDataURI for known bulk data tags
-        return replaceBulkDataWithURI(normalJson, attrs, baseUri, studyUID, seriesUID, instanceUID);
-    }
-
-    /**
-     * Replace bulk data representations in JSON with BulkDataURI references.
-     * This processes the JSON string and replaces large binary data attributes.
-     */
-    private static String replaceBulkDataWithURI(String json, Attributes attrs, String baseUri,
-                                                  String studyUID, String seriesUID, String instanceUID) {
-        String result = json;
-
-        // Check for PixelData and other bulk data tags
+    public static void replaceBulkDataWithURI(Attributes attrs, String baseUri,
+                                              String studyUID, String seriesUID, String instanceUID) {
         if (attrs.contains(Tag.PixelData)) {
             VR vr = attrs.getVR(Tag.PixelData);
             Object value = attrs.getValue(Tag.PixelData);
-
             if (vr != null && BulkDataHandler.shouldUseBulkDataURI(Tag.PixelData, vr, value)) {
                 String bulkDataURI = BulkDataHandler.generateBulkDataURI(baseUri, studyUID, seriesUID, instanceUID, Tag.PixelData);
-
-                // Replace PixelData entry with BulkDataURI
-                // Pattern: "7FE00010":{...} -> "7FE00010":{"vr":"OW","BulkDataURI":"..."}
-                result = result.replaceAll(
-                    "\"7FE00010\"\\s*:\\s*\\{[^}]*\\}",
-                    String.format("\"7FE00010\":{\"vr\":\"%s\",\"BulkDataURI\":\"%s\"}", vr.toString(), bulkDataURI)
-                );
+                attrs.setValue(Tag.PixelData, vr, new BulkData(null, bulkDataURI, false));
             }
         }
 
-        // Add more bulk data tags as needed
-        // FloatPixelData
         if (attrs.contains(Tag.FloatPixelData)) {
             VR vr = attrs.getVR(Tag.FloatPixelData);
             Object value = attrs.getValue(Tag.FloatPixelData);
-
             if (vr != null && BulkDataHandler.shouldUseBulkDataURI(Tag.FloatPixelData, vr, value)) {
                 String bulkDataURI = BulkDataHandler.generateBulkDataURI(baseUri, studyUID, seriesUID, instanceUID, Tag.FloatPixelData);
-
-                result = result.replaceAll(
-                    "\"7FE00008\"\\s*:\\s*\\{[^}]*\\}",
-                    String.format("\"7FE00008\":{\"vr\":\"%s\",\"BulkDataURI\":\"%s\"}", vr.toString(), bulkDataURI)
-                );
+                attrs.setValue(Tag.FloatPixelData, vr, new BulkData(null, bulkDataURI, false));
             }
         }
-
-        return result;
     }
 
     /**
@@ -170,51 +138,6 @@ public class DicomWebUtils {
         writer.write(attrs);
 
         return sw.toString();
-    }
-
-    /**
-     * Convert DICOM Attributes to XML string with BulkDataURI substitution.
-     *
-     * Large attributes (PixelData, etc.) will be replaced with BulkDataURI references
-     * per DICOM PS3.18 Section 6.5.6.
-     *
-     * @param attrs DICOM attributes
-     * @param baseUri Base URI for BulkDataURI generation
-     * @param studyUID Study Instance UID
-     * @param seriesUID Series Instance UID
-     * @param instanceUID SOP Instance UID
-     * @return XML string with BulkDataURI references
-     * @throws Exception if conversion fails
-     */
-    public static String toXmlWithBulkDataURI(Attributes attrs, String baseUri,
-                                               String studyUID, String seriesUID, String instanceUID) throws Exception {
-        // For XML, we need to clone the attributes and replace bulk data with BulkDataURI
-        Attributes modified = new Attributes(attrs);
-
-        // Replace PixelData with BulkDataURI
-        if (modified.contains(Tag.PixelData)) {
-            VR vr = modified.getVR(Tag.PixelData);
-            Object value = modified.getValue(Tag.PixelData);
-
-            if (vr != null && BulkDataHandler.shouldUseBulkDataURI(Tag.PixelData, vr, value)) {
-                String bulkDataURI = BulkDataHandler.generateBulkDataURI(baseUri, studyUID, seriesUID, instanceUID, Tag.PixelData);
-                // Replace with BulkData object containing URI
-                modified.setValue(Tag.PixelData, vr, new BulkData(null, bulkDataURI, false));
-            }
-        }
-
-        // Replace FloatPixelData with BulkDataURI
-        if (modified.contains(Tag.FloatPixelData)) {
-            VR vr = modified.getVR(Tag.FloatPixelData);
-            Object value = modified.getValue(Tag.FloatPixelData);
-
-            if (vr != null && BulkDataHandler.shouldUseBulkDataURI(Tag.FloatPixelData, vr, value)) {
-                String bulkDataURI = BulkDataHandler.generateBulkDataURI(baseUri, studyUID, seriesUID, instanceUID, Tag.FloatPixelData);
-                modified.setValue(Tag.FloatPixelData, vr, new BulkData(null, bulkDataURI, false));
-            }
-        }
-
-        return toXml(modified);
     }
 
     /**

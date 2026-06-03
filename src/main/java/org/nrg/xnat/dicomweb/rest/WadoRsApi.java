@@ -1168,9 +1168,9 @@ public class WadoRsApi extends AbstractXapiRestController {
             final StringBuilder xmlBuilder = new StringBuilder();
             instances.forEach(attrs -> {
                 try {
-                    final String instance = DicomWebUtils.toXmlWithBulkDataURI(attrs, baseUri,
+                    DicomWebUtils.replaceBulkDataWithURI(attrs, baseUri,
                             studyUID, attrs.getString(Tag.SeriesInstanceUID), attrs.getString(Tag.SOPInstanceUID));
-                    xmlBuilder.append(instance);
+                    xmlBuilder.append(DicomWebUtils.toXml(attrs));
                 } catch (Exception e) {
                     log.error("Error converting instance metadata to XML", e);
                 }
@@ -1181,8 +1181,9 @@ public class WadoRsApi extends AbstractXapiRestController {
             responseBody = instances
                     .map(attrs -> {
                         try {
-                            return DicomWebUtils.toJsonWithBulkDataURI(attrs, baseUri, studyUID,
+                            DicomWebUtils.replaceBulkDataWithURI(attrs, baseUri, studyUID,
                                     attrs.getString(Tag.SeriesInstanceUID), attrs.getString(Tag.SOPInstanceUID));
+                            return DicomWebUtils.toJson(attrs);
                         } catch (Exception e) {
                             log.error("Error converting instance metadata to JSON", e);
                             return "{}";
