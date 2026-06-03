@@ -8,8 +8,8 @@ import org.dcm4che3.io.DicomInputStream;
 import org.dcm4che3.io.SAXWriter;
 import org.dcm4che3.json.JSONWriter;
 
-import jakarta.json.Json;
-import jakarta.json.stream.JsonGenerator;
+import javax.json.Json;
+import javax.json.stream.JsonGenerator;
 import javax.xml.transform.sax.SAXTransformerFactory;
 import javax.xml.transform.sax.TransformerHandler;
 import javax.xml.transform.stream.StreamResult;
