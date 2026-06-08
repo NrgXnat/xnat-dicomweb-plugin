@@ -88,6 +88,23 @@ public class SiteWideWadoRsApi extends AbstractXapiRestController {
         return null;
     }
 
+    /**
+     * Throw-style site-wide check, for handlers that return
+     * {@code ResponseEntity<StreamingResponseBody>}. Returning a
+     * {@code ResponseEntity<String>} from those would break Spring's
+     * generic-parameter inspection in {@code ResponseBodyEmitterReturnValueHandler},
+     * which uses the declared generic to decide whether to invoke the
+     * streaming handler.
+     */
+    private void requireSiteWideEnabled() {
+        if (!siteWideProjectFilter.isSiteWideEnabled()) {
+            throw new DicomWebException(
+                    "Site-wide DICOMweb querying is not enabled",
+                    HttpStatus.NOT_FOUND.value(),
+                    "SiteWideNotEnabled");
+        }
+    }
+
     // ---- Retrieve Instance ----
 
     @ApiOperation(value = "Retrieve a DICOM instance (site-wide)")
@@ -99,15 +116,14 @@ public class SiteWideWadoRsApi extends AbstractXapiRestController {
             value = "/dicomweb/studies/{studyUID}/series/{seriesUID}/instances/{instanceUID}",
             method = RequestMethod.GET,
             produces = {APPLICATION_DICOM, MULTIPART_RELATED})
-    public ResponseEntity<?> retrieveInstance(
+    public ResponseEntity<StreamingResponseBody> retrieveInstance(
             @PathVariable String studyUID,
             @PathVariable String seriesUID,
             @PathVariable String instanceUID,
             @RequestParam(value = "accept", required = false) String acceptParam,
             @RequestHeader(value = HttpHeaders.ACCEPT, required = false) String acceptHeader) throws DicomWebException, IOException {
 
-        ResponseEntity<?> check = checkSiteWideEnabled();
-        if (check != null) return check;
+        requireSiteWideEnabled();
 
         final String mediaType = MediaTypeNegotiator.negotiate(acceptHeader, acceptParam, DICOM_TYPES, INSTANCE_DEFAULT);
         final File file = dicomService.resolveInstanceFile(getSessionUser(), null, studyUID, seriesUID, instanceUID);
