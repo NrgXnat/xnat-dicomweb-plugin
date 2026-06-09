@@ -22,6 +22,7 @@ import org.nrg.xnat.dicomweb.service.RenderingParams;
 import org.nrg.xnat.dicomweb.service.XnatDicomService;
 import org.nrg.xnat.dicomweb.util.BulkDataHandler;
 import org.nrg.xnat.dicomweb.util.BulkDataHandler.BulkDataItem;
+import org.nrg.xnat.dicomweb.util.DicomMultipartWriter;
 import org.nrg.xnat.dicomweb.util.DicomWebUtils;
 import org.nrg.xnat.dicomweb.util.MediaTypeNegotiator;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -33,14 +34,17 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.RequestMethod;
 import org.springframework.web.bind.annotation.RequestParam;
+import org.springframework.web.servlet.mvc.method.annotation.StreamingResponseBody;
 
 import javax.servlet.http.HttpServletRequest;
 import javax.servlet.http.HttpServletResponse;
 import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
-
+import java.io.File;
 import java.io.IOException;
 import java.io.InputStream;
+import java.io.OutputStream;
+import java.nio.file.Files;
 import java.util.Arrays;
 import java.util.Collections;
 import java.util.List;
@@ -195,26 +199,36 @@ public class WadoRsApi extends AbstractXapiRestController {
             @ApiResponse(code = 406, message = "Requested media type not supported"),
             @ApiResponse(code = 500, message = "Internal error")
     })
-    public ResponseEntity<InputStreamResource> retrieveSeries(
-            @PathVariable String projectId,
-            @PathVariable String studyUID,
-            @PathVariable String seriesUID,
+    public ResponseEntity<StreamingResponseBody> retrieveSeries(
+            @PathVariable final String projectId,
+            @PathVariable final String studyUID,
+            @PathVariable final String seriesUID,
             @RequestParam(value = "accept", required = false) String acceptParam,
             HttpServletRequest request) throws Exception {
         negotiateMultipartDicom(request, acceptParam);
 
-        UserI user = getSessionUser();
-        List<InputStream> streams = dicomService.retrieveSeries(user, projectId, studyUID, seriesUID);
+        final UserI user = getSessionUser();
 
-        if (streams == null || streams.isEmpty()) {
+        // Resolve the files on the request thread, where the request's ThreadLocal context
+        // (Spring TransactionSynchronizationManager, XDAT user/tx stash) is still bound.
+        // The StreamingResponseBody below runs on an async dispatch thread that does NOT
+        // inherit that context, so we keep it pure file I/O — no XDAT calls. The empty
+        // list is the 404 signal. Catalog-only walk: no DICOM headers are parsed.
+        final List<File> files = dicomService.resolveSeriesFiles(user, projectId, studyUID, seriesUID);
+        if (files.isEmpty()) {
             throw new ResourceNotFoundException("Series", seriesUID);
         }
 
-        return buildMultipartDicomResponse(streams);
+        final String boundary = UUID.randomUUID().toString();
+        final MediaType contentType = MediaType.parseMediaType(DicomWebUtils.getMultipartContentType(boundary));
+
+        final StreamingResponseBody body = out -> streamFilesAsMultipart(out, boundary, files, seriesUID);
+
+        return ResponseEntity.ok().contentType(contentType).body(body);
     }
 
     // backward-compatible overload used by tests
-    public ResponseEntity<InputStreamResource> retrieveSeries(
+    public ResponseEntity<StreamingResponseBody> retrieveSeries(
             String projectId, String studyUID, String seriesUID) throws Exception {
         return retrieveSeries(projectId, studyUID, seriesUID, null, null);
     }
@@ -280,29 +294,34 @@ public class WadoRsApi extends AbstractXapiRestController {
             @ApiResponse(code = 406, message = "Requested media type not supported"),
             @ApiResponse(code = 500, message = "Internal error")
     })
-    public ResponseEntity<InputStreamResource> retrieveStudy(
-            @PathVariable String projectId,
-            @PathVariable String studyUID,
+    public ResponseEntity<StreamingResponseBody> retrieveStudy(
+            @PathVariable final String projectId,
+            @PathVariable final String studyUID,
             @RequestParam(value = "accept", required = false) String acceptParam,
             HttpServletRequest request) throws Exception {
         negotiateMultipartDicom(request, acceptParam);
 
-        UserI user = getSessionUser();
+        final UserI user = getSessionUser();
         log.debug("Retrieving study instances for project={}, study={}", projectId, studyUID);
 
-        List<InputStream> streams = dicomService.retrieveStudy(user, projectId, studyUID);
-
-        if (streams == null || streams.isEmpty()) {
-            log.warn("No streams found for study {}", studyUID);
+        // Resolve every file in the study on the request thread; see the comment on
+        // retrieveSeries for why this is done before returning the StreamingResponseBody.
+        final List<File> files = dicomService.resolveStudyFiles(user, projectId, studyUID);
+        if (files.isEmpty()) {
+            log.warn("No files found for study {}", studyUID);
             throw new ResourceNotFoundException("Study", studyUID);
         }
 
-        log.debug("Returning multipart response with {} instances", streams.size());
-        return buildMultipartDicomResponse(streams);
+        final String boundary = UUID.randomUUID().toString();
+        final MediaType contentType = MediaType.parseMediaType(DicomWebUtils.getMultipartContentType(boundary));
+
+        final StreamingResponseBody body = out -> streamFilesAsMultipart(out, boundary, files, studyUID);
+
+        return ResponseEntity.ok().contentType(contentType).body(body);
     }
 
     // backward-compatible overload used by tests
-    public ResponseEntity<InputStreamResource> retrieveStudy(
+    public ResponseEntity<StreamingResponseBody> retrieveStudy(
             String projectId, String studyUID) throws Exception {
         return retrieveStudy(projectId, studyUID, null, null);
     }
@@ -1149,9 +1168,9 @@ public class WadoRsApi extends AbstractXapiRestController {
             final StringBuilder xmlBuilder = new StringBuilder();
             instances.forEach(attrs -> {
                 try {
-                    final String instance = DicomWebUtils.toXmlWithBulkDataURI(attrs, baseUri,
+                    DicomWebUtils.replaceBulkDataWithURI(attrs, baseUri,
                             studyUID, attrs.getString(Tag.SeriesInstanceUID), attrs.getString(Tag.SOPInstanceUID));
-                    xmlBuilder.append(instance);
+                    xmlBuilder.append(DicomWebUtils.toXml(attrs));
                 } catch (Exception e) {
                     log.error("Error converting instance metadata to XML", e);
                 }
@@ -1162,8 +1181,9 @@ public class WadoRsApi extends AbstractXapiRestController {
             responseBody = instances
                     .map(attrs -> {
                         try {
-                            return DicomWebUtils.toJsonWithBulkDataURI(attrs, baseUri, studyUID,
+                            DicomWebUtils.replaceBulkDataWithURI(attrs, baseUri, studyUID,
                                     attrs.getString(Tag.SeriesInstanceUID), attrs.getString(Tag.SOPInstanceUID));
+                            return DicomWebUtils.toJson(attrs);
                         } catch (Exception e) {
                             log.error("Error converting instance metadata to JSON", e);
                             return "{}";
@@ -1179,43 +1199,31 @@ public class WadoRsApi extends AbstractXapiRestController {
     }
 
     /**
-     * Build a multipart/related response containing DICOM instances.
+     * Stream a pre-resolved list of DICOM files as a multipart/related body. Pure file I/O
+     * — no XDAT calls — so this is safe to run on the {@code StreamingResponseBody} async
+     * dispatch thread, which does not inherit the request thread's ThreadLocal context.
+     *
+     * <p>Per-part flushes keep the read timer fresh on the client and on any intervening
+     * load balancer. Per-file errors are logged at WARN and the response continues with
+     * the next part; status + headers are already committed by the time this runs, so
+     * aborting mid-write would produce a truncated multipart that's worse than a missing
+     * part.
      */
-    private ResponseEntity<InputStreamResource> buildMultipartDicomResponse(
-            List<InputStream> streams) throws Exception {
-        String boundary = UUID.randomUUID().toString();
-        ByteArrayOutputStream multipart = createMultipartResponse(streams, boundary);
-
-        HttpHeaders headers = new HttpHeaders();
-        headers.setContentType(MediaType.parseMediaType(
-                DicomWebUtils.getMultipartContentType(boundary)));
-
-        return ResponseEntity.ok()
-                .headers(headers)
-                .body(new InputStreamResource(new ByteArrayInputStream(multipart.toByteArray())));
-    }
-
-    private ByteArrayOutputStream createMultipartResponse(List<InputStream> streams,
-                                                           String boundary) throws Exception {
-        ByteArrayOutputStream output = new ByteArrayOutputStream();
-
-        for (InputStream stream : streams) {
-            output.write(("--" + boundary + "\r\n").getBytes());
-            output.write("Content-Type: application/dicom\r\n".getBytes());
-            output.write("\r\n".getBytes());
-
-            byte[] buffer = new byte[8192];
-            int bytesRead;
-            while ((bytesRead = stream.read(buffer)) != -1) {
-                output.write(buffer, 0, bytesRead);
+    private void streamFilesAsMultipart(final OutputStream out,
+                                        final String boundary,
+                                        final List<File> files,
+                                        final String resourceId) throws IOException {
+        try (DicomMultipartWriter writer = new DicomMultipartWriter(out, boundary, APPLICATION_DICOM)) {
+            for (File file : files) {
+                try (InputStream in = Files.newInputStream(file.toPath())) {
+                    writer.writePart(in);
+                } catch (Exception e) {
+                    log.warn("Skipping file {} during multipart retrieval of {} ({}: {}); "
+                            + "response will be missing this part",
+                            file, resourceId, e.getClass().getSimpleName(), e.getMessage());
+                }
             }
-
-            output.write("\r\n".getBytes());
-            stream.close();
         }
-
-        output.write(("--" + boundary + "--\r\n").getBytes());
-        return output;
     }
 
     /**

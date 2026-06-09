@@ -5,6 +5,7 @@ import org.nrg.xft.security.UserI;
 
 import org.nrg.xnat.dicomweb.util.BulkDataHandler;
 
+import java.io.File;
 import java.io.IOException;
 import java.io.InputStream;
 import java.util.List;
@@ -43,6 +44,38 @@ public interface XnatDicomService {
      * @return instance resource search results as specified in PS 3.18 Table 10.6.3-5
      */
     List<Attributes> searchInstances(UserI user, String projectId, String studyInstanceUID, String seriesInstanceUID, Attributes queryAttributes);
+
+    /**
+     * Resolve the on-disk DICOM files for a series by walking the XNAT data model and the
+     * scan's file catalog — no DICOM headers are parsed. Intended to be called on the
+     * request thread so the returned list can be iterated by a downstream
+     * {@code StreamingResponseBody} without touching XDAT helpers from the async dispatch
+     * thread (which does not inherit the request thread's ThreadLocal context — Spring
+     * {@code TransactionSynchronizationManager}, XDAT user/tx stash, etc.).
+     *
+     * <p>An empty list means "no series" and is the 404 signal for WADO-RS multipart
+     * retrieve endpoints. A non-empty list contains every catalog-referenced DICOM file
+     * for the series (across all sessions that share the studyInstanceUID, plus any
+     * matching DirectToArchive pending files).
+     *
+     * @param user              calling user
+     * @param projectId         project to search (may be {@code null} for site-wide)
+     * @param studyInstanceUID  Study Instance UID of containing study
+     * @param seriesInstanceUID Series Instance UID to resolve
+     * @return list of DICOM files for the series, empty if the series does not exist
+     */
+    List<File> resolveSeriesFiles(UserI user, String projectId, String studyInstanceUID, String seriesInstanceUID);
+
+    /**
+     * Resolve the on-disk DICOM files for every series in a study, in series order. Same
+     * request-thread / catalog-only contract as {@link #resolveSeriesFiles}.
+     *
+     * @param user             calling user
+     * @param projectId        project to search (may be {@code null} for site-wide)
+     * @param studyInstanceUID Study Instance UID to resolve
+     * @return list of DICOM files for the study, empty if the study does not exist
+     */
+    List<File> resolveStudyFiles(UserI user, String projectId, String studyInstanceUID);
 
     /**
      * Search of instances within a series, returning the metadata view (Bulk Data via URI)
