@@ -2,10 +2,22 @@ package org.nrg.xnat.dicomweb.config;
 
 import lombok.extern.slf4j.Slf4j;
 import org.nrg.xnat.dicomweb.service.impl.strategy.DicomImportStrategy;
+import org.nrg.xnat.dicomweb.util.AcceptParamWildcardInterceptor;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.ComponentScan;
 import org.springframework.context.annotation.Configuration;
+import org.springframework.http.InvalidMediaTypeException;
+import org.springframework.http.MediaType;
+import org.springframework.web.accept.HeaderContentNegotiationStrategy;
+import org.springframework.web.accept.ParameterContentNegotiationStrategy;
+import org.springframework.web.context.request.NativeWebRequest;
+import org.springframework.web.servlet.config.annotation.ContentNegotiationConfigurer;
+import org.springframework.web.servlet.config.annotation.InterceptorRegistry;
+import org.springframework.web.servlet.config.annotation.WebMvcConfigurer;
+
+import java.util.Arrays;
+import java.util.Collections;
 
 /**
  * DICOMweb Plugin Configuration
@@ -31,6 +43,52 @@ public class DicomWebConfig {
     @Autowired
     public DicomWebConfig(DicomWebPreferenceBean preferenceBean) {
         log.info("DicomWebConfig initialized with preference bean: {}", preferenceBean.getClass().getSimpleName());
+    }
+
+    /**
+     * Honor the {@code accept} query parameter as an alternative source of
+     * negotiated media types, per DICOM PS3.18 Section 8.3.3.1. This makes
+     * Spring's {@code produces} matching consult either the {@code Accept}
+     * header or the {@code accept} query parameter, so a client that cannot
+     * set HTTP headers can still reach DICOMweb endpoints by URL alone.
+     * Without this configuration Spring would route purely on the Accept
+     * header and return 406 for query-parameter-only requests.
+     *
+     * <p>The stock {@link ParameterContentNegotiationStrategy} only resolves
+     * the parameter value against a registered key→type map (e.g.
+     * {@code ?accept=json} → {@code application/json}) and silently falls
+     * back to {@code *}/{@code *} for unknown keys. DICOMweb sends full
+     * media types in the parameter ({@code ?accept=multipart/related}),
+     * so we override {@code handleNoMatch} to parse the value directly.
+     */
+    @Bean
+    public WebMvcConfigurer dicomwebContentNegotiation() {
+        return new WebMvcConfigurer() {
+            @Override
+            public void configureContentNegotiation(ContentNegotiationConfigurer configurer) {
+                final ParameterContentNegotiationStrategy paramStrategy =
+                        new ParameterContentNegotiationStrategy(Collections.emptyMap()) {
+                            @Override
+                            protected MediaType handleNoMatch(NativeWebRequest request, String key) {
+                                try {
+                                    return MediaType.parseMediaType(key);
+                                } catch (InvalidMediaTypeException e) {
+                                    return null;
+                                }
+                            }
+                        };
+                paramStrategy.setParameterName("accept");
+                configurer.strategies(Arrays.asList(
+                        paramStrategy,
+                        new HeaderContentNegotiationStrategy()));
+            }
+
+            @Override
+            public void addInterceptors(InterceptorRegistry registry) {
+                registry.addInterceptor(new AcceptParamWildcardInterceptor())
+                        .addPathPatterns("/xapi/dicomweb/**");
+            }
+        };
     }
 
     /**
