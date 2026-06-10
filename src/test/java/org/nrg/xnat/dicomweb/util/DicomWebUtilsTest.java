@@ -7,9 +7,9 @@ import org.dcm4che3.data.Tag;
 import org.dcm4che3.data.VR;
 import org.junit.Test;
 
-import jakarta.json.Json;
-import jakarta.json.JsonObject;
-import jakarta.json.JsonReader;
+import javax.json.Json;
+import javax.json.JsonObject;
+import javax.json.JsonReader;
 import java.io.StringReader;
 
 import static org.junit.Assert.*;
