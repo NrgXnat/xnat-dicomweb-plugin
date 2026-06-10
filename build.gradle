@@ -76,6 +76,13 @@ compileJava {
     options.fork = false
 }
 
+// Jenkins runs the JVM under a POSIX/C locale (file.encoding=ANSI_X3.4-1968), so javac
+// reads sources as ASCII and chokes on UTF-8 punctuation (em-dashes, arrows, etc.).
+// Pin all Java compilation to UTF-8 so the build is locale-independent.
+tasks.withType(JavaCompile).configureEach {
+    options.encoding = "UTF-8"
+}
+
 configurations.testRuntimeClasspath {
     exclude group: 'com.sun.media', module: 'jai_imageio'
 }
@@ -133,6 +140,9 @@ dependencies {
 
     // AnimatedGifEncoder for animated GIF generation (packaged in plugin)
     implementAndInclude 'com.madgag:animated-gif-lib:1.4'
+
+    // JSON-P (javax.json) provider for tests — matches the javax.json API used in main code.
+    testImplementation "org.glassfish:javax.json:1.1.4"
 
     testImplementation 'junit:junit'
     testImplementation "org.springframework:spring-test"
