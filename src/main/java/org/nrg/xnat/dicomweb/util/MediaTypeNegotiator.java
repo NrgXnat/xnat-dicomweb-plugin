@@ -181,22 +181,15 @@ public final class MediaTypeNegotiator {
      */
     public static String negotiate(String acceptHeader, String acceptParam,
                                    List<String> supported, String defaultType) {
-        // Per PS 3.18 Section 8.3.3.1: accept query parameter takes precedence
-        // and must not contain wildcards.
+        // When both the Accept header and accept query parameter are present
+        // we give the query parameter precedence. PS3.18 Section 8.3.3.1
+        // defines the accept query parameter but does not specify a
+        // precedence; this is a plugin convention. The same section forbids
+        // wildcards in the parameter; AcceptParamWildcardInterceptor rejects
+        // those upstream before this method is called.
         String effective = acceptParam != null && !acceptParam.trim().isEmpty()
                 ? acceptParam : acceptHeader;
-        List<ParsedMediaType> parsed = parse(effective);
-
-        if (acceptParam != null && !acceptParam.trim().isEmpty()) {
-            for (ParsedMediaType mt : parsed) {
-                if (mt.isWildcard() || mt.isSubtypeWildcard()) {
-                    throw new org.nrg.xnat.dicomweb.exceptions.BadRequestException(
-                            "accept", "wildcards are not permitted in the accept query parameter");
-                }
-            }
-        }
-
-        return negotiate(parsed, supported, defaultType);
+        return negotiate(parse(effective), supported, defaultType);
     }
 
     // ---- internal helpers ----

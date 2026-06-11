@@ -7,6 +7,7 @@ import io.swagger.annotations.ApiResponses;
 import lombok.extern.slf4j.Slf4j;
 import org.dcm4che3.data.Attributes;
 import org.dcm4che3.data.Tag;
+import org.dcm4che3.io.DicomInputStream;
 import org.nrg.framework.annotations.XapiRestController;
 import org.nrg.xapi.rest.AbstractXapiRestController;
 import org.nrg.xapi.rest.XapiRequestMapping;
@@ -27,25 +28,23 @@ import org.nrg.xnat.dicomweb.util.DicomMultipartWriter;
 import org.nrg.xnat.dicomweb.util.DicomWebUtils;
 import org.nrg.xnat.dicomweb.util.MediaTypeNegotiator;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.core.io.InputStreamResource;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.PathVariable;
+import org.springframework.web.bind.annotation.RequestHeader;
 import org.springframework.web.bind.annotation.RequestMethod;
 import org.springframework.web.bind.annotation.RequestParam;
+import org.springframework.web.servlet.mvc.method.annotation.StreamingResponseBody;
 
 import javax.servlet.http.HttpServletRequest;
 import javax.servlet.http.HttpServletResponse;
-import java.io.ByteArrayInputStream;
-import java.io.ByteArrayOutputStream;
 import java.io.File;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
 import java.nio.file.Files;
-import java.util.Arrays;
 import java.util.Collections;
 import java.util.List;
 import java.util.UUID;
@@ -53,27 +52,18 @@ import java.util.stream.Collectors;
 import java.util.stream.Stream;
 
 import static org.dcm4che3.ws.rs.MediaTypes.*;
+import static org.nrg.xnat.dicomweb.util.WadoMediaTypes.DICOM_TYPES;
+import static org.nrg.xnat.dicomweb.util.WadoMediaTypes.INSTANCE_DEFAULT;
+import static org.nrg.xnat.dicomweb.util.WadoMediaTypes.METADATA_DEFAULT;
+import static org.nrg.xnat.dicomweb.util.WadoMediaTypes.METADATA_TYPES;
+import static org.nrg.xnat.dicomweb.util.WadoMediaTypes.RENDERED_DEFAULT;
+import static org.nrg.xnat.dicomweb.util.WadoMediaTypes.RENDERED_TYPES;
 import static org.springframework.http.MediaType.APPLICATION_OCTET_STREAM_VALUE;
 
 @XapiRestController
 @Api("DICOMweb Site-Wide WADO-RS API")
 @Slf4j
 public class SiteWideWadoRsApi extends AbstractXapiRestController {
-
-    private static final List<String> INSTANCE_TYPES =
-            Collections.singletonList(APPLICATION_DICOM);
-    private static final String INSTANCE_DEFAULT = APPLICATION_DICOM;
-
-    private static final List<String> METADATA_TYPES =
-            Arrays.asList(APPLICATION_DICOM_JSON, APPLICATION_DICOM_XML);
-    private static final String METADATA_DEFAULT = APPLICATION_DICOM_JSON;
-
-    private static final List<String> RENDERED_TYPES =
-            Arrays.asList(IMAGE_JPEG, IMAGE_PNG, IMAGE_GIF);
-    private static final String RENDERED_DEFAULT = IMAGE_JPEG;
-
-    private static final List<String> FRAME_TYPES =
-            Arrays.asList(APPLICATION_OCTET_STREAM_VALUE, "multipart/related");
 
     private final XnatDicomService dicomService;
     private final SiteWideProjectFilter siteWideProjectFilter;
@@ -98,6 +88,23 @@ public class SiteWideWadoRsApi extends AbstractXapiRestController {
         return null;
     }
 
+    /**
+     * Throw-style site-wide check, for handlers that return
+     * {@code ResponseEntity<StreamingResponseBody>}. Returning a
+     * {@code ResponseEntity<String>} from those would break Spring's
+     * generic-parameter inspection in {@code ResponseBodyEmitterReturnValueHandler},
+     * which uses the declared generic to decide whether to invoke the
+     * streaming handler.
+     */
+    private void requireSiteWideEnabled() {
+        if (!siteWideProjectFilter.isSiteWideEnabled()) {
+            throw new DicomWebException(
+                    "Site-wide DICOMweb querying is not enabled",
+                    HttpStatus.NOT_FOUND.value(),
+                    "SiteWideNotEnabled");
+        }
+    }
+
     // ---- Retrieve Instance ----
 
     @ApiOperation(value = "Retrieve a DICOM instance (site-wide)")
@@ -108,26 +115,29 @@ public class SiteWideWadoRsApi extends AbstractXapiRestController {
     @XapiRequestMapping(
             value = "/dicomweb/studies/{studyUID}/series/{seriesUID}/instances/{instanceUID}",
             method = RequestMethod.GET,
-            produces = {APPLICATION_DICOM, APPLICATION_OCTET_STREAM_VALUE})
-    public ResponseEntity<?> retrieveInstance(
+            produces = {APPLICATION_DICOM, MULTIPART_RELATED})
+    public ResponseEntity<StreamingResponseBody> retrieveInstance(
             @PathVariable String studyUID,
             @PathVariable String seriesUID,
             @PathVariable String instanceUID,
-            HttpServletRequest request) throws DicomWebException, IOException {
+            @RequestParam(value = "accept", required = false) String acceptParam,
+            @RequestHeader(value = HttpHeaders.ACCEPT, required = false) String acceptHeader) throws DicomWebException, IOException {
 
-        ResponseEntity<?> check = checkSiteWideEnabled();
-        if (check != null) return check;
+        requireSiteWideEnabled();
 
-        UserI user = getSessionUser();
+        final String mediaType = MediaTypeNegotiator.negotiate(acceptHeader, acceptParam, DICOM_TYPES, INSTANCE_DEFAULT);
+        final File file = dicomService.resolveInstanceFile(getSessionUser(), null, studyUID, seriesUID, instanceUID);
 
-        InputStream dicomStream = dicomService.retrieveInstance(user, null, studyUID, seriesUID, instanceUID);
-
-        HttpHeaders headers = new HttpHeaders();
-        headers.setContentType(MediaType.parseMediaType(APPLICATION_DICOM));
-
+        if (MULTIPART_RELATED.equals(mediaType)) {
+            final String boundary = UUID.randomUUID().toString();
+            final StreamingResponseBody body = out -> streamFilesAsMultipart(out, boundary, Collections.singletonList(file), instanceUID);
+            final MediaType contentType = MediaType.parseMediaType(DicomWebUtils.getMultipartContentType(boundary));
+            return ResponseEntity.ok().contentType(contentType).body(body);
+        }
+        final StreamingResponseBody body = out -> Files.copy(file.toPath(), out);
         return ResponseEntity.ok()
-                .headers(headers)
-                .body(new InputStreamResource(dicomStream));
+                .contentType(MediaType.parseMediaType(APPLICATION_DICOM))
+                .body(body);
     }
 
     // ---- Instance Metadata ----
@@ -145,19 +155,19 @@ public class SiteWideWadoRsApi extends AbstractXapiRestController {
             @PathVariable String studyUID,
             @PathVariable String seriesUID,
             @PathVariable String instanceUID,
+            @RequestParam(value = "accept", required = false) String acceptParam,
+            @RequestHeader(value = HttpHeaders.ACCEPT, required = false) String acceptHeader,
             HttpServletRequest request) throws DicomWebException, IOException {
 
         ResponseEntity<?> check = checkSiteWideEnabled();
         if (check != null) return check;
 
-        UserI user = getSessionUser();
-        String selected = negotiateMediaType(request, METADATA_TYPES, METADATA_DEFAULT);
-        String requestUrl = request.getRequestURL().toString();
-        String baseUri = BulkDataHandler.extractBaseUri(requestUrl, null);
+        String mediaType = MediaTypeNegotiator.negotiate(acceptHeader, acceptParam, METADATA_TYPES, METADATA_DEFAULT);
+        String baseUri = BulkDataHandler.extractBaseUri(request.getRequestURL().toString(), null);
 
-        Attributes attrs = dicomService.retrieveMetadata(user, null, studyUID, seriesUID, instanceUID);
+        Attributes attrs = dicomService.retrieveMetadata(getSessionUser(), null, studyUID, seriesUID, instanceUID);
 
-        return buildMetadataResponse(Stream.of(attrs), selected, baseUri, studyUID);
+        return buildMetadataResponse(Stream.of(attrs), mediaType, baseUri, studyUID);
     }
 
     // ---- Retrieve Series (multipart) ----
@@ -173,8 +183,7 @@ public class SiteWideWadoRsApi extends AbstractXapiRestController {
     public void retrieveSeries(
             @PathVariable final String studyUID,
             @PathVariable final String seriesUID,
-            HttpServletRequest request,
-            HttpServletResponse response) throws DicomWebException, IOException {
+            final HttpServletResponse response) throws DicomWebException, IOException {
 
         ResponseEntity<?> check = checkSiteWideEnabled();
         if (check != null) {
@@ -183,14 +192,12 @@ public class SiteWideWadoRsApi extends AbstractXapiRestController {
             return;
         }
 
-        final UserI user = getSessionUser();
-
         // Resolve the files on the request thread, where the request's ThreadLocal context
         // (Spring TransactionSynchronizationManager, XDAT user/tx stash) is still bound.
         // The streaming write loop below is pure file I/O — no XDAT calls — so it's safe
         // even though the async dispatch thread doesn't inherit that context. Empty list
         // = 404, and the catalog walk parses no DICOM headers.
-        final List<File> files = dicomService.resolveSeriesFiles(user, null, studyUID, seriesUID);
+        final List<File> files = dicomService.resolveSeriesFiles(getSessionUser(), null, studyUID, seriesUID);
         if (files.isEmpty()) {
             throw new ResourceNotFoundException("Series", seriesUID);
         }
@@ -217,24 +224,24 @@ public class SiteWideWadoRsApi extends AbstractXapiRestController {
             produces = {APPLICATION_DICOM_JSON, APPLICATION_DICOM_XML})
     public ResponseEntity<?> retrieveStudyMetadata(
             @PathVariable String studyUID,
+            @RequestParam(value = "accept", required = false) String acceptParam,
+            @RequestHeader(value = HttpHeaders.ACCEPT, required = false) String acceptHeader,
             HttpServletRequest request) throws DicomWebException, IOException {
 
         ResponseEntity<?> check = checkSiteWideEnabled();
         if (check != null) return check;
 
-        UserI user = getSessionUser();
-        String selected = negotiateMediaType(request, METADATA_TYPES, METADATA_DEFAULT);
-        String requestUrl = request.getRequestURL().toString();
-        String baseUri = BulkDataHandler.extractBaseUri(requestUrl, null);
+        String mediaType = MediaTypeNegotiator.negotiate(acceptHeader, acceptParam, METADATA_TYPES, METADATA_DEFAULT);
+        String baseUri = BulkDataHandler.extractBaseUri(request.getRequestURL().toString(), null);
 
-        List<Attributes> instances = dicomService.retrieveAllStudyInstanceMetadata(user, null, studyUID)
+        List<Attributes> instances = dicomService.retrieveAllStudyInstanceMetadata(getSessionUser(), null, studyUID)
                 .collect(Collectors.toList());
 
         if (instances.isEmpty()) {
             throw new ResourceNotFoundException("Study", studyUID);
         }
 
-        return buildMetadataResponse(instances.stream(), selected, baseUri, studyUID);
+        return buildMetadataResponse(instances.stream(), mediaType, baseUri, studyUID);
     }
 
     // ---- Retrieve Study (multipart) ----
@@ -249,7 +256,6 @@ public class SiteWideWadoRsApi extends AbstractXapiRestController {
             method = RequestMethod.GET)
     public void retrieveStudy(
             @PathVariable final String studyUID,
-            HttpServletRequest request,
             HttpServletResponse response) throws DicomWebException, IOException {
 
         ResponseEntity<?> check = checkSiteWideEnabled();
@@ -259,11 +265,9 @@ public class SiteWideWadoRsApi extends AbstractXapiRestController {
             return;
         }
 
-        final UserI user = getSessionUser();
-
         // Resolve every file in the study on the request thread; see retrieveSeries above
         // for the ThreadLocal-context rationale.
-        final List<File> files = dicomService.resolveStudyFiles(user, null, studyUID);
+        final List<File> files = dicomService.resolveStudyFiles(getSessionUser(), null, studyUID);
         if (files.isEmpty()) {
             throw new ResourceNotFoundException("Study", studyUID);
         }
@@ -321,7 +325,8 @@ public class SiteWideWadoRsApi extends AbstractXapiRestController {
             @RequestParam(required = false) String viewport,
             @RequestParam(required = false) String window,
             @RequestParam(required = false) String quality,
-            HttpServletRequest request,
+            @RequestParam(value = "accept", required = false) String acceptParam,
+            @RequestHeader(value = HttpHeaders.ACCEPT, required = false) String acceptHeader,
             HttpServletResponse response) throws DicomWebException, IOException {
 
         ResponseEntity<?> check = checkSiteWideEnabled();
@@ -330,13 +335,11 @@ public class SiteWideWadoRsApi extends AbstractXapiRestController {
             return;
         }
 
-        UserI user = getSessionUser();
-        String selected = negotiateMediaType(request, RENDERED_TYPES, RENDERED_DEFAULT);
-        ImageFormat format = ImageFormat.fromMimeType(selected);
-        RenderingParams params = RenderingParams.parse(viewport, window, quality);
-
         RenderedInstanceResult result = dicomService.retrieveRenderedInstance(
-                user, null, studyUID, seriesUID, instanceUID, null, format, params);
+                getSessionUser(), null, studyUID, seriesUID, instanceUID, null,
+                ImageFormat.fromMimeType(MediaTypeNegotiator.negotiate(
+                        acceptHeader, acceptParam, RENDERED_TYPES, RENDERED_DEFAULT)),
+                RenderingParams.parse(viewport, window, quality));
 
         writeRenderedResponse(result, instanceUID, response);
     }
@@ -357,7 +360,8 @@ public class SiteWideWadoRsApi extends AbstractXapiRestController {
             @RequestParam(required = false) String viewport,
             @RequestParam(required = false) String window,
             @RequestParam(required = false) String quality,
-            HttpServletRequest request,
+            @RequestParam(value = "accept", required = false) String acceptParam,
+            @RequestHeader(value = HttpHeaders.ACCEPT, required = false) String acceptHeader,
             HttpServletResponse response) throws DicomWebException, IOException {
 
         ResponseEntity<?> check = checkSiteWideEnabled();
@@ -366,13 +370,11 @@ public class SiteWideWadoRsApi extends AbstractXapiRestController {
             return;
         }
 
-        UserI user = getSessionUser();
-        String selected = negotiateMediaType(request, RENDERED_TYPES, RENDERED_DEFAULT);
-        ImageFormat format = ImageFormat.fromMimeType(selected);
-        RenderingParams params = RenderingParams.parse(viewport, window, quality);
-
         RenderedInstanceResult result = dicomService.retrieveRenderedStudy(
-                user, null, studyUID, null, format, params);
+                getSessionUser(), null, studyUID, null,
+                ImageFormat.fromMimeType(MediaTypeNegotiator.negotiate(
+                        acceptHeader, acceptParam, RENDERED_TYPES, RENDERED_DEFAULT)),
+                RenderingParams.parse(viewport, window, quality));
 
         writeRenderedResponse(result, studyUID, response);
     }
@@ -394,7 +396,8 @@ public class SiteWideWadoRsApi extends AbstractXapiRestController {
             @RequestParam(required = false) String viewport,
             @RequestParam(required = false) String window,
             @RequestParam(required = false) String quality,
-            HttpServletRequest request,
+            @RequestParam(value = "accept", required = false) String acceptParam,
+            @RequestHeader(value = HttpHeaders.ACCEPT, required = false) String acceptHeader,
             HttpServletResponse response) throws DicomWebException, IOException {
 
         ResponseEntity<?> check = checkSiteWideEnabled();
@@ -403,13 +406,11 @@ public class SiteWideWadoRsApi extends AbstractXapiRestController {
             return;
         }
 
-        UserI user = getSessionUser();
-        String selected = negotiateMediaType(request, RENDERED_TYPES, RENDERED_DEFAULT);
-        ImageFormat format = ImageFormat.fromMimeType(selected);
-        RenderingParams params = RenderingParams.parse(viewport, window, quality);
-
         RenderedInstanceResult result = dicomService.retrieveRenderedSeries(
-                user, null, studyUID, seriesUID, null, format, params);
+                getSessionUser(), null, studyUID, seriesUID, null,
+                ImageFormat.fromMimeType(MediaTypeNegotiator.negotiate(
+                        acceptHeader, acceptParam, RENDERED_TYPES, RENDERED_DEFAULT)),
+                RenderingParams.parse(viewport, window, quality));
 
         writeRenderedResponse(result, seriesUID, response);
     }
@@ -433,7 +434,8 @@ public class SiteWideWadoRsApi extends AbstractXapiRestController {
             @RequestParam(required = false) String viewport,
             @RequestParam(required = false) String window,
             @RequestParam(required = false) String quality,
-            HttpServletRequest request,
+            @RequestParam(value = "accept", required = false) String acceptParam,
+            @RequestHeader(value = HttpHeaders.ACCEPT, required = false) String acceptHeader,
             HttpServletResponse response) throws DicomWebException, IOException {
 
         ResponseEntity<?> check = checkSiteWideEnabled();
@@ -441,11 +443,6 @@ public class SiteWideWadoRsApi extends AbstractXapiRestController {
             response.setStatus(HttpStatus.NOT_FOUND.value());
             return;
         }
-
-        UserI user = getSessionUser();
-        String selected = negotiateMediaType(request, RENDERED_TYPES, RENDERED_DEFAULT);
-        ImageFormat format = ImageFormat.fromMimeType(selected);
-        RenderingParams params = RenderingParams.parse(viewport, window, quality);
 
         // Use the first frame number from the list
         Integer frameNumber = null;
@@ -458,7 +455,10 @@ public class SiteWideWadoRsApi extends AbstractXapiRestController {
         }
 
         RenderedInstanceResult result = dicomService.retrieveRenderedInstance(
-                user, null, studyUID, seriesUID, instanceUID, frameNumber, format, params);
+                getSessionUser(), null, studyUID, seriesUID, instanceUID, frameNumber,
+                ImageFormat.fromMimeType(MediaTypeNegotiator.negotiate(
+                        acceptHeader, acceptParam, RENDERED_TYPES, RENDERED_DEFAULT)),
+                RenderingParams.parse(viewport, window, quality));
 
         writeRenderedResponse(result, instanceUID, response);
     }
@@ -477,7 +477,8 @@ public class SiteWideWadoRsApi extends AbstractXapiRestController {
     public void retrieveStudyThumbnail(
             @PathVariable String studyUID,
             @RequestParam(required = false) String viewport,
-            HttpServletRequest request,
+            @RequestParam(value = "accept", required = false) String acceptParam,
+            @RequestHeader(value = HttpHeaders.ACCEPT, required = false) String acceptHeader,
             HttpServletResponse response) throws DicomWebException, IOException {
 
         ResponseEntity<?> check = checkSiteWideEnabled();
@@ -486,13 +487,11 @@ public class SiteWideWadoRsApi extends AbstractXapiRestController {
             return;
         }
 
-        UserI user = getSessionUser();
-        String selected = negotiateMediaType(request, RENDERED_TYPES, RENDERED_DEFAULT);
-        ImageFormat format = ImageFormat.fromMimeType(selected);
-        RenderingParams params = RenderingParams.parse(viewport, null, null);
-
         RenderedInstanceResult result = dicomService.retrieveThumbnailStudy(
-                user, null, studyUID, params, format);
+                getSessionUser(), null, studyUID,
+                RenderingParams.parse(viewport, null, null),
+                ImageFormat.fromMimeType(MediaTypeNegotiator.negotiate(
+                        acceptHeader, acceptParam, RENDERED_TYPES, RENDERED_DEFAULT)));
 
         writeRenderedResponse(result, studyUID, response);
     }
@@ -512,7 +511,8 @@ public class SiteWideWadoRsApi extends AbstractXapiRestController {
             @PathVariable String studyUID,
             @PathVariable String seriesUID,
             @RequestParam(required = false) String viewport,
-            HttpServletRequest request,
+            @RequestParam(value = "accept", required = false) String acceptParam,
+            @RequestHeader(value = HttpHeaders.ACCEPT, required = false) String acceptHeader,
             HttpServletResponse response) throws DicomWebException, IOException {
 
         ResponseEntity<?> check = checkSiteWideEnabled();
@@ -521,13 +521,11 @@ public class SiteWideWadoRsApi extends AbstractXapiRestController {
             return;
         }
 
-        UserI user = getSessionUser();
-        String selected = negotiateMediaType(request, RENDERED_TYPES, RENDERED_DEFAULT);
-        ImageFormat format = ImageFormat.fromMimeType(selected);
-        RenderingParams params = RenderingParams.parse(viewport, null, null);
-
         RenderedInstanceResult result = dicomService.retrieveThumbnailSeries(
-                user, null, studyUID, seriesUID, params, format);
+                getSessionUser(), null, studyUID, seriesUID,
+                RenderingParams.parse(viewport, null, null),
+                ImageFormat.fromMimeType(MediaTypeNegotiator.negotiate(
+                        acceptHeader, acceptParam, RENDERED_TYPES, RENDERED_DEFAULT)));
 
         writeRenderedResponse(result, seriesUID, response);
     }
@@ -548,7 +546,8 @@ public class SiteWideWadoRsApi extends AbstractXapiRestController {
             @PathVariable String seriesUID,
             @PathVariable String instanceUID,
             @RequestParam(required = false) String viewport,
-            HttpServletRequest request,
+            @RequestParam(value = "accept", required = false) String acceptParam,
+            @RequestHeader(value = HttpHeaders.ACCEPT, required = false) String acceptHeader,
             HttpServletResponse response) throws DicomWebException, IOException {
 
         ResponseEntity<?> check = checkSiteWideEnabled();
@@ -557,13 +556,11 @@ public class SiteWideWadoRsApi extends AbstractXapiRestController {
             return;
         }
 
-        UserI user = getSessionUser();
-        String selected = negotiateMediaType(request, RENDERED_TYPES, RENDERED_DEFAULT);
-        ImageFormat format = ImageFormat.fromMimeType(selected);
-        RenderingParams params = RenderingParams.parse(viewport, null, null);
-
         RenderedInstanceResult result = dicomService.retrieveThumbnailInstance(
-                user, null, studyUID, seriesUID, instanceUID, params, format);
+                getSessionUser(), null, studyUID, seriesUID, instanceUID,
+                RenderingParams.parse(viewport, null, null),
+                ImageFormat.fromMimeType(MediaTypeNegotiator.negotiate(
+                        acceptHeader, acceptParam, RENDERED_TYPES, RENDERED_DEFAULT)));
 
         writeRenderedResponse(result, instanceUID, response);
     }
@@ -585,7 +582,8 @@ public class SiteWideWadoRsApi extends AbstractXapiRestController {
             @PathVariable String instanceUID,
             @PathVariable String frameList,
             @RequestParam(required = false) String viewport,
-            HttpServletRequest request,
+            @RequestParam(value = "accept", required = false) String acceptParam,
+            @RequestHeader(value = HttpHeaders.ACCEPT, required = false) String acceptHeader,
             HttpServletResponse response) throws DicomWebException, IOException {
 
         ResponseEntity<?> check = checkSiteWideEnabled();
@@ -594,13 +592,11 @@ public class SiteWideWadoRsApi extends AbstractXapiRestController {
             return;
         }
 
-        UserI user = getSessionUser();
-        String selected = negotiateMediaType(request, RENDERED_TYPES, RENDERED_DEFAULT);
-        ImageFormat format = ImageFormat.fromMimeType(selected);
-        RenderingParams params = RenderingParams.parse(viewport, null, null);
-
         RenderedInstanceResult result = dicomService.retrieveThumbnailFrame(
-                user, null, studyUID, seriesUID, instanceUID, frameList, params, format);
+                getSessionUser(), null, studyUID, seriesUID, instanceUID, frameList,
+                RenderingParams.parse(viewport, null, null),
+                ImageFormat.fromMimeType(MediaTypeNegotiator.negotiate(
+                        acceptHeader, acceptParam, RENDERED_TYPES, RENDERED_DEFAULT)));
 
         writeRenderedResponse(result, instanceUID, response);
     }
@@ -620,7 +616,6 @@ public class SiteWideWadoRsApi extends AbstractXapiRestController {
             @PathVariable String seriesUID,
             @PathVariable String instanceUID,
             @PathVariable String frameList,
-            HttpServletRequest request,
             HttpServletResponse response) throws DicomWebException, IOException {
 
         ResponseEntity<?> check = checkSiteWideEnabled();
@@ -630,10 +625,8 @@ public class SiteWideWadoRsApi extends AbstractXapiRestController {
             return;
         }
 
-        UserI user = getSessionUser();
-
         List<byte[]> frames = dicomService.retrieveFrames(
-                user, null, studyUID, seriesUID, instanceUID, frameList);
+                getSessionUser(), null, studyUID, seriesUID, instanceUID, frameList);
 
         if (frames == null || frames.isEmpty()) {
             throw new ResourceNotFoundException("Frames", frameList + " in instance " + instanceUID);
@@ -667,8 +660,6 @@ public class SiteWideWadoRsApi extends AbstractXapiRestController {
             return;
         }
 
-        UserI user = getSessionUser();
-
         int tagInt;
         try {
             tagInt = Integer.parseUnsignedInt(tag, 16);
@@ -676,12 +667,12 @@ public class SiteWideWadoRsApi extends AbstractXapiRestController {
             throw new BadRequestException("tag", "must be a valid hexadecimal DICOM tag");
         }
 
-        InputStream stream = dicomService.retrieveInstance(user, null, studyUID, seriesUID, instanceUID);
+        final File file = dicomService.resolveInstanceFile(getSessionUser(), null, studyUID, seriesUID, instanceUID);
 
         byte[] bulkData;
-        try (org.dcm4che3.io.DicomInputStream dis = new org.dcm4che3.io.DicomInputStream(stream)) {
-            dis.setIncludeBulkData(org.dcm4che3.io.DicomInputStream.IncludeBulkData.YES);
-            Attributes attrs = dis.readDataset();
+        try (DicomInputStream dis = new DicomInputStream(file)) {
+            dis.setIncludeBulkData(DicomInputStream.IncludeBulkData.YES);
+            final Attributes attrs = dis.readDataset();
 
             if (!attrs.contains(tagInt)) {
                 throw new ResourceNotFoundException("Bulk data tag", tag);
@@ -729,11 +720,10 @@ public class SiteWideWadoRsApi extends AbstractXapiRestController {
             return;
         }
 
-        UserI user = getSessionUser();
         String baseUri = BulkDataHandler.extractBaseUri(request.getRequestURL().toString(), null);
 
         List<BulkDataItem> bulkDataItems = dicomService.retrieveInstanceBulkData(
-                user, null, studyUID, seriesUID, instanceUID, baseUri);
+                getSessionUser(), null, studyUID, seriesUID, instanceUID, baseUri);
 
         buildMultipartBulkDataResponse(response, bulkDataItems);
     }
@@ -761,11 +751,10 @@ public class SiteWideWadoRsApi extends AbstractXapiRestController {
             return;
         }
 
-        UserI user = getSessionUser();
         String baseUri = BulkDataHandler.extractBaseUri(request.getRequestURL().toString(), null);
 
         List<BulkDataItem> bulkDataItems = dicomService.retrieveSeriesBulkData(
-                user, null, studyUID, seriesUID, baseUri);
+                getSessionUser(), null, studyUID, seriesUID, baseUri);
 
         buildMultipartBulkDataResponse(response, bulkDataItems);
     }
@@ -792,11 +781,10 @@ public class SiteWideWadoRsApi extends AbstractXapiRestController {
             return;
         }
 
-        UserI user = getSessionUser();
         String baseUri = BulkDataHandler.extractBaseUri(request.getRequestURL().toString(), null);
 
         List<BulkDataItem> bulkDataItems = dicomService.retrieveStudyBulkData(
-                user, null, studyUID, baseUri);
+                getSessionUser(), null, studyUID, baseUri);
 
         buildMultipartBulkDataResponse(response, bulkDataItems);
     }
@@ -825,11 +813,10 @@ public class SiteWideWadoRsApi extends AbstractXapiRestController {
             return;
         }
 
-        UserI user = getSessionUser();
         String baseUri = BulkDataHandler.extractBaseUri(request.getRequestURL().toString(), null);
 
         List<BulkDataItem> items = dicomService.retrieveInstancePixelData(
-                user, null, studyUID, seriesUID, instanceUID, baseUri);
+                getSessionUser(), null, studyUID, seriesUID, instanceUID, baseUri);
 
         buildMultipartBulkDataResponse(response, items);
     }
@@ -857,11 +844,10 @@ public class SiteWideWadoRsApi extends AbstractXapiRestController {
             return;
         }
 
-        UserI user = getSessionUser();
         String baseUri = BulkDataHandler.extractBaseUri(request.getRequestURL().toString(), null);
 
         List<BulkDataItem> items = dicomService.retrieveSeriesPixelData(
-                user, null, studyUID, seriesUID, baseUri);
+                getSessionUser(), null, studyUID, seriesUID, baseUri);
 
         buildMultipartBulkDataResponse(response, items);
     }
@@ -888,11 +874,10 @@ public class SiteWideWadoRsApi extends AbstractXapiRestController {
             return;
         }
 
-        UserI user = getSessionUser();
         String baseUri = BulkDataHandler.extractBaseUri(request.getRequestURL().toString(), null);
 
         List<BulkDataItem> items = dicomService.retrieveStudyPixelData(
-                user, null, studyUID, baseUri);
+                getSessionUser(), null, studyUID, baseUri);
 
         buildMultipartBulkDataResponse(response, items);
     }
@@ -911,32 +896,26 @@ public class SiteWideWadoRsApi extends AbstractXapiRestController {
     public ResponseEntity<?> retrieveSeriesMetadata(
             @PathVariable String studyUID,
             @PathVariable String seriesUID,
+            @RequestParam(value = "accept", required = false) String acceptParam,
+            @RequestHeader(value = HttpHeaders.ACCEPT, required = false) String acceptHeader,
             HttpServletRequest request) throws DicomWebException, IOException {
 
         ResponseEntity<?> check = checkSiteWideEnabled();
         if (check != null) return check;
 
-        UserI user = getSessionUser();
-        String selected = negotiateMediaType(request, METADATA_TYPES, METADATA_DEFAULT);
-        String requestUrl = request.getRequestURL().toString();
-        String baseUri = BulkDataHandler.extractBaseUri(requestUrl, null);
+        String mediaType = MediaTypeNegotiator.negotiate(acceptHeader, acceptParam, METADATA_TYPES, METADATA_DEFAULT);
+        String baseUri = BulkDataHandler.extractBaseUri(request.getRequestURL().toString(), null);
 
-        List<Attributes> instances = dicomService.searchMetadata(user, null, studyUID, seriesUID, null)
+        List<Attributes> instances = dicomService.searchMetadata(getSessionUser(), null, studyUID, seriesUID, null)
                 .collect(Collectors.toList());
-
         if (instances.isEmpty()) {
             throw new ResourceNotFoundException("Series metadata", seriesUID);
         }
 
-        return buildMetadataResponse(instances.stream(), selected, baseUri, studyUID);
+        return buildMetadataResponse(instances.stream(), mediaType, baseUri, studyUID);
     }
 
     // ---- Helper Methods ----
-
-    private String negotiateMediaType(HttpServletRequest request, List<String> supported, String defaultType) {
-        String acceptHeader = request != null ? request.getHeader("Accept") : null;
-        return MediaTypeNegotiator.negotiate(acceptHeader, null, supported, defaultType);
-    }
 
     /**
      * Write a rendered image result to the HTTP response with appropriate headers.

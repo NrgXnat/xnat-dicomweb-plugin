@@ -623,8 +623,7 @@ public class XnatDicomServiceImpl implements XnatDicomService {
     @Override
     public Attributes retrieveMetadata(UserI user, String projectId, String studyInstanceUID,
                                             String seriesInstanceUID, String sopInstanceUID) {
-      // FIXME: DwInstance may cache metadata; check there first before going to the file system.
-        final File dicomFile = getInstance(user, projectId, studyInstanceUID, seriesInstanceUID, sopInstanceUID);
+        final File dicomFile = resolveInstanceFile(user, projectId, studyInstanceUID, seriesInstanceUID, sopInstanceUID);
         try (DicomInputStream dis = new DicomInputStream(dicomFile)) {
             dis.setURI(makeInstanceUri(projectId, studyInstanceUID, seriesInstanceUID, sopInstanceUID));
             dis.setBulkDataDescriptor(bulkDataHandler);
@@ -1030,19 +1029,18 @@ public class XnatDicomServiceImpl implements XnatDicomService {
      *
      * @throws ResourceNotFoundException if the project, study, series, or instance cannot be found
      */
-    private File getInstance(UserI user, String projectId, String studyInstanceUID,
+    @Override
+    public File resolveInstanceFile(UserI user, String projectId, String studyInstanceUID,
                              String seriesInstanceUID, String sopInstanceUID) {
         if (projectId != null) {
-            XnatProjectdata project = XnatProjectdata.getXnatProjectdatasById(projectId, user, false);
-            if (project == null) {
+            if (null == XnatProjectdata.getXnatProjectdatasById(projectId, user, false)) {
                 throw new ResourceNotFoundException("Project", projectId);
             }
         }
 
-        List<XnatImagesessiondata> targetSessions = findSessionsByUID(user, projectId, studyInstanceUID);
-
+        final List<XnatImagesessiondata> targetSessions = findSessionsByUID(user, projectId, studyInstanceUID);
         if (!targetSessions.isEmpty()) {
-            Optional<File> dbResult = targetSessions.stream()
+            final Optional<File> dbResult = targetSessions.stream()
                     .filter(canReadSession(user))
                     .map(session -> findScanBySeriesUIDDirect(session.getScans_scan(), seriesInstanceUID))
                     .filter(Objects::nonNull)
@@ -1054,9 +1052,9 @@ public class XnatDicomServiceImpl implements XnatDicomService {
         }
 
         // Fallback: check pending DirectToArchive files not yet in XNAT database
-        File pendingDir = findPendingArchiveDir(projectId, studyInstanceUID);
+        final File pendingDir = findPendingArchiveDir(projectId, studyInstanceUID);
         if (pendingDir != null) {
-            File pendingFile = findFileInPendingArchive(pendingDir, seriesInstanceUID, sopInstanceUID);
+            final File pendingFile = findFileInPendingArchive(pendingDir, seriesInstanceUID, sopInstanceUID);
             if (pendingFile != null) {
                 log.debug("Found instance {} in pending archive: {}", sopInstanceUID, pendingFile);
                 return pendingFile;
@@ -1066,14 +1064,6 @@ public class XnatDicomServiceImpl implements XnatDicomService {
         throw new ResourceNotFoundException(
                 targetSessions.isEmpty() ? "Study" : "Instance",
                 targetSessions.isEmpty() ? studyInstanceUID : sopInstanceUID);
-    }
-
-    @Override
-    public InputStream retrieveInstance(UserI user, String projectId, String studyInstanceUID,
-                                       String seriesInstanceUID, String sopInstanceUID) throws IOException {
-        File dicomFile = getInstance(user, projectId, studyInstanceUID, seriesInstanceUID, sopInstanceUID);
-        log.trace("Retrieved instance: {}", sopInstanceUID);
-        return Files.newInputStream(dicomFile.toPath());
     }
 
     @Override
@@ -1151,21 +1141,20 @@ public class XnatDicomServiceImpl implements XnatDicomService {
 
     @Override
     public List<InputStream> retrieveSeries(UserI user, String projectId, String studyInstanceUID, String seriesInstanceUID) {
-        List<InputStream> streams = new ArrayList<>();
-
+        final List<InputStream> streams = new ArrayList<>();
         try {
-            List<Attributes> instances = searchInstances(user, projectId, studyInstanceUID, seriesInstanceUID, null);
-
+            final List<Attributes> instances = searchInstances(user, projectId, studyInstanceUID, seriesInstanceUID, null);
             for (Attributes attrs : instances) {
-                String sopUID = attrs.getString(Tag.SOPInstanceUID);
-                InputStream stream = retrieveInstance(user, projectId, studyInstanceUID, seriesInstanceUID, sopUID);
-                if (stream != null) {
-                    streams.add(stream);
+                final String sopUID = attrs.getString(Tag.SOPInstanceUID);
+                try {
+                    final File file = resolveInstanceFile(user, projectId, studyInstanceUID, seriesInstanceUID, sopUID);
+                    streams.add(Files.newInputStream(file.toPath()));
+                } catch (ResourceNotFoundException e) {
+                    log.debug("instance {}:{}:{}:{} not found in series, skipping", projectId, studyInstanceUID, seriesInstanceUID, sopUID);
                 }
             }
-
         } catch (Exception e) {
-            log.error("Error retrieving series: " + seriesInstanceUID, e);
+            log.error("Error retrieving series: {} ", seriesInstanceUID, e);
         }
 
         return streams;
@@ -1176,7 +1165,7 @@ public class XnatDicomServiceImpl implements XnatDicomService {
                                           String seriesInstanceUID, String sopInstanceUID,
                                           Integer frameNumber, ImageFormat format,
                                           RenderingParams params) {
-        File dicomFile = getInstance(user, projectId, studyInstanceUID, seriesInstanceUID, sopInstanceUID);
+        File dicomFile = resolveInstanceFile(user, projectId, studyInstanceUID, seriesInstanceUID, sopInstanceUID);
         return renderInstance(dicomFile, sopInstanceUID, frameNumber, format, params);
     }
 
@@ -1320,7 +1309,7 @@ public class XnatDicomServiceImpl implements XnatDicomService {
 
         int midIndex = instances.size() / 2;
         String sopUID = instances.get(midIndex).getString(Tag.SOPInstanceUID);
-        return getInstance(user, projectId, studyUID, effectiveSeriesUID, sopUID);
+        return resolveInstanceFile(user, projectId, studyUID, effectiveSeriesUID, sopUID);
     }
 
     // Helper methods
@@ -2326,7 +2315,7 @@ public class XnatDicomServiceImpl implements XnatDicomService {
     @Override
     public List<byte[]> retrieveFrames(UserI user, String projectId, String studyInstanceUID,
                                       String seriesInstanceUID, String sopInstanceUID, String frameNumbers) {
-        File dicomFile = getInstance(user, projectId, studyInstanceUID, seriesInstanceUID, sopInstanceUID);
+        File dicomFile = resolveInstanceFile(user, projectId, studyInstanceUID, seriesInstanceUID, sopInstanceUID);
 
         List<Integer> frameList = parseFrameNumbers(frameNumbers);
         if (frameList.isEmpty()) {
@@ -2995,7 +2984,7 @@ public class XnatDicomServiceImpl implements XnatDicomService {
     public List<BulkDataHandler.BulkDataItem> retrieveInstanceBulkData(
             UserI user, String projectId, String studyUID, String seriesUID,
             String instanceUID, String baseUri) {
-        File dicomFile = getInstance(user, projectId, studyUID, seriesUID, instanceUID);
+        File dicomFile = resolveInstanceFile(user, projectId, studyUID, seriesUID, instanceUID);
         return extractBulkDataItems(dicomFile, baseUri, studyUID, seriesUID, instanceUID, false);
     }
 
@@ -3024,7 +3013,7 @@ public class XnatDicomServiceImpl implements XnatDicomService {
     public List<BulkDataHandler.BulkDataItem> retrieveInstancePixelData(
             UserI user, String projectId, String studyUID, String seriesUID,
             String instanceUID, String baseUri) {
-        File dicomFile = getInstance(user, projectId, studyUID, seriesUID, instanceUID);
+        File dicomFile = resolveInstanceFile(user, projectId, studyUID, seriesUID, instanceUID);
         return extractBulkDataItems(dicomFile, baseUri, studyUID, seriesUID, instanceUID, true);
     }
 
@@ -3057,7 +3046,7 @@ public class XnatDicomServiceImpl implements XnatDicomService {
             for (Attributes attrs : instances) {
                 String sopUID = attrs.getString(Tag.SOPInstanceUID);
                 try {
-                    File dicomFile = getInstance(user, projectId, studyUID, seriesUID, sopUID);
+                    File dicomFile = resolveInstanceFile(user, projectId, studyUID, seriesUID, sopUID);
                     items.addAll(extractBulkDataItems(dicomFile, baseUri, studyUID, seriesUID, sopUID, pixelDataOnly));
                 } catch (ResourceNotFoundException e) {
                     log.debug("Instance {} not found while retrieving bulk data", sopUID);
