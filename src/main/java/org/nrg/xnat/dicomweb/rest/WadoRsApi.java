@@ -7,12 +7,12 @@ import io.swagger.annotations.ApiResponses;
 import lombok.extern.slf4j.Slf4j;
 import org.dcm4che3.data.Attributes;
 import org.dcm4che3.data.Tag;
+import org.dcm4che3.io.DicomInputStream;
 import org.nrg.framework.annotations.XapiRestController;
 import org.nrg.xapi.rest.AbstractXapiRestController;
 import org.nrg.xapi.rest.XapiRequestMapping;
 import org.nrg.xdat.security.services.RoleHolder;
 import org.nrg.xdat.security.services.UserManagementServiceI;
-import org.nrg.xft.security.UserI;
 import org.nrg.xnat.dicomweb.exceptions.BadRequestException;
 import org.nrg.xnat.dicomweb.exceptions.DicomWebException;
 import org.nrg.xnat.dicomweb.exceptions.ResourceNotFoundException;
@@ -32,6 +32,7 @@ import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.PathVariable;
+import org.springframework.web.bind.annotation.RequestHeader;
 import org.springframework.web.bind.annotation.RequestMethod;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.servlet.mvc.method.annotation.StreamingResponseBody;
@@ -53,6 +54,12 @@ import java.util.stream.Collectors;
 import java.util.stream.Stream;
 
 import static org.dcm4che3.ws.rs.MediaTypes.*;
+import static org.nrg.xnat.dicomweb.util.WadoMediaTypes.DICOM_TYPES;
+import static org.nrg.xnat.dicomweb.util.WadoMediaTypes.INSTANCE_DEFAULT;
+import static org.nrg.xnat.dicomweb.util.WadoMediaTypes.METADATA_DEFAULT;
+import static org.nrg.xnat.dicomweb.util.WadoMediaTypes.METADATA_TYPES;
+import static org.nrg.xnat.dicomweb.util.WadoMediaTypes.RENDERED_DEFAULT;
+import static org.nrg.xnat.dicomweb.util.WadoMediaTypes.RENDERED_TYPES;
 import static org.springframework.http.MediaType.APPLICATION_OCTET_STREAM_VALUE;
 
 /**
@@ -63,24 +70,6 @@ import static org.springframework.http.MediaType.APPLICATION_OCTET_STREAM_VALUE;
 @Api("DICOMweb WADO-RS API")
 @Slf4j
 public class WadoRsApi extends AbstractXapiRestController {
-    // Supported types per resource category
-    private static final List<String> INSTANCE_TYPES =
-            Collections.singletonList(APPLICATION_DICOM);
-    private static final String INSTANCE_DEFAULT = APPLICATION_DICOM;
-
-    private static final List<String> METADATA_TYPES =
-            Arrays.asList(APPLICATION_DICOM_JSON, APPLICATION_DICOM_XML);
-    private static final String METADATA_DEFAULT = APPLICATION_DICOM_JSON;
-
-    private static final List<String> RENDERED_TYPES =
-            Arrays.asList(IMAGE_JPEG, IMAGE_PNG, IMAGE_GIF);
-    private static final String RENDERED_DEFAULT = IMAGE_JPEG;
-
-    private static final List<String> FRAME_TYPES =
-            Arrays.asList(APPLICATION_OCTET_STREAM_VALUE, "multipart/related");
-
-    private static final List<String> BULKDATA_TYPES =
-            Collections.singletonList(APPLICATION_OCTET_STREAM_VALUE);
 
     private final XnatDicomService dicomService;
 
@@ -102,7 +91,7 @@ public class WadoRsApi extends AbstractXapiRestController {
     @XapiRequestMapping(
             value = "/dicomweb/projects/{projectId}/studies/{studyUID}/series/{seriesUID}/instances/{instanceUID}",
             method = RequestMethod.GET,
-            produces = APPLICATION_DICOM
+            produces = {APPLICATION_DICOM, MULTIPART_RELATED}
     )
     @ApiOperation(value = "Retrieve a DICOM instance (WADO-RS)", response = byte[].class)
     @ApiResponses({
@@ -112,36 +101,25 @@ public class WadoRsApi extends AbstractXapiRestController {
             @ApiResponse(code = 406, message = "Requested media type not supported"),
             @ApiResponse(code = 500, message = "Internal error")
     })
-    public ResponseEntity<InputStreamResource> retrieveInstance(
+    public ResponseEntity<StreamingResponseBody> retrieveInstance(
             @PathVariable String projectId,
             @PathVariable String studyUID,
             @PathVariable String seriesUID,
             @PathVariable String instanceUID,
             @RequestParam(value = "accept", required = false) String acceptParam,
-            HttpServletRequest request) {
-        negotiateMediaType(request, acceptParam, INSTANCE_TYPES, INSTANCE_DEFAULT);
+            @RequestHeader(value = HttpHeaders.ACCEPT, required = false) String acceptHeader) throws IOException {
+        final String mediaType = MediaTypeNegotiator.negotiate(acceptHeader, acceptParam, DICOM_TYPES, INSTANCE_DEFAULT);
+        final File file = dicomService.resolveInstanceFile(getSessionUser(), projectId, studyUID, seriesUID, instanceUID);
 
-        UserI user = getSessionUser();
-        final InputStream stream;
-        try {
-            stream = dicomService.retrieveInstance(user, projectId, studyUID, seriesUID, instanceUID);
-        } catch (IOException e) {
-            throw new DicomWebException("Error reading instance " + instanceUID, e,
-                    HttpStatus.INTERNAL_SERVER_ERROR.value(), HttpStatus.INTERNAL_SERVER_ERROR.name());
+        if (MULTIPART_RELATED.equals(mediaType)) {
+            final String boundary = UUID.randomUUID().toString();
+            final StreamingResponseBody body = out -> streamFilesAsMultipart(out, boundary, Collections.singletonList(file), instanceUID);
+            final MediaType contentType = MediaType.parseMediaType(DicomWebUtils.getMultipartContentType(boundary));
+            return ResponseEntity.ok().contentType(contentType).body(body);
         }
-
-        HttpHeaders headers = new HttpHeaders();
-        headers.setContentType(MediaType.parseMediaType(APPLICATION_DICOM));
-
         return ResponseEntity.ok()
-                .headers(headers)
-                .body(new InputStreamResource(stream));
-    }
-
-    // backward-compatible overload used by tests
-    public ResponseEntity<InputStreamResource> retrieveInstance(
-            String projectId, String studyUID, String seriesUID, String instanceUID) {
-        return retrieveInstance(projectId, studyUID, seriesUID, instanceUID, null, null);
+                .contentType(MediaType.parseMediaType(APPLICATION_DICOM))
+                    .body(out -> Files.copy(file.toPath(), out));
     }
 
     // ---- Instance metadata ----
@@ -165,23 +143,15 @@ public class WadoRsApi extends AbstractXapiRestController {
             @PathVariable String seriesUID,
             @PathVariable String instanceUID,
             @RequestParam(value = "accept", required = false) String acceptParam,
-            HttpServletRequest request) throws Exception {
-        String selected = negotiateMediaType(request, acceptParam, METADATA_TYPES, METADATA_DEFAULT);
+            @RequestHeader(value = HttpHeaders.ACCEPT, required = false) String acceptHeader,
+            HttpServletRequest request) {
+        final String mediaType = MediaTypeNegotiator.negotiate(acceptHeader, acceptParam, METADATA_TYPES, METADATA_DEFAULT);
 
-        UserI user = getSessionUser();
-        Attributes attrs = dicomService.retrieveMetadata(user, projectId, studyUID, seriesUID, instanceUID);
+        Attributes attrs = dicomService.retrieveMetadata(getSessionUser(), projectId, studyUID, seriesUID, instanceUID);
 
-        String requestUrl = request.getRequestURL().toString();
-        String baseUri = BulkDataHandler.extractBaseUri(requestUrl, projectId);
+        String baseUri = BulkDataHandler.extractBaseUri(request.getRequestURL().toString(), projectId);
 
-        return buildMetadataResponse(Stream.of(attrs), selected, baseUri, studyUID);
-    }
-
-    // backward-compatible overload used by tests
-    public ResponseEntity<String> retrieveInstanceMetadata(
-            String projectId, String studyUID, String seriesUID, String instanceUID,
-            HttpServletRequest request) throws Exception {
-        return retrieveInstanceMetadata(projectId, studyUID, seriesUID, instanceUID, null, request);
+        return buildMetadataResponse(Stream.of(attrs), mediaType, baseUri, studyUID);
     }
 
     // ---- Series retrieval ----
@@ -189,7 +159,7 @@ public class WadoRsApi extends AbstractXapiRestController {
     @XapiRequestMapping(
             value = "/dicomweb/projects/{projectId}/studies/{studyUID}/series/{seriesUID}",
             method = RequestMethod.GET,
-            produces = "multipart/related"
+            produces = MULTIPART_RELATED
     )
     @ApiOperation(value = "Retrieve all instances in a series (WADO-RS)", response = byte[].class)
     @ApiResponses({
@@ -202,19 +172,13 @@ public class WadoRsApi extends AbstractXapiRestController {
     public ResponseEntity<StreamingResponseBody> retrieveSeries(
             @PathVariable final String projectId,
             @PathVariable final String studyUID,
-            @PathVariable final String seriesUID,
-            @RequestParam(value = "accept", required = false) String acceptParam,
-            HttpServletRequest request) throws Exception {
-        negotiateMultipartDicom(request, acceptParam);
-
-        final UserI user = getSessionUser();
-
+            @PathVariable final String seriesUID) throws Exception {
         // Resolve the files on the request thread, where the request's ThreadLocal context
         // (Spring TransactionSynchronizationManager, XDAT user/tx stash) is still bound.
         // The StreamingResponseBody below runs on an async dispatch thread that does NOT
         // inherit that context, so we keep it pure file I/O — no XDAT calls. The empty
         // list is the 404 signal. Catalog-only walk: no DICOM headers are parsed.
-        final List<File> files = dicomService.resolveSeriesFiles(user, projectId, studyUID, seriesUID);
+        final List<File> files = dicomService.resolveSeriesFiles(getSessionUser(), projectId, studyUID, seriesUID);
         if (files.isEmpty()) {
             throw new ResourceNotFoundException("Series", seriesUID);
         }
@@ -225,12 +189,6 @@ public class WadoRsApi extends AbstractXapiRestController {
         final StreamingResponseBody body = out -> streamFilesAsMultipart(out, boundary, files, seriesUID);
 
         return ResponseEntity.ok().contentType(contentType).body(body);
-    }
-
-    // backward-compatible overload used by tests
-    public ResponseEntity<StreamingResponseBody> retrieveSeries(
-            String projectId, String studyUID, String seriesUID) throws Exception {
-        return retrieveSeries(projectId, studyUID, seriesUID, null, null);
     }
 
     // ---- Study metadata ----
@@ -252,13 +210,13 @@ public class WadoRsApi extends AbstractXapiRestController {
             @PathVariable String projectId,
             @PathVariable String studyUID,
             @RequestParam(value = "accept", required = false) String acceptParam,
+            @RequestHeader(value = HttpHeaders.ACCEPT, required = false) String acceptHeader,
             HttpServletRequest request) {
-        String selected = negotiateMediaType(request, acceptParam, METADATA_TYPES, METADATA_DEFAULT);
+        final String mediaType = MediaTypeNegotiator.negotiate(acceptHeader, acceptParam, METADATA_TYPES, METADATA_DEFAULT);
 
-        UserI user = getSessionUser();
         log.debug("Retrieving study metadata for project={}, study={}", projectId, studyUID);
 
-        List<Attributes> instances = dicomService.retrieveAllStudyInstanceMetadata(user, projectId, studyUID)
+        List<Attributes> instances = dicomService.retrieveAllStudyInstanceMetadata(getSessionUser(), projectId, studyUID)
                 .collect(Collectors.toList());
 
         if (instances.isEmpty()) {
@@ -266,17 +224,10 @@ public class WadoRsApi extends AbstractXapiRestController {
             throw new ResourceNotFoundException("Study", studyUID);
         }
 
-        String requestUrl = request.getRequestURL().toString();
-        String baseUri = BulkDataHandler.extractBaseUri(requestUrl, projectId);
+        String baseUri = BulkDataHandler.extractBaseUri(request.getRequestURL().toString(), projectId);
 
-        log.debug("Returning {} metadata for {} instances", selected, instances.size());
-        return buildMetadataResponse(instances.stream(), selected, baseUri, studyUID);
-    }
-
-    // backward-compatible overload used by tests
-    public ResponseEntity<String> retrieveStudyMetadata(
-            String projectId, String studyUID, HttpServletRequest request) throws Exception {
-        return retrieveStudyMetadata(projectId, studyUID, null, request);
+        log.debug("Returning {} metadata for {} instances", mediaType, instances.size());
+        return buildMetadataResponse(instances.stream(), mediaType, baseUri, studyUID);
     }
 
     // ---- Study retrieval ----
@@ -284,7 +235,7 @@ public class WadoRsApi extends AbstractXapiRestController {
     @XapiRequestMapping(
             value = "/dicomweb/projects/{projectId}/studies/{studyUID}",
             method = RequestMethod.GET,
-            produces = "multipart/related"
+            produces = MULTIPART_RELATED
     )
     @ApiOperation(value = "Retrieve all instances in a study (WADO-RS)", response = byte[].class)
     @ApiResponses({
@@ -296,17 +247,12 @@ public class WadoRsApi extends AbstractXapiRestController {
     })
     public ResponseEntity<StreamingResponseBody> retrieveStudy(
             @PathVariable final String projectId,
-            @PathVariable final String studyUID,
-            @RequestParam(value = "accept", required = false) String acceptParam,
-            HttpServletRequest request) throws Exception {
-        negotiateMultipartDicom(request, acceptParam);
-
-        final UserI user = getSessionUser();
+            @PathVariable final String studyUID) throws Exception {
         log.debug("Retrieving study instances for project={}, study={}", projectId, studyUID);
 
         // Resolve every file in the study on the request thread; see the comment on
         // retrieveSeries for why this is done before returning the StreamingResponseBody.
-        final List<File> files = dicomService.resolveStudyFiles(user, projectId, studyUID);
+        final List<File> files = dicomService.resolveStudyFiles(getSessionUser(), projectId, studyUID);
         if (files.isEmpty()) {
             log.warn("No files found for study {}", studyUID);
             throw new ResourceNotFoundException("Study", studyUID);
@@ -318,12 +264,6 @@ public class WadoRsApi extends AbstractXapiRestController {
         final StreamingResponseBody body = out -> streamFilesAsMultipart(out, boundary, files, studyUID);
 
         return ResponseEntity.ok().contentType(contentType).body(body);
-    }
-
-    // backward-compatible overload used by tests
-    public ResponseEntity<StreamingResponseBody> retrieveStudy(
-            String projectId, String studyUID) throws Exception {
-        return retrieveStudy(projectId, studyUID, null, null);
     }
 
     // ---- Rendered instance ----
@@ -351,30 +291,21 @@ public class WadoRsApi extends AbstractXapiRestController {
             @RequestParam(required = false) String viewport,
             @RequestParam(required = false) String window,
             @RequestParam(required = false) String quality,
-            HttpServletRequest request,
+            @RequestHeader(value = HttpHeaders.ACCEPT, required = false) String acceptHeader,
             HttpServletResponse response) throws IOException {
-        String selected = negotiateMediaType(request, acceptParam, RENDERED_TYPES, RENDERED_DEFAULT);
+        final String mediaType = MediaTypeNegotiator.negotiate(acceptHeader, acceptParam, RENDERED_TYPES, RENDERED_DEFAULT);
 
-        UserI user = getSessionUser();
-        ImageFormat format = ImageFormat.fromMimeType(selected);
+        ImageFormat format = ImageFormat.fromMimeType(mediaType);
         RenderingParams params = RenderingParams.parse(viewport, window, quality);
 
-        log.debug("Rendered request: Accept={}, selected={}, format={}",
-                request != null ? request.getHeader("Accept") : null, selected, format);
+        log.debug("Rendered request: Accept={}/{}, selected={}, format={}",
+                acceptParam, acceptHeader, mediaType, format);
 
         RenderedInstanceResult result =
-                dicomService.retrieveRenderedInstance(user, projectId, studyUID, seriesUID,
+                dicomService.retrieveRenderedInstance(getSessionUser(), projectId, studyUID, seriesUID,
                         instanceUID, frame, format, params);
 
         writeRenderedResponse(result, instanceUID, response);
-    }
-
-    // backward-compatible overload used by tests
-    public void retrieveInstanceRendered(
-            String projectId, String studyUID, String seriesUID, String instanceUID,
-            Integer frame, HttpServletRequest request, HttpServletResponse response) throws IOException {
-        retrieveInstanceRendered(projectId, studyUID, seriesUID, instanceUID, frame, null,
-                null, null, null, request, response);
     }
 
     // ---- Study rendered ----
@@ -398,25 +329,15 @@ public class WadoRsApi extends AbstractXapiRestController {
             @RequestParam(required = false) String viewport,
             @RequestParam(required = false) String window,
             @RequestParam(required = false) String quality,
-            HttpServletRequest request,
+            @RequestHeader(value = HttpHeaders.ACCEPT, required = false) String acceptHeader,
             HttpServletResponse response) throws IOException {
-        String selected = negotiateMediaType(request, acceptParam, RENDERED_TYPES, RENDERED_DEFAULT);
-
-        UserI user = getSessionUser();
-        ImageFormat format = ImageFormat.fromMimeType(selected);
-        RenderingParams params = RenderingParams.parse(viewport, window, quality);
-
-        RenderedInstanceResult result =
-                dicomService.retrieveRenderedStudy(user, projectId, studyUID, frame, format, params);
+        RenderedInstanceResult result = dicomService.retrieveRenderedStudy(
+                getSessionUser(), projectId, studyUID, frame,
+                ImageFormat.fromMimeType(MediaTypeNegotiator.negotiate(
+                        acceptHeader, acceptParam, RENDERED_TYPES, RENDERED_DEFAULT)),
+                RenderingParams.parse(viewport, window, quality));
 
         writeRenderedResponse(result, studyUID, response);
-    }
-
-    // backward-compatible overload used by tests
-    public void retrieveStudyRendered(
-            String projectId, String studyUID,
-            HttpServletRequest request, HttpServletResponse response) throws IOException {
-        retrieveStudyRendered(projectId, studyUID, null, null, null, null, null, request, response);
     }
 
     // ---- Series rendered ----
@@ -441,27 +362,15 @@ public class WadoRsApi extends AbstractXapiRestController {
             @RequestParam(required = false) String viewport,
             @RequestParam(required = false) String window,
             @RequestParam(required = false) String quality,
-            HttpServletRequest request,
+            @RequestHeader(value = HttpHeaders.ACCEPT, required = false) String acceptHeader,
             HttpServletResponse response) throws IOException {
-        String selected = negotiateMediaType(request, acceptParam, RENDERED_TYPES, RENDERED_DEFAULT);
-
-        UserI user = getSessionUser();
-        ImageFormat format = ImageFormat.fromMimeType(selected);
-        RenderingParams params = RenderingParams.parse(viewport, window, quality);
-
-        RenderedInstanceResult result =
-                dicomService.retrieveRenderedSeries(user, projectId, studyUID, seriesUID,
-                        frame, format, params);
+        RenderedInstanceResult result = dicomService.retrieveRenderedSeries(
+                getSessionUser(), projectId, studyUID, seriesUID, frame,
+                ImageFormat.fromMimeType(MediaTypeNegotiator.negotiate(
+                        acceptHeader, acceptParam, RENDERED_TYPES, RENDERED_DEFAULT)),
+                RenderingParams.parse(viewport, window, quality));
 
         writeRenderedResponse(result, seriesUID, response);
-    }
-
-    // backward-compatible overload used by tests
-    public void retrieveSeriesRendered(
-            String projectId, String studyUID, String seriesUID,
-            HttpServletRequest request, HttpServletResponse response) throws IOException {
-        retrieveSeriesRendered(projectId, studyUID, seriesUID, null, null,
-                null, null, null, request, response);
     }
 
     // ---- Frame rendered ----
@@ -487,14 +396,8 @@ public class WadoRsApi extends AbstractXapiRestController {
             @RequestParam(required = false) String viewport,
             @RequestParam(required = false) String window,
             @RequestParam(required = false) String quality,
-            HttpServletRequest request,
+            @RequestHeader(value = HttpHeaders.ACCEPT, required = false) String acceptHeader,
             HttpServletResponse response) throws IOException {
-        String selected = negotiateMediaType(request, acceptParam, RENDERED_TYPES, RENDERED_DEFAULT);
-
-        UserI user = getSessionUser();
-        ImageFormat format = ImageFormat.fromMimeType(selected);
-        RenderingParams params = RenderingParams.parse(viewport, window, quality);
-
         // Use the first frame number from the list
         Integer frameNumber = null;
         if (frameList != null && !frameList.isEmpty()) {
@@ -505,20 +408,13 @@ public class WadoRsApi extends AbstractXapiRestController {
             }
         }
 
-        RenderedInstanceResult result =
-                dicomService.retrieveRenderedInstance(user, projectId, studyUID, seriesUID,
-                        instanceUID, frameNumber, format, params);
+        RenderedInstanceResult result = dicomService.retrieveRenderedInstance(
+                getSessionUser(), projectId, studyUID, seriesUID, instanceUID, frameNumber,
+                ImageFormat.fromMimeType(MediaTypeNegotiator.negotiate(
+                        acceptHeader, acceptParam, RENDERED_TYPES, RENDERED_DEFAULT)),
+                RenderingParams.parse(viewport, window, quality));
 
         writeRenderedResponse(result, instanceUID, response);
-    }
-
-    // backward-compatible overload used by tests
-    public void retrieveFrameRendered(
-            String projectId, String studyUID, String seriesUID,
-            String instanceUID, String frameList,
-            HttpServletRequest request, HttpServletResponse response) throws IOException {
-        retrieveFrameRendered(projectId, studyUID, seriesUID, instanceUID, frameList,
-                null, null, null, null, request, response);
     }
 
     // ---- Study thumbnail ----
@@ -538,25 +434,15 @@ public class WadoRsApi extends AbstractXapiRestController {
             @PathVariable String studyUID,
             @RequestParam(required = false) String viewport,
             @RequestParam(value = "accept", required = false) String acceptParam,
-            HttpServletRequest request,
+            @RequestHeader(value = HttpHeaders.ACCEPT, required = false) String acceptHeader,
             HttpServletResponse response) throws IOException {
-        String selected = negotiateMediaType(request, acceptParam, RENDERED_TYPES, RENDERED_DEFAULT);
-
-        UserI user = getSessionUser();
-        ImageFormat format = ImageFormat.fromMimeType(selected);
-        RenderingParams params = RenderingParams.parse(viewport, null, null);
-
-        RenderedInstanceResult result =
-                dicomService.retrieveThumbnailStudy(user, projectId, studyUID, params, format);
+        RenderedInstanceResult result = dicomService.retrieveThumbnailStudy(
+                getSessionUser(), projectId, studyUID,
+                RenderingParams.parse(viewport, null, null),
+                ImageFormat.fromMimeType(MediaTypeNegotiator.negotiate(
+                        acceptHeader, acceptParam, RENDERED_TYPES, RENDERED_DEFAULT)));
 
         writeRenderedResponse(result, studyUID, response);
-    }
-
-    // backward-compatible overload used by tests
-    public void retrieveStudyThumbnail(
-            String projectId, String studyUID,
-            HttpServletResponse response) throws IOException {
-        retrieveStudyThumbnail(projectId, studyUID, null, null, null, response);
     }
 
     // ---- Series thumbnail ----
@@ -577,26 +463,15 @@ public class WadoRsApi extends AbstractXapiRestController {
             @PathVariable String seriesUID,
             @RequestParam(required = false) String viewport,
             @RequestParam(value = "accept", required = false) String acceptParam,
-            HttpServletRequest request,
+            @RequestHeader(value = HttpHeaders.ACCEPT, required = false) String acceptHeader,
             HttpServletResponse response) throws IOException {
-        String selected = negotiateMediaType(request, acceptParam, RENDERED_TYPES, RENDERED_DEFAULT);
-
-        UserI user = getSessionUser();
-        ImageFormat format = ImageFormat.fromMimeType(selected);
-        RenderingParams params = RenderingParams.parse(viewport, null, null);
-
-        RenderedInstanceResult result =
-                dicomService.retrieveThumbnailSeries(user, projectId, studyUID, seriesUID,
-                        params, format);
+        RenderedInstanceResult result = dicomService.retrieveThumbnailSeries(
+                getSessionUser(), projectId, studyUID, seriesUID,
+                RenderingParams.parse(viewport, null, null),
+                ImageFormat.fromMimeType(MediaTypeNegotiator.negotiate(
+                        acceptHeader, acceptParam, RENDERED_TYPES, RENDERED_DEFAULT)));
 
         writeRenderedResponse(result, seriesUID, response);
-    }
-
-    // backward-compatible overload used by tests
-    public void retrieveSeriesThumbnail(
-            String projectId, String studyUID, String seriesUID,
-            HttpServletResponse response) throws IOException {
-        retrieveSeriesThumbnail(projectId, studyUID, seriesUID, null, null, null, response);
     }
 
     // ---- Instance thumbnail ----
@@ -618,27 +493,15 @@ public class WadoRsApi extends AbstractXapiRestController {
             @PathVariable String instanceUID,
             @RequestParam(required = false) String viewport,
             @RequestParam(value = "accept", required = false) String acceptParam,
-            HttpServletRequest request,
+            @RequestHeader(value = HttpHeaders.ACCEPT, required = false) String acceptHeader,
             HttpServletResponse response) throws IOException {
-        String selected = negotiateMediaType(request, acceptParam, RENDERED_TYPES, RENDERED_DEFAULT);
-
-        UserI user = getSessionUser();
-        ImageFormat format = ImageFormat.fromMimeType(selected);
-        RenderingParams params = RenderingParams.parse(viewport, null, null);
-
-        RenderedInstanceResult result =
-                dicomService.retrieveThumbnailInstance(user, projectId, studyUID, seriesUID,
-                        instanceUID, params, format);
+        RenderedInstanceResult result = dicomService.retrieveThumbnailInstance(
+                getSessionUser(), projectId, studyUID, seriesUID, instanceUID,
+                RenderingParams.parse(viewport, null, null),
+                ImageFormat.fromMimeType(MediaTypeNegotiator.negotiate(
+                        acceptHeader, acceptParam, RENDERED_TYPES, RENDERED_DEFAULT)));
 
         writeRenderedResponse(result, instanceUID, response);
-    }
-
-    // backward-compatible overload used by tests
-    public void retrieveInstanceThumbnail(
-            String projectId, String studyUID, String seriesUID, String instanceUID,
-            HttpServletResponse response) throws IOException {
-        retrieveInstanceThumbnail(projectId, studyUID, seriesUID, instanceUID,
-                null, null, null, response);
     }
 
     // ---- Frame thumbnail ----
@@ -661,28 +524,15 @@ public class WadoRsApi extends AbstractXapiRestController {
             @PathVariable String frameList,
             @RequestParam(required = false) String viewport,
             @RequestParam(value = "accept", required = false) String acceptParam,
-            HttpServletRequest request,
+            @RequestHeader(value = HttpHeaders.ACCEPT, required = false) String acceptHeader,
             HttpServletResponse response) throws IOException {
-        String selected = negotiateMediaType(request, acceptParam, RENDERED_TYPES, RENDERED_DEFAULT);
-
-        UserI user = getSessionUser();
-        ImageFormat format = ImageFormat.fromMimeType(selected);
-        RenderingParams params = RenderingParams.parse(viewport, null, null);
-
-        RenderedInstanceResult result =
-                dicomService.retrieveThumbnailFrame(user, projectId, studyUID, seriesUID,
-                        instanceUID, frameList, params, format);
+        RenderedInstanceResult result = dicomService.retrieveThumbnailFrame(
+                getSessionUser(), projectId, studyUID, seriesUID, instanceUID, frameList,
+                RenderingParams.parse(viewport, null, null),
+                ImageFormat.fromMimeType(MediaTypeNegotiator.negotiate(
+                        acceptHeader, acceptParam, RENDERED_TYPES, RENDERED_DEFAULT)));
 
         writeRenderedResponse(result, instanceUID, response);
-    }
-
-    // backward-compatible overload used by tests
-    public void retrieveFrameThumbnail(
-            String projectId, String studyUID, String seriesUID,
-            String instanceUID, String frameList,
-            HttpServletResponse response) throws IOException {
-        retrieveFrameThumbnail(projectId, studyUID, seriesUID, instanceUID, frameList,
-                null, null, null, response);
     }
 
     // ---- Frame retrieval ----
@@ -690,7 +540,7 @@ public class WadoRsApi extends AbstractXapiRestController {
     @XapiRequestMapping(
             value = "/dicomweb/projects/{projectId}/studies/{studyUID}/series/{seriesUID}/instances/{instanceUID}/frames/{frameList}",
             method = RequestMethod.GET,
-            produces = {APPLICATION_OCTET_STREAM_VALUE, "multipart/related"}
+            produces = {APPLICATION_OCTET_STREAM_VALUE, MULTIPART_RELATED}
     )
     @ApiOperation(value = "Retrieve frame(s) from instance (WADO-RS)", response = byte[].class)
     @ApiResponses({
@@ -705,17 +555,11 @@ public class WadoRsApi extends AbstractXapiRestController {
             @PathVariable String studyUID,
             @PathVariable String seriesUID,
             @PathVariable String instanceUID,
-            @PathVariable String frameList,
-            @RequestParam(value = "accept", required = false) String acceptParam,
-            HttpServletRequest request) throws Exception {
-        // Frames support octet-stream and multipart; we don't reject based on Accept
-        // since the response format depends on how many frames are requested.
-        if (request != null) {
-            negotiateMediaType(request, acceptParam, FRAME_TYPES, APPLICATION_OCTET_STREAM_VALUE);
-        }
-
-        UserI user = getSessionUser();
-        List<byte[]> frames = dicomService.retrieveFrames(user, projectId, studyUID, seriesUID,
+            @PathVariable String frameList) throws Exception {
+        // Frames support octet-stream and multipart, but the response format is
+        // chosen by frame count (single = octet-stream, multiple = multipart),
+        // not by client preference.
+        List<byte[]> frames = dicomService.retrieveFrames(getSessionUser(), projectId, studyUID, seriesUID,
                 instanceUID, frameList);
 
         if (frames == null || frames.isEmpty()) {
@@ -744,13 +588,6 @@ public class WadoRsApi extends AbstractXapiRestController {
                 .body(new InputStreamResource(new ByteArrayInputStream(multipart.toByteArray())));
     }
 
-    // backward-compatible overload used by tests
-    public ResponseEntity<InputStreamResource> retrieveFrames(
-            String projectId, String studyUID, String seriesUID, String instanceUID,
-            String frameList, HttpServletRequest request) throws Exception {
-        return retrieveFrames(projectId, studyUID, seriesUID, instanceUID, frameList, null, request);
-    }
-
     // ---- Bulk data retrieval ----
 
     @XapiRequestMapping(
@@ -773,15 +610,8 @@ public class WadoRsApi extends AbstractXapiRestController {
             @PathVariable String seriesUID,
             @PathVariable String instanceUID,
             @PathVariable String tag,
-            @RequestParam(value = "accept", required = false) String acceptParam,
             HttpServletRequest request,
             HttpServletResponse response) throws Exception {
-        if (request != null) {
-            negotiateMediaType(request, acceptParam, BULKDATA_TYPES, APPLICATION_OCTET_STREAM_VALUE);
-        }
-
-        UserI user = getSessionUser();
-
         int tagInt;
         try {
             tagInt = Integer.parseUnsignedInt(tag, 16);
@@ -792,13 +622,12 @@ public class WadoRsApi extends AbstractXapiRestController {
 
         log.debug("Retrieving bulk data for instance {} tag {}", instanceUID, tag);
 
-        InputStream stream = dicomService.retrieveInstance(user, projectId, studyUID, seriesUID, instanceUID);
+        final File file = dicomService.resolveInstanceFile(getSessionUser(), projectId, studyUID, seriesUID, instanceUID);
 
         byte[] bulkData;
-        try (org.dcm4che3.io.DicomInputStream dis = new org.dcm4che3.io.DicomInputStream(stream)) {
-            dis.setIncludeBulkData(org.dcm4che3.io.DicomInputStream.IncludeBulkData.YES);
-
-            Attributes attrs = dis.readDataset();
+        try (final DicomInputStream dis = new DicomInputStream(file)) {
+            dis.setIncludeBulkData(DicomInputStream.IncludeBulkData.YES);
+            final Attributes attrs = dis.readDataset();
 
             if (!attrs.contains(tagInt)) {
                 log.warn("Tag {} not found in instance {}", tag, instanceUID);
@@ -812,7 +641,7 @@ public class WadoRsApi extends AbstractXapiRestController {
                 throw new ResourceNotFoundException("Bulk data tag", tag);
             }
 
-            log.info("Retrieved bulk data for tag {}: {} bytes", tag, bulkData.length);
+            log.debug("Retrieved bulk data for tag {}: {} bytes", tag, bulkData.length);
         }
 
         String contentLocation = BulkDataHandler.generateBulkDataURI(
@@ -826,19 +655,12 @@ public class WadoRsApi extends AbstractXapiRestController {
         response.getOutputStream().flush();
     }
 
-    // backward-compatible overload used by tests
-    public void retrieveBulkData(
-            String projectId, String studyUID, String seriesUID, String instanceUID,
-            String tag, HttpServletResponse response) throws Exception {
-        retrieveBulkData(projectId, studyUID, seriesUID, instanceUID, tag, null, null, response);
-    }
-
     // ---- Instance bulk data (all tags) ----
 
     @XapiRequestMapping(
             value = "/dicomweb/projects/{projectId}/studies/{studyUID}/series/{seriesUID}/instances/{instanceUID}/bulkdata",
             method = RequestMethod.GET,
-            produces = "multipart/related"
+            produces = MULTIPART_RELATED
     )
     @ApiOperation(value = "Retrieve all bulk data from an instance (WADO-RS)", response = byte[].class)
     @ApiResponses({
@@ -851,14 +673,10 @@ public class WadoRsApi extends AbstractXapiRestController {
             @PathVariable String studyUID,
             @PathVariable String seriesUID,
             @PathVariable String instanceUID,
-            @RequestParam(value = "accept", required = false) String acceptParam,
             HttpServletRequest request) {
-        negotiateMultipartOctetStream(request, acceptParam);
-
-        UserI user = getSessionUser();
         String baseUri = extractBaseUri(request, projectId);
         List<BulkDataItem> items = dicomService.retrieveInstanceBulkData(
-                user, projectId, studyUID, seriesUID, instanceUID, baseUri);
+                getSessionUser(), projectId, studyUID, seriesUID, instanceUID, baseUri);
 
         if (items == null || items.isEmpty()) {
             throw new ResourceNotFoundException("Instance bulk data", instanceUID);
@@ -867,18 +685,12 @@ public class WadoRsApi extends AbstractXapiRestController {
         return buildMultipartBulkDataResponse(items);
     }
 
-    // backward-compatible overload used by tests
-    public ResponseEntity<InputStreamResource> retrieveInstanceBulkData(
-            String projectId, String studyUID, String seriesUID, String instanceUID) {
-        return retrieveInstanceBulkData(projectId, studyUID, seriesUID, instanceUID, null, null);
-    }
-
     // ---- Series bulk data ----
 
     @XapiRequestMapping(
             value = "/dicomweb/projects/{projectId}/studies/{studyUID}/series/{seriesUID}/bulkdata",
             method = RequestMethod.GET,
-            produces = "multipart/related"
+            produces = MULTIPART_RELATED
     )
     @ApiOperation(value = "Retrieve all bulk data from a series (WADO-RS)", response = byte[].class)
     @ApiResponses({
@@ -890,14 +702,10 @@ public class WadoRsApi extends AbstractXapiRestController {
             @PathVariable String projectId,
             @PathVariable String studyUID,
             @PathVariable String seriesUID,
-            @RequestParam(value = "accept", required = false) String acceptParam,
             HttpServletRequest request) {
-        negotiateMultipartOctetStream(request, acceptParam);
-
-        UserI user = getSessionUser();
         String baseUri = extractBaseUri(request, projectId);
         List<BulkDataItem> items = dicomService.retrieveSeriesBulkData(
-                user, projectId, studyUID, seriesUID, baseUri);
+                getSessionUser(), projectId, studyUID, seriesUID, baseUri);
 
         if (items == null || items.isEmpty()) {
             throw new ResourceNotFoundException("Series bulk data", seriesUID);
@@ -906,18 +714,12 @@ public class WadoRsApi extends AbstractXapiRestController {
         return buildMultipartBulkDataResponse(items);
     }
 
-    // backward-compatible overload used by tests
-    public ResponseEntity<InputStreamResource> retrieveSeriesBulkData(
-            String projectId, String studyUID, String seriesUID) {
-        return retrieveSeriesBulkData(projectId, studyUID, seriesUID, null, null);
-    }
-
     // ---- Study bulk data ----
 
     @XapiRequestMapping(
             value = "/dicomweb/projects/{projectId}/studies/{studyUID}/bulkdata",
             method = RequestMethod.GET,
-            produces = "multipart/related"
+            produces = MULTIPART_RELATED
     )
     @ApiOperation(value = "Retrieve all bulk data from a study (WADO-RS)", response = byte[].class)
     @ApiResponses({
@@ -928,14 +730,10 @@ public class WadoRsApi extends AbstractXapiRestController {
     public ResponseEntity<InputStreamResource> retrieveStudyBulkData(
             @PathVariable String projectId,
             @PathVariable String studyUID,
-            @RequestParam(value = "accept", required = false) String acceptParam,
             HttpServletRequest request) {
-        negotiateMultipartOctetStream(request, acceptParam);
-
-        UserI user = getSessionUser();
         String baseUri = extractBaseUri(request, projectId);
         List<BulkDataItem> items = dicomService.retrieveStudyBulkData(
-                user, projectId, studyUID, baseUri);
+                getSessionUser(), projectId, studyUID, baseUri);
 
         if (items == null || items.isEmpty()) {
             throw new ResourceNotFoundException("Study bulk data", studyUID);
@@ -944,18 +742,12 @@ public class WadoRsApi extends AbstractXapiRestController {
         return buildMultipartBulkDataResponse(items);
     }
 
-    // backward-compatible overload used by tests
-    public ResponseEntity<InputStreamResource> retrieveStudyBulkData(
-            String projectId, String studyUID) {
-        return retrieveStudyBulkData(projectId, studyUID, null, null);
-    }
-
     // ---- Instance pixel data ----
 
     @XapiRequestMapping(
             value = "/dicomweb/projects/{projectId}/studies/{studyUID}/series/{seriesUID}/instances/{instanceUID}/pixeldata",
             method = RequestMethod.GET,
-            produces = "multipart/related"
+            produces = MULTIPART_RELATED
     )
     @ApiOperation(value = "Retrieve pixel data from an instance (WADO-RS)", response = byte[].class)
     @ApiResponses({
@@ -968,14 +760,10 @@ public class WadoRsApi extends AbstractXapiRestController {
             @PathVariable String studyUID,
             @PathVariable String seriesUID,
             @PathVariable String instanceUID,
-            @RequestParam(value = "accept", required = false) String acceptParam,
             HttpServletRequest request) {
-        negotiateMultipartOctetStream(request, acceptParam);
-
-        UserI user = getSessionUser();
         String baseUri = extractBaseUri(request, projectId);
         List<BulkDataItem> items = dicomService.retrieveInstancePixelData(
-                user, projectId, studyUID, seriesUID, instanceUID, baseUri);
+                getSessionUser(), projectId, studyUID, seriesUID, instanceUID, baseUri);
 
         if (items == null || items.isEmpty()) {
             throw new ResourceNotFoundException("Instance pixel data", instanceUID);
@@ -984,18 +772,12 @@ public class WadoRsApi extends AbstractXapiRestController {
         return buildMultipartBulkDataResponse(items);
     }
 
-    // backward-compatible overload used by tests
-    public ResponseEntity<InputStreamResource> retrieveInstancePixelData(
-            String projectId, String studyUID, String seriesUID, String instanceUID) {
-        return retrieveInstancePixelData(projectId, studyUID, seriesUID, instanceUID, null, null);
-    }
-
     // ---- Series pixel data ----
 
     @XapiRequestMapping(
             value = "/dicomweb/projects/{projectId}/studies/{studyUID}/series/{seriesUID}/pixeldata",
             method = RequestMethod.GET,
-            produces = "multipart/related"
+            produces = MULTIPART_RELATED
     )
     @ApiOperation(value = "Retrieve pixel data from a series (WADO-RS)", response = byte[].class)
     @ApiResponses({
@@ -1007,14 +789,10 @@ public class WadoRsApi extends AbstractXapiRestController {
             @PathVariable String projectId,
             @PathVariable String studyUID,
             @PathVariable String seriesUID,
-            @RequestParam(value = "accept", required = false) String acceptParam,
             HttpServletRequest request) {
-        negotiateMultipartOctetStream(request, acceptParam);
-
-        UserI user = getSessionUser();
         String baseUri = extractBaseUri(request, projectId);
         List<BulkDataItem> items = dicomService.retrieveSeriesPixelData(
-                user, projectId, studyUID, seriesUID, baseUri);
+                getSessionUser(), projectId, studyUID, seriesUID, baseUri);
 
         if (items == null || items.isEmpty()) {
             throw new ResourceNotFoundException("Series pixel data", seriesUID);
@@ -1023,18 +801,12 @@ public class WadoRsApi extends AbstractXapiRestController {
         return buildMultipartBulkDataResponse(items);
     }
 
-    // backward-compatible overload used by tests
-    public ResponseEntity<InputStreamResource> retrieveSeriesPixelData(
-            String projectId, String studyUID, String seriesUID) {
-        return retrieveSeriesPixelData(projectId, studyUID, seriesUID, null, null);
-    }
-
     // ---- Study pixel data ----
 
     @XapiRequestMapping(
             value = "/dicomweb/projects/{projectId}/studies/{studyUID}/pixeldata",
             method = RequestMethod.GET,
-            produces = "multipart/related"
+            produces = MULTIPART_RELATED
     )
     @ApiOperation(value = "Retrieve pixel data from a study (WADO-RS)", response = byte[].class)
     @ApiResponses({
@@ -1045,26 +817,16 @@ public class WadoRsApi extends AbstractXapiRestController {
     public ResponseEntity<InputStreamResource> retrieveStudyPixelData(
             @PathVariable String projectId,
             @PathVariable String studyUID,
-            @RequestParam(value = "accept", required = false) String acceptParam,
             HttpServletRequest request) {
-        negotiateMultipartOctetStream(request, acceptParam);
-
-        UserI user = getSessionUser();
         String baseUri = extractBaseUri(request, projectId);
         List<BulkDataItem> items = dicomService.retrieveStudyPixelData(
-                user, projectId, studyUID, baseUri);
+                getSessionUser(), projectId, studyUID, baseUri);
 
         if (items == null || items.isEmpty()) {
             throw new ResourceNotFoundException("Study pixel data", studyUID);
         }
 
         return buildMultipartBulkDataResponse(items);
-    }
-
-    // backward-compatible overload used by tests
-    public ResponseEntity<InputStreamResource> retrieveStudyPixelData(
-            String projectId, String studyUID) {
-        return retrieveStudyPixelData(projectId, studyUID, null, null);
     }
 
     // ---- Series metadata ----
@@ -1087,20 +849,19 @@ public class WadoRsApi extends AbstractXapiRestController {
             @PathVariable String studyUID,
             @PathVariable String seriesUID,
             @RequestParam(value = "accept", required = false) String acceptParam,
-            HttpServletRequest request) throws Exception {
-        String selected = negotiateMediaType(request, acceptParam, METADATA_TYPES, METADATA_DEFAULT);
+            @RequestHeader(value = HttpHeaders.ACCEPT, required = false) String acceptHeader,
+            HttpServletRequest request) {
+        final String mediaType = MediaTypeNegotiator.negotiate(acceptHeader, acceptParam, METADATA_TYPES, METADATA_DEFAULT);
 
-        UserI user = getSessionUser();
-        List<Attributes> instances = dicomService.searchMetadata(user, projectId, studyUID, seriesUID, null)
+        List<Attributes> instances = dicomService.searchMetadata(getSessionUser(), projectId, studyUID, seriesUID, null)
                 .collect(Collectors.toList());
         if (instances.isEmpty()) {
             throw new ResourceNotFoundException("Series metadata", seriesUID);
         }
 
-        String requestUrl = request.getRequestURL().toString();
-        String baseUri = BulkDataHandler.extractBaseUri(requestUrl, projectId);
+        String baseUri = BulkDataHandler.extractBaseUri(request.getRequestURL().toString(), projectId);
 
-        return buildMetadataResponse(instances.stream(), selected, baseUri, studyUID);
+        return buildMetadataResponse(instances.stream(), mediaType, baseUri, studyUID);
     }
 
     // ==================== Helper methods ====================
@@ -1128,32 +889,6 @@ public class WadoRsApi extends AbstractXapiRestController {
 
         response.getOutputStream().write(result.getImageData());
         response.getOutputStream().flush();
-    }
-
-    /**
-     * Run content negotiation for a request.
-     *
-     * @return the selected media type string
-     */
-    private String negotiateMediaType(HttpServletRequest request, String acceptParam,
-                                      List<String> supported, String defaultType) {
-        String acceptHeader = request != null ? request.getHeader("Accept") : null;
-        return MediaTypeNegotiator.negotiate(acceptHeader, acceptParam, supported, defaultType);
-    }
-
-    /**
-     * Negotiate for multipart/related DICOM instance responses.
-     * Accepts multipart/related, application/dicom, or wildcards.
-     */
-    private void negotiateMultipartDicom(HttpServletRequest request, String acceptParam) {
-        if (request == null) return;
-        String acceptHeader = request.getHeader("Accept");
-        if (acceptHeader == null && acceptParam == null) return;
-
-        // For study/series retrieval, we support multipart/related with type=application/dicom
-        // and also accept bare application/dicom or wildcards.
-        List<String> supported = Arrays.asList("multipart/related", APPLICATION_DICOM);
-        MediaTypeNegotiator.negotiate(acceptHeader, acceptParam, supported, "multipart/related");
     }
 
     /**
@@ -1227,19 +962,6 @@ public class WadoRsApi extends AbstractXapiRestController {
     }
 
     /**
-     * Negotiate for multipart/related bulk data responses.
-     * Accepts multipart/related, application/octet-stream, or wildcards.
-     */
-    private void negotiateMultipartOctetStream(HttpServletRequest request, String acceptParam) {
-        if (request == null) return;
-        String acceptHeader = request.getHeader("Accept");
-        if (acceptHeader == null && acceptParam == null) return;
-
-        List<String> supported = Arrays.asList("multipart/related", APPLICATION_OCTET_STREAM_VALUE);
-        MediaTypeNegotiator.negotiate(acceptHeader, acceptParam, supported, "multipart/related");
-    }
-
-    /**
      * Extract base URI from request for BulkDataURI generation.
      */
     private String extractBaseUri(HttpServletRequest request, String projectId) {
@@ -1281,7 +1003,7 @@ public class WadoRsApi extends AbstractXapiRestController {
     }
 
     private ByteArrayOutputStream createMultipartFrameResponse(List<byte[]> frames,
-                                                                String boundary) throws Exception {
+                                                                String boundary) throws IOException {
         ByteArrayOutputStream output = new ByteArrayOutputStream();
 
         for (byte[] frameData : frames) {
