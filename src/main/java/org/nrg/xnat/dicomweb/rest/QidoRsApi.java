@@ -313,7 +313,7 @@ public class QidoRsApi extends AbstractXapiRestController {
                     attrs.setString(Tag.AccessionNumber, org.dcm4che3.data.VR.SH, value);
                     break;
                 case "modality":
-                case "modalitiesinst study":
+                case "modalitiesinstudy":
                     attrs.setString(Tag.Modality, org.dcm4che3.data.VR.CS, value);
                     break;
                 case "seriesdescription":
