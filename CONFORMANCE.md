@@ -118,13 +118,7 @@ treat all such subjects as a single patient.
 
 Implementation: `XnatDicomServiceImpl.java:466, 470`.
 
-### 0.8 CORS is not configured by the plugin
-
-The plugin adds no CORS filter and no `Access-Control-*` headers.
-Browser clients on a different origin (an externally hosted OHIF, for
-example) depend on XNAT's container-level CORS setup.
-
-### 0.9 Authentication is XNAT-session-based, not bearer
+### 0.8 Authentication is XNAT-session-based, not bearer
 
 All endpoints except `/xapi/dicomweb/test` require an authenticated
 XNAT user (cookie session, basic auth via `XNAT-User`/`XNAT-Pass`,
@@ -133,7 +127,7 @@ The test page is declared as an open URL.
 
 Implementation: `DicomWebPlugin.java:14` (`openUrls`).
 
-### 0.10 The STOW per-project endpoint returns 403 (not 404) for unknown projects
+### 0.9 The STOW per-project endpoint returns 403 (not 404) for unknown projects
 
 The endpoint returns HTTP 403 whether the project does not exist or
 the caller lacks edit access. PACS clients that distinguish 404
@@ -143,7 +137,7 @@ cannot tell the two apart here.
 Implementation: `StowRsApi.java:92-95` (throws
 `ForbiddenException`).
 
-### 0.11 STOW-RS response is a JSON array of per-study objects
+### 0.10 STOW-RS response is a JSON array of per-study objects
 
 PS3.18 §10.5.3.3 (Store Instances Response Module, Annex I
 Table I.1-1) specifies a **single** response object with top-level
@@ -166,7 +160,7 @@ response).
 Implementation: `StowRsServiceImpl.java:720-...` (`buildStowRsResponse`,
 per-study grouping starts at line 732).
 
-### 0.12 QIDO-RS pagination uses `X-Total-Count`, not PS3.18's `Warning: 299`
+### 0.11 QIDO-RS pagination uses `X-Total-Count`, not PS3.18's `Warning: 299`
 
 PS3.18 §8.3.4.4.1 defines the pagination remainder-count signal as
 an HTTP `Warning: 299 <service>: There are <remaining> additional
@@ -416,7 +410,7 @@ projects they can read, intersected with the site-wide-included set
 
 The plugin operates over whatever transport XNAT itself is configured
 for (typically HTTPS via a reverse proxy). The plugin does not
-enforce TLS itself and does not configure CORS (Section 0.8).
+enforce TLS itself and does not configure CORS (see Section 10.2).
 
 ---
 
@@ -487,7 +481,7 @@ Java matching: `XnatDicomServiceImpl.matchesDicomDate` and
 `limit` and `offset` follow DICOMweb conventions. The plugin emits
 an `X-Total-Count` response header carrying the total match count
 before pagination. It does **not** emit the PS3.18 `Warning: 299`
-remainder-count header — see 0.12.
+remainder-count header — see 0.11.
 
 Bounds:
 - `limit ≤ 0` → reset to default
@@ -724,7 +718,7 @@ carrying:
 This departs from the PS3.18 Store Instances Response Module
 (§10.5.3.3 / Annex I Table I.1-1), which is a single object with
 flat Referenced/Failed sequences. `(0008,119A)` Other Failures
-Sequence is not emitted. See 0.11.
+Sequence is not emitted. See 0.10.
 
 ### 8.5 Status Codes
 
@@ -733,7 +727,7 @@ Sequence is not emitted. See 0.11.
 | 200    | All or some instances accepted (see Referenced/Failed SOP sequences in the body)   |
 | 400    | Malformed multipart body or no DICOM parts                                         |
 | 401    | Not authenticated                                                                  |
-| 403    | Per-project: project does not exist OR caller lacks edit access (see 0.10)         |
+| 403    | Per-project: project does not exist OR caller lacks edit access (see 0.9)          |
 | 500    | Internal failure of the import pipeline                                            |
 
 ---
@@ -796,7 +790,39 @@ via the REST endpoints in Section 3.4. Properties may also be set in
 | `dicomweb.projectList`         | (empty)              | Projects in the whitelist or blacklist                        |
 | `dicomweb.baseUrl`             | XNAT site URL        | Override base URL used in `Retrieve URL` attributes           |
 
-### 10.2 Audit
+### 10.2 CORS
+
+The plugin does not emit `Access-Control-*` response headers and
+does not register a CORS filter of its own. Cross-origin request
+handling is left to Tomcat (which hosts the XNAT `.war`) or to
+whatever reverse proxy sits in front of Tomcat.
+
+This matters when the DICOMweb clients are browser-based viewers
+(OHIF, VolView, Weasis Web) served from a different origin than the
+XNAT installation. Without a CORS policy that allows the viewer's
+origin and the relevant methods and headers (`Authorization`,
+`Content-Type`, `Accept`, `X-XSRF-TOKEN`, and any custom XNAT
+headers the viewer uses), the browser will block the QIDO-RS,
+WADO-RS, and STOW-RS calls before they reach the plugin.
+
+Configure CORS at one of:
+
+- **Reverse proxy** (nginx, Apache) — recommended for production;
+  add `Access-Control-Allow-Origin` and related headers on the
+  `/xapi/dicomweb/*` location.
+- **Tomcat** — Tomcat's `CorsFilter` in `web.xml` covers all XNAT
+  endpoints uniformly.
+
+Same-origin deployments (the viewer served from the same host and
+port as XNAT) need no CORS configuration.
+
+Note that some PACS-oriented DICOMweb servers ship a CORS
+configuration control in the server's own admin UI. This plugin does
+not; a first-time browser-viewer CORS error is most likely a
+misconfiguration in Tomcat or the reverse proxy, not a plugin
+issue.
+
+### 10.3 Audit
 
 DICOMweb requests are logged via SLF4J using
 `META-INF/resources/dicomweb-logback.xml`. The plugin does not emit
@@ -816,15 +842,16 @@ detailed warning above.
 5. STOW-RS visibility is asynchronous — §0.5
 6. Site-wide STOW can orphan data — §0.6
 7. Missing patient identifiers become literal `UNKNOWN` — §0.7
-8. CORS not configured — §0.8
-9. XNAT-session auth only — §0.9
-10. STOW per-project returns 403 (not 404) for unknown projects — §0.10
-11. STOW-RS response is a JSON array of per-study objects, not the
-    PS3.18 Store Instances Response Module — §0.11
-12. QIDO-RS pagination uses `X-Total-Count`, not PS3.18's
-    `Warning: 299` — §0.12
-13. No UPS-RS, no Capabilities transaction, no DELETE — §1.3
-14. No DICOM Audit Trail (PS3.15) messages — §10.2
+8. XNAT-session auth only — §0.8
+9. STOW per-project returns 403 (not 404) for unknown projects — §0.9
+10. STOW-RS response is a JSON array of per-study objects, not the
+    PS3.18 Store Instances Response Module — §0.10
+11. QIDO-RS pagination uses `X-Total-Count`, not PS3.18's
+    `Warning: 299` — §0.11
+12. No UPS-RS, no Capabilities transaction, no DELETE — §1.3
+13. No DICOM Audit Trail (PS3.15) messages — §10.3
+14. CORS is not configured by the plugin; must be handled in Tomcat
+    or a reverse proxy — §10.2
 15. Series- and instance-level QIDO parses files on disk; large
     studies may be slow.
 
@@ -871,9 +898,9 @@ which have been folded into the current document:
 - All Data Element tag numbers used in this document appear in
   PS3.6 with the keywords used here.
 - STOW-RS response structure diverges from PS3.18 §10.5.3.3 / Annex I
-  (see §0.11, §8.4).
+  (see §0.10, §8.4).
 - Pagination remainder signal diverges from PS3.18 §8.3.4.4.1
-  (see §0.12, §6.4).
+  (see §0.11, §6.4).
 - QIDO-RS UID-list separator is comma per PS3.18 §8.3.4.1
   (previously mis-cited as backslash in §6.2 — fixed).
 - DA/TM range matching semantics implemented per PS3.4
