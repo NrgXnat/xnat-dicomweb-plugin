@@ -5,16 +5,7 @@
 **Product:** XNAT DICOMweb Plugin
 **Version:** 1.3.0-SNAPSHOT
 **DICOM Standard reference:** PS3.18
-**Draft date:** 2026-07-06
-
-> **Drafting note.** Behavioral claims in this document are tagged
-> with the implementing file and line range so readers can confirm
-> them in source. Data-element tag numbers and PS3.18 section
-> references have been verified against the current DICOM standard
-> at `dicom.nema.org/medical/dicom/current/output/html/` (verification
-> pass 2026-07-02, covering PS3.6, PS3.15, PS3.16, PS3.18). Any
-> subsequent edits to spec-touching text should be re-verified before
-> publication.
+**Date:** 2026-07-08
 
 ---
 
@@ -22,8 +13,8 @@
 
 XNAT organizes imaging sessions and related data into a data model
 similar, but not identical, to the DICOM data model. The plugin
-projects the XNAT data model through the DICOMweb services; the
-differences between data models leads in some cases to possibly
+maps the XNAT data model onto the DICOMweb services; the
+differences between data models lead in some cases to possibly
 surprising behavior. This section describes some differences from
 typical DICOMweb implementations.
 
@@ -44,9 +35,6 @@ QIDO-RS and then re-reads the headers will see mismatches in:
 | Study Description = XNAT project ID | original DICOM `(0008,1030)` value |
 | Referring Physician Name = empty    | original DICOM `(0008,0090)` value |
 
-Implementation: `XnatDicomServiceImpl.java:464-540` (study attribute
-assembly).
-
 ### 0.2 Series- and instance-level attributes do come from DICOM headers
 
 Series and instance attributes in QIDO-RS responses are extracted
@@ -57,17 +45,12 @@ depending on the query level. For example `ModalitiesInStudy` at the
 study level is computed from XNAT scan modality, while `Modality` at
 the series level is the DICOM header.
 
-Implementation: `XnatDicomServiceImpl.java:596-598` (series/instance
-file parsing), `:504-509` (`ModalitiesInStudy` from scan modality).
-
 ### 0.3 `fuzzymatching` and `includefield` are silently ignored
 
 Neither parameter is processed by the plugin. The returned attribute
 set at each level is fixed (Section 6.5). A client that supplies
 `fuzzymatching=true` gets exact matching; a client that supplies
 `includefield=...` gets the fixed set.
-
-Implementation: `QidoRsApi.java:279-345`.
 
 ### 0.4 No transcoding; the `transfer-syntax` Accept parameter is silently ignored
 
@@ -77,9 +60,6 @@ parameter of the `Accept` header, and does not return 406 when a
 requested syntax differs from what is on disk. Clients that need a
 specific transfer syntax must accept the archived one or transcode
 client-side.
-
-Implementation: `WadoRsApi.java:1217-1219`
-(`streamFilesAsMultipart`; transfer via `Files.newInputStream`).
 
 ### 0.5 STOW-RS is asynchronous
 
@@ -94,9 +74,6 @@ immediately retrievable via QIDO-RS / WADO-RS.
 
 Round-trip clients that issue STOW then QIDO must poll.
 
-Implementation: `StowRsServiceImpl.java:166-176` (strategy
-selection), `:593-670` (DirectArchive debounce).
-
 ### 0.6 Site-wide STOW with no resolvable project can orphan data
 
 When site-wide STOW receives data whose embedded metadata does not
@@ -106,8 +83,6 @@ archived**. STOW returns 200 but the data is not discoverable
 through QIDO/WADO until an operator promotes it from the prearchive
 UI.
 
-Implementation: `StowRsServiceImpl.java:485-502`.
-
 ### 0.7 Missing patient identifiers are emitted as the literal string `UNKNOWN`
 
 When XNAT has no patient name or patient ID for a subject, QIDO-RS
@@ -116,17 +91,12 @@ value. DICOM allows zero-length values; this plugin emits a literal
 placeholder. Clients that filter or group by patient identifier may
 treat all such subjects as a single patient.
 
-Implementation: `XnatDicomServiceImpl.java:466, 470`.
-
 ### 0.8 The STOW per-project endpoint returns 403 (not 404) for unknown projects
 
 The endpoint returns HTTP 403 whether the project does not exist or
 the caller lacks edit access. PACS clients that distinguish 404
 from 403 to disambiguate "wrong URL" from "wrong permissions"
 cannot tell the two apart here.
-
-Implementation: `StowRsApi.java:92-95` (throws
-`ForbiddenException`).
 
 ### 0.9 STOW-RS response is a JSON array of per-study objects
 
@@ -148,9 +118,6 @@ expected an object, and will not find failures that could not be
 associated with a study (they are logged but not included in the
 response).
 
-Implementation: `StowRsServiceImpl.java:720-...` (`buildStowRsResponse`,
-per-study grouping starts at line 732).
-
 ### 0.10 QIDO-RS pagination uses `X-Total-Count`, not PS3.18's `Warning: 299`
 
 PS3.18 §8.3.4.4.1 defines the pagination remainder-count signal as
@@ -162,9 +129,6 @@ of matches (before pagination), and does not emit `Warning: 299`.
 Clients relying on the PS3.18 convention will not detect that more
 results remain. Clients aware of the plugin's `X-Total-Count` can
 compute the remainder as `X-Total-Count − offset − returned`.
-
-Implementation: `QidoRsApi.java:165, 217, 270`;
-`SiteWideQidoRsApi.java:88, 124, 162`.
 
 ---
 
@@ -260,9 +224,6 @@ The plugin uses `dcm4che-core` 5.x for DICOM parsing and
    Spring's multipart resolver — then hands the resulting DICOM
    files to one of two import strategies (Section 8.2).
 
-Implementation of manual multipart parsing: `StowRsApi.java:74`
-(controller `consumes`); body parser is `Mime4jHybridParser`.
-
 ### 2.3 Sequencing
 
 Requests are independent. There is no application-level locking
@@ -276,9 +237,6 @@ across requests. STOW-RS uploads are processed asynchronously
 All paths below are prefixed with `/xapi`. Per-project and site-wide
 variants share the same query semantics; the only difference is the
 scope and the URL.
-
-Implementation: the prefix is added by the `@XapiRequestMapping`
-annotation on each controller.
 
 ### 3.1 QIDO-RS
 
@@ -356,8 +314,6 @@ The plugin negotiates content via the `Accept` header. The
 query-string shortcut `accept=<type>` may be used in place of the
 header.
 
-Implementation: negotiation logic in `MediaTypeNegotiator`.
-
 | Transaction              | Default response type                               | Also negotiable                  |
 |--------------------------|-----------------------------------------------------|----------------------------------|
 | QIDO-RS                  | `application/dicom+json`                            | —                                |
@@ -381,8 +337,6 @@ mechanisms supported by XNAT (cookie session, basic auth via
 pluggable auth XNAT is configured with — e.g., LDAP or OpenID
 Connect via the `openid-auth-plugin`. There is no DICOMweb-specific
 authentication.
-
-Implementation: `DicomWebPlugin.java:14` (`openUrls`).
 
 ### 5.2 Authorization
 
@@ -440,9 +394,6 @@ enforce TLS itself and does not configure CORS (see Section 10.2).
 **Silently ignored:** `includefield`, `fuzzymatching`,
 `timezoneadjustment`, `dateFormat`, multi-valued UID-list matching.
 
-Implementation: parameter parsing at `QidoRsApi.java:279-345`;
-matching in `XnatDicomServiceImpl.java`.
-
 ### 6.3 Matching Semantics
 
 - **Exact** — equality. Study-level keys (StudyDate, PatientName,
@@ -462,13 +413,6 @@ matching in `XnatDicomServiceImpl.java`.
   same way at the study level.
 - **Date format** — DICOM `yyyyMMdd` only.
 
-Implementation of range parsing: `DicomRangeParser.java` (shared
-parser for DA/TM ranges). Study-level SQL emission:
-`XnatDicomServiceImpl.addQueryAttributeFilters` (StudyDate and
-StudyTime branches around lines 372-410). Series/instance-level
-Java matching: `XnatDicomServiceImpl.matchesDicomDate` and
-`matchesDicomTime` around lines 2645-2724.
-
 ### 6.4 Pagination
 
 `limit` and `offset` follow DICOMweb conventions. The plugin emits
@@ -480,9 +424,6 @@ Bounds:
 - `limit ≤ 0` → reset to default
 - `limit > max` → clamped to max
 - non-numeric → reset to default (no 400 returned)
-
-Implementation: `QidoRsApi.java:57-101` (pagination parsing), `:165`
-(`X-Total-Count` header), `:65-79` (bounds).
 
 ### 6.5 Returned Attributes and XNAT → DICOM Mapping
 
@@ -509,8 +450,6 @@ is ignored.
 | Referring Physician Name        | (0008,0090) | Empty (not modeled in XNAT)                       |
 | Retrieve URL                    | (0008,1190) | Built from base URL + project + study             |
 
-Implementation: `XnatDicomServiceImpl.java:464-540`.
-
 #### 6.5.2 Series Level (DICOM-derived)
 
 Parsed from a representative file.
@@ -524,8 +463,6 @@ Parsed from a representative file.
 | Series Description                 | (0008,103E) | DICOM header                 |
 | Number of Series Related Instances | (0020,1209) | File count in the XNAT scan  |
 | Retrieve URL                       | (0008,1190) | Constructed                  |
-
-Implementation: `XnatDicomServiceImpl.java:596-598`.
 
 #### 6.5.3 Instance Level (DICOM-derived)
 
@@ -584,11 +521,6 @@ the `Accept` header is silently ignored — the plugin does not match
 it against the archived syntax and does not return 406 on mismatch.
 See 0.4.
 
-Implementation: `WadoRsApi.java:91-123` (single-instance retrieval
-and multipart branch); `WadoMediaTypes.DICOM_TYPES` and
-`INSTANCE_DEFAULT` for the negotiated set and default; multipart
-framing via `streamFilesAsMultipart` / `DicomMultipartWriter`.
-
 ### 7.2 Retrieve Metadata
 
 `/metadata` endpoints return DICOM JSON (or XML) for the requested
@@ -632,8 +564,6 @@ With a single frame, the response is `application/octet-stream`;
 with multiple, `multipart/related` of octet-stream parts.
 Out-of-range frames are logged and skipped.
 
-Implementation: `WadoRsApi.java:725-744`.
-
 ### 7.7 Status Codes
 
 | Status | Meaning                                                |
@@ -660,9 +590,6 @@ Memory handling: parts up to `dicomweb.memoryThreshold` bytes
 (default 10 MiB) are held in memory; larger parts spill to temp
 files.
 
-Implementation: `StowRsApi.java:74` (`consumes`); body parser is
-`Mime4jHybridParser` (Apache Mime4j).
-
 ### 8.2 Import Strategies
 
 | Strategy               | Default | Behavior                                                                                       | Requires       |
@@ -678,10 +605,6 @@ back to `GradualDicomImporter`.
 Both strategies respond as soon as files are accepted. See 0.5 for
 visibility implications.
 
-Implementation: `StowRsServiceImpl.java:166-176` (strategy
-selection), `:593-670` (DirectArchive debounce), `:103-116`
-(fallback); strategy classes under `service/impl/strategy/`.
-
 ### 8.3 Project Resolution
 
 - **Per-project STOW** (`/xapi/dicomweb/projects/{projectId}/studies`):
@@ -692,9 +615,6 @@ selection), `:593-670` (DirectArchive debounce), `:103-116`
   to derive a project from the DICOM data. If no project can be
   determined, the data is routed to the unassigned prearchive and
   **not built** (see 0.6 for citation).
-
-Implementation of site-wide project derivation: XNAT's
-`DicomObjectIdentifier`.
 
 ### 8.4 Response
 
@@ -745,8 +665,6 @@ Per-user permission filtering is applied **in addition**: a
 non-admin user sees only projects they can read, intersected with
 the site-wide-included set.
 
-Implementation: `SiteWideProjectFilter.java:44-73`.
-
 ### 9.2 Behavioral Differences from Per-Project Routes
 
 - **Deduplication.** Sessions shared across multiple projects appear
@@ -756,8 +674,6 @@ Implementation: `SiteWideProjectFilter.java:44-73`.
   (`/xapi/dicomweb/studies/...`), not at any single project's routes.
 - **STOW-RS.** Site-wide upload requires the plugin to derive a
   target project (Section 8.3), with the orphan risk in 0.6.
-
-Implementation of dedup: `XnatDicomServiceImpl.java:545-549`.
 
 ---
 
@@ -847,59 +763,3 @@ detailed warning above.
 14. Series- and instance-level QIDO parses files on disk; large
     studies may be slow.
 
----
-
-## Appendix A. Verification Pointers
-
-The following code locations were re-read during this drafting pass.
-A re-verification pass should start here.
-
-- `src/main/java/org/nrg/xnat/dicomweb/plugin/DicomWebPlugin.java`
-- `src/main/java/org/nrg/xnat/dicomweb/rest/QidoRsApi.java`
-- `src/main/java/org/nrg/xnat/dicomweb/rest/WadoRsApi.java`
-- `src/main/java/org/nrg/xnat/dicomweb/rest/StowRsApi.java`
-- `src/main/java/org/nrg/xnat/dicomweb/config/DicomWebProperties.java`
-- `src/main/java/org/nrg/xnat/dicomweb/service/impl/XnatDicomServiceImpl.java`
-  (focused on lines 372-410 for study-level query, 464-540,
-  545-549, 596-598, 2645-2724 for DA/TM matching)
-- `src/main/java/org/nrg/xnat/dicomweb/service/impl/StowRsServiceImpl.java`
-  (focused on lines 103-116, 166-176, 485-502, 593-670, 720-...
-  for `buildStowRsResponse`)
-- `src/main/java/org/nrg/xnat/dicomweb/service/SiteWideProjectFilter.java`
-  (focused on lines 44-73)
-- `src/main/java/org/nrg/xnat/dicomweb/util/DicomRangeParser.java`
-  (DA/TM range parsing shared by the study-level SQL emission)
-
-Files **not** re-read in this pass (claims about them are inherited
-from the prior draft and should be re-verified before publication):
-
-- `MediaTypeNegotiator.java` — exact Accept-parsing rules
-- `BulkDataHandler.java` — `BulkDataURI` shape and base-URI extraction
-- `DicomMultipartWriter.java` — multipart framing details
-- `Mime4jHybridParser.java` — STOW-RS body parsing
-- `service/impl/strategy/GradualDicomImporterStrategy.java`
-- `service/impl/strategy/DirectArchiveStrategy.java`
-- `DicomWebPreferenceBean.java` — verify the literal default values
-  in §10.1 against the bean's `@NrgPreferenceBean` defaults
-
-DICOM standard references were verified on 2026-07-02 against
-`dicom.nema.org/medical/dicom/current/output/html/` (parts 3, 4, 6,
-15, 16, 18). The verification pass produced the following findings,
-which have been folded into the current document:
-
-- All Data Element tag numbers used in this document appear in
-  PS3.6 with the keywords used here.
-- STOW-RS response structure diverges from PS3.18 §10.5.3.3 / Annex I
-  (see §0.9, §8.4).
-- Pagination remainder signal diverges from PS3.18 §8.3.4.4.1
-  (see §0.10, §6.4).
-- QIDO-RS UID-list separator is comma per PS3.18 §8.3.4.1
-  (previously mis-cited as backslash in §6.2 — fixed).
-- DA/TM range matching semantics implemented per PS3.4
-  §C.2.2.2.5.1 (DA) and §C.2.2.2.5.2 (TM) at all query levels.
-  Prior to the study-level range fix (2026-07-06), study-level
-  hyphenated inputs silently matched nothing; now they parse as
-  ranges or return HTTP 400 on malformed input.
-
-If any spec-touching text is edited after 2026-07-02, that specific
-claim should be re-verified against the standard.
