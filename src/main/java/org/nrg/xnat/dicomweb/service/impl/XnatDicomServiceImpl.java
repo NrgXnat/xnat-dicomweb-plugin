@@ -24,6 +24,7 @@ import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.function.Function;
 import java.util.function.Predicate;
 import java.util.stream.Collectors;
 import java.util.stream.IntStream;
@@ -72,6 +73,7 @@ import org.nrg.xnat.dicomweb.service.RenderingParams;
 import org.nrg.xnat.dicomweb.service.SiteWideProjectFilter;
 import org.nrg.xnat.dicomweb.service.XnatDicomService;
 import org.nrg.xnat.dicomweb.util.BulkDataHandler;
+import org.nrg.xnat.dicomweb.util.DicomRangeParser;
 import org.nrg.xnat.dicomweb.util.DicomWebUtils;
 import org.nrg.xnat.utils.CatalogUtils;
 
@@ -334,77 +336,167 @@ public class XnatDicomServiceImpl implements XnatDicomService {
      * as a parameterized ILIKE clause, supporting DICOM wildcard matching (* and ?).
      */
     private static void addQueryAttributeFilters(StringBuilder sql, MapSqlParameterSource params,
-                                                  Attributes queryAttributes, boolean siteWide,
-                                                  boolean isAdmin) {
+                                                 Attributes queryAttributes, boolean siteWide,
+                                                 boolean isAdmin) {
         if (queryAttributes == null || queryAttributes.isEmpty()) {
             return;
         }
+        appendStudyUidFilter(sql, params, queryAttributes);
+        appendPatientNameFilter(sql, params, queryAttributes, isAdmin);
+        appendPatientIdFilter(sql, params, queryAttributes, siteWide);
+        appendStudyDateTimeFilter(sql, params, queryAttributes);
+        appendAccessionNumberFilter(sql, params, queryAttributes);
+        appendModalityFilter(sql, params, queryAttributes);
+    }
 
-        // StudyInstanceUID → i.uid
-        String studyUid = dicomWildcardToSqlLike(queryAttributes.getString(Tag.StudyInstanceUID));
-        if (studyUid != null) {
-            sql.append("AND i.uid ILIKE :q_study_uid ESCAPE E'\\\\' ");
-            params.addValue("q_study_uid", studyUid);
+    // Emit "AND <column> ILIKE :<param> ESCAPE E'\\'" for a raw DICOM query value.
+    // Wildcards (* and ?) in the value are translated to SQL LIKE (% and _). No-op
+    // if the raw value is null or empty.
+    private static void appendIlikeFilter(StringBuilder sql, MapSqlParameterSource params,
+                                          String rawValue, String columnExpr,
+                                          String paramName) {
+        String likePat = dicomWildcardToSqlLike(rawValue);
+        if (likePat == null) {
+            return;
         }
+        sql.append("AND ").append(columnExpr)
+                .append(" ILIKE :").append(paramName)
+                .append(" ESCAPE E'\\\\' ");
+        params.addValue(paramName, likePat);
+    }
 
-        // PatientName → experiment_label (pe.experiment_label for permission queries, e.label for admin)
-        String patientName = dicomWildcardToSqlLike(queryAttributes.getString(Tag.PatientName));
-        if (patientName != null) {
-            if (isAdmin) {
-                sql.append("AND e.label ILIKE :q_patient_name ESCAPE E'\\\\' ");
-            } else {
-                sql.append("AND pe.experiment_label ILIKE :q_patient_name ESCAPE E'\\\\' ");
-            }
-            params.addValue("q_patient_name", patientName);
+    // Apply a range parser to a raw QIDO value, or return empty for null/empty input.
+    private static <T> Optional<T> parseIfPresent(String raw,
+                                                  Function<String, Optional<T>> parser) {
+        return (raw != null && !raw.isEmpty()) ? parser.apply(raw) : Optional.empty();
+    }
+
+    private static void appendStudyUidFilter(StringBuilder sql, MapSqlParameterSource params,
+                                             Attributes queryAttributes) {
+        appendIlikeFilter(sql, params,
+                queryAttributes.getString(Tag.StudyInstanceUID),
+                "i.uid", "q_study_uid");
+    }
+
+    // PatientName maps to the session label; column depends on admin vs. permission-scoped query.
+    private static void appendPatientNameFilter(StringBuilder sql, MapSqlParameterSource params,
+                                                Attributes queryAttributes, boolean isAdmin) {
+        String column = isAdmin ? "e.label" : "pe.experiment_label";
+        appendIlikeFilter(sql, params,
+                queryAttributes.getString(Tag.PatientName),
+                column, "q_patient_name");
+    }
+
+    // PatientID maps to the subject label; column depends on site-wide vs. project-scoped query.
+    private static void appendPatientIdFilter(StringBuilder sql, MapSqlParameterSource params,
+                                              Attributes queryAttributes, boolean siteWide) {
+        String column = siteWide ? "s.label" : "psl.subject_label";
+        appendIlikeFilter(sql, params,
+                queryAttributes.getString(Tag.PatientID),
+                column, "q_patient_id");
+    }
+
+    private static void appendAccessionNumberFilter(StringBuilder sql, MapSqlParameterSource params,
+                                                    Attributes queryAttributes) {
+        appendIlikeFilter(sql, params,
+                queryAttributes.getString(Tag.AccessionNumber),
+                "e.id", "q_accession_number");
+    }
+
+    private static void appendModalityFilter(StringBuilder sql, MapSqlParameterSource params,
+                                             Attributes queryAttributes) {
+        String elementNameLike = modalityToElementNameLike(
+                queryAttributes.getString(Tag.Modality));
+        if (elementNameLike == null) {
+            return;
         }
+        sql.append("AND LOWER(me.element_name) LIKE :q_modality ");
+        params.addValue("q_modality", elementNameLike);
+    }
 
-        // PatientID → subject_label (s.label for site-wide/admin, psl.subject_label for project-scoped)
-        String patientId = dicomWildcardToSqlLike(queryAttributes.getString(Tag.PatientID));
-        if (patientId != null) {
-            if (siteWide) {
-                sql.append("AND s.label ILIKE :q_patient_id ESCAPE E'\\\\' ");
-            } else {
-                sql.append("AND psl.subject_label ILIKE :q_patient_id ESCAPE E'\\\\' ");
-            }
-            params.addValue("q_patient_id", patientId);
-        }
-
-        // StudyDate → e.date
+    // StudyDate + StudyTime combined date-time matching per PS3.18 §8.3.4.1.1 → PS3.4
+    // §C.2.2.2.5.4: when both DA and TM values are Range Matching values of the same
+    // form, emit a single TIMESTAMP clause against (e.date + e.time). Otherwise fall
+    // through to independent DA and TM handling.
+    private static void appendStudyDateTimeFilter(StringBuilder sql,
+                                                  MapSqlParameterSource params,
+                                                  Attributes queryAttributes) {
         String studyDate = queryAttributes.getString(Tag.StudyDate);
-        if (studyDate != null && !studyDate.isEmpty()) {
-            // DICOM date format is yyyyMMdd; convert to yyyy-MM-dd for SQL date comparison
-            if (studyDate.contains("*") || studyDate.contains("?")) {
-                String likePat = dicomWildcardToSqlLike(studyDate);
-                sql.append("AND TO_CHAR(e.date, 'YYYYMMDD') ILIKE :q_study_date ESCAPE E'\\\\' ");
-                params.addValue("q_study_date", likePat);
-            } else if (studyDate.length() == 8) {
-                String sqlDate = studyDate.substring(0, 4) + "-" + studyDate.substring(4, 6) + "-" + studyDate.substring(6, 8);
-                sql.append("AND e.date = CAST(:q_study_date AS DATE) ");
-                params.addValue("q_study_date", sqlDate);
-            }
-        }
-
-        // StudyTime → e.time
         String studyTime = queryAttributes.getString(Tag.StudyTime);
-        if (studyTime != null && !studyTime.isEmpty()) {
-            String likePat = dicomWildcardToSqlLike(studyTime);
-            sql.append("AND TO_CHAR(e.time, 'HH24MISS') ILIKE :q_study_time ESCAPE E'\\\\' ");
-            params.addValue("q_study_time", likePat);
-        }
+        Optional<DicomRangeParser.DicomDateRange> dateRange =
+                parseIfPresent(studyDate, DicomRangeParser::parseDicomDateRange);
+        Optional<DicomRangeParser.DicomTimeRange> timeRange =
+                parseIfPresent(studyTime, DicomRangeParser::parseDicomTimeRange);
 
-        // AccessionNumber → e.id
-        String accessionNumber = dicomWildcardToSqlLike(queryAttributes.getString(Tag.AccessionNumber));
-        if (accessionNumber != null) {
-            sql.append("AND e.id ILIKE :q_accession_number ESCAPE E'\\\\' ");
-            params.addValue("q_accession_number", accessionNumber);
+        Optional<DicomRangeParser.DicomDateTimeRange> combined =
+                DicomRangeParser.combineIntoDateTimeRange(dateRange, timeRange);
+        if (combined.isPresent()) {
+            appendCombinedDtClauses(sql, params, combined.get());
+            return;
         }
+        appendStudyDateClauses(sql, params, studyDate, dateRange);
+        appendStudyTimeClauses(sql, params, studyTime, timeRange);
+    }
 
-        // Modality → me.element_name (reverse mapped)
-        String modality = queryAttributes.getString(Tag.Modality);
-        String elementNameLike = modalityToElementNameLike(modality);
-        if (elementNameLike != null) {
-            sql.append("AND LOWER(me.element_name) LIKE :q_modality ");
-            params.addValue("q_modality", elementNameLike);
+    private static void appendCombinedDtClauses(StringBuilder sql, MapSqlParameterSource params,
+                                                DicomRangeParser.DicomDateTimeRange r) {
+        if (r.start != null) {
+            sql.append("AND (e.date + e.time) >= CAST(:q_study_dt_start AS TIMESTAMP) ");
+            params.addValue("q_study_dt_start", r.start.toString());
+        }
+        if (r.end != null) {
+            sql.append("AND (e.date + e.time) <= CAST(:q_study_dt_end AS TIMESTAMP) ");
+            params.addValue("q_study_dt_end", r.end.toString());
+        }
+    }
+
+    private static void appendStudyDateClauses(
+            StringBuilder sql, MapSqlParameterSource params,
+            String studyDate, Optional<DicomRangeParser.DicomDateRange> dateRange) {
+        if (studyDate == null || studyDate.isEmpty()) {
+            return;
+        }
+        if (dateRange.isPresent()) {
+            DicomRangeParser.DicomDateRange r = dateRange.get();
+            if (r.start != null) {
+                sql.append("AND e.date >= CAST(:q_study_date_start AS DATE) ");
+                params.addValue("q_study_date_start", r.start.toString());
+            }
+            if (r.end != null) {
+                sql.append("AND e.date <= CAST(:q_study_date_end AS DATE) ");
+                params.addValue("q_study_date_end", r.end.toString());
+            }
+        } else if (studyDate.contains("*") || studyDate.contains("?")) {
+            appendIlikeFilter(sql, params, studyDate,
+                    "TO_CHAR(e.date, 'YYYYMMDD')", "q_study_date");
+        } else if (studyDate.length() == 8) {
+            String sqlDate = studyDate.substring(0, 4) + "-"
+                    + studyDate.substring(4, 6) + "-"
+                    + studyDate.substring(6, 8);
+            sql.append("AND e.date = CAST(:q_study_date AS DATE) ");
+            params.addValue("q_study_date", sqlDate);
+        }
+    }
+
+    private static void appendStudyTimeClauses(
+            StringBuilder sql, MapSqlParameterSource params,
+            String studyTime, Optional<DicomRangeParser.DicomTimeRange> timeRange) {
+        if (studyTime == null || studyTime.isEmpty()) {
+            return;
+        }
+        if (timeRange.isPresent()) {
+            DicomRangeParser.DicomTimeRange r = timeRange.get();
+            if (r.start != null) {
+                sql.append("AND e.time >= CAST(:q_study_time_start AS TIME) ");
+                params.addValue("q_study_time_start", r.start.toString());
+            }
+            if (r.end != null) {
+                sql.append("AND e.time <= CAST(:q_study_time_end AS TIME) ");
+                params.addValue("q_study_time_end", r.end.toString());
+            }
+        } else {
+            appendIlikeFilter(sql, params, studyTime,
+                    "TO_CHAR(e.time, 'HH24MISS')", "q_study_time");
         }
     }
 
