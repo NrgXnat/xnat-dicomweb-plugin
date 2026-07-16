@@ -5,7 +5,6 @@ import io.swagger.annotations.ApiOperation;
 import io.swagger.annotations.ApiResponse;
 import io.swagger.annotations.ApiResponses;
 import org.dcm4che3.data.Attributes;
-import org.dcm4che3.data.Tag;
 import org.nrg.framework.annotations.XapiRestController;
 import org.nrg.xapi.rest.AbstractXapiRestController;
 import org.nrg.xapi.rest.XapiRequestMapping;
@@ -15,6 +14,7 @@ import org.nrg.xft.security.UserI;
 import org.nrg.xnat.dicomweb.config.DicomWebProperties;
 import org.nrg.xnat.dicomweb.service.XnatDicomService;
 import org.nrg.xnat.dicomweb.util.DicomWebUtils;
+import org.nrg.xnat.dicomweb.util.QidoQueryParamParser;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -135,8 +135,7 @@ public class QidoRsApi extends AbstractXapiRestController {
                                                 @RequestParam(required = false) Map<String, String> queryParams) {
         UserI user = getSessionUser();
 
-        // Convert query parameters to DICOM Attributes for filtering
-        Attributes queryAttributes = parseQueryParameters(queryParams);
+        Attributes queryAttributes = QidoQueryParamParser.parse(queryParams);
 
         // Get all studies matching the query
         List<Attributes> allStudies = dicomService.searchStudies(user, projectId, queryAttributes);
@@ -188,8 +187,7 @@ public class QidoRsApi extends AbstractXapiRestController {
                                                @RequestParam(required = false) Map<String, String> queryParams) {
         UserI user = getSessionUser();
 
-        // Convert query parameters to DICOM Attributes for filtering
-        Attributes queryAttributes = parseQueryParameters(queryParams);
+        Attributes queryAttributes = QidoQueryParamParser.parse(queryParams);
 
         // Get all series matching the query
         List<Attributes> allSeries = dicomService.searchSeries(user, projectId, studyUID, queryAttributes);
@@ -241,8 +239,7 @@ public class QidoRsApi extends AbstractXapiRestController {
                                                   @RequestParam(required = false) Map<String, String> queryParams) {
         UserI user = getSessionUser();
 
-        // Convert query parameters to DICOM Attributes for filtering
-        Attributes queryAttributes = parseQueryParameters(queryParams);
+        Attributes queryAttributes = QidoQueryParamParser.parse(queryParams);
 
         // Get all instances matching the query
         List<Attributes> allInstances = dicomService.searchInstances(user, projectId, studyUID, seriesUID, queryAttributes);
@@ -272,75 +269,4 @@ public class QidoRsApi extends AbstractXapiRestController {
                 .body(json);
     }
 
-    /**
-     * Parse HTTP query parameters into DICOM Attributes for filtering
-     * Supports common DICOMweb query parameters
-     */
-    private Attributes parseQueryParameters(Map<String, String> queryParams) {
-        Attributes attrs = new Attributes();
-
-        if (queryParams == null || queryParams.isEmpty()) {
-            return attrs;
-        }
-
-        // Map common query parameter names to DICOM tags
-        for (Map.Entry<String, String> entry : queryParams.entrySet()) {
-            String key = entry.getKey();
-            String value = entry.getValue();
-
-            if (value == null || value.isEmpty()) {
-                continue;
-            }
-
-            // Map query parameter names to DICOM tags
-            switch (key.toLowerCase()) {
-                case "patientname":
-                    attrs.setString(Tag.PatientName, org.dcm4che3.data.VR.PN, value);
-                    break;
-                case "patientid":
-                    attrs.setString(Tag.PatientID, org.dcm4che3.data.VR.LO, value);
-                    break;
-                case "studydate":
-                    attrs.setString(Tag.StudyDate, org.dcm4che3.data.VR.DA, value);
-                    break;
-                case "studytime":
-                    attrs.setString(Tag.StudyTime, org.dcm4che3.data.VR.TM, value);
-                    break;
-                case "studyinstanceuid":
-                    attrs.setString(Tag.StudyInstanceUID, org.dcm4che3.data.VR.UI, value);
-                    break;
-                case "accessionnumber":
-                    attrs.setString(Tag.AccessionNumber, org.dcm4che3.data.VR.SH, value);
-                    break;
-                case "modality":
-                case "modalitiesinstudy":
-                    attrs.setString(Tag.Modality, org.dcm4che3.data.VR.CS, value);
-                    break;
-                case "seriesdescription":
-                    attrs.setString(Tag.SeriesDescription, org.dcm4che3.data.VR.LO, value);
-                    break;
-                case "seriesinstanceuid":
-                    attrs.setString(Tag.SeriesInstanceUID, org.dcm4che3.data.VR.UI, value);
-                    break;
-                case "seriesnumber":
-                    attrs.setString(Tag.SeriesNumber, org.dcm4che3.data.VR.IS, value);
-                    break;
-                case "sopinstanceuid":
-                    attrs.setString(Tag.SOPInstanceUID, org.dcm4che3.data.VR.UI, value);
-                    break;
-                case "sopclassuid":
-                    attrs.setString(Tag.SOPClassUID, org.dcm4che3.data.VR.UI, value);
-                    break;
-                case "instancenumber":
-                    attrs.setString(Tag.InstanceNumber, org.dcm4che3.data.VR.IS, value);
-                    break;
-                default:
-                    logger.debug("Unsupported query parameter: {}", key);
-                    break;
-            }
-        }
-
-        logger.debug("Parsed {} query parameters into DICOM attributes", attrs.size());
-        return attrs;
-    }
 }
