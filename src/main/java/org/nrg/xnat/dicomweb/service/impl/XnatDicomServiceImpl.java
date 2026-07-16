@@ -39,6 +39,7 @@ import javax.imageio.ImageWriter;
 import javax.imageio.stream.ImageInputStream;
 
 import lombok.extern.slf4j.Slf4j;
+import org.apache.commons.lang.StringUtils;
 import org.dcm4che3.data.Attributes;
 import org.dcm4che3.data.Tag;
 import org.dcm4che3.data.VR;
@@ -366,9 +367,10 @@ public class XnatDicomServiceImpl implements XnatDicomService {
     }
 
     // Apply a range parser to a raw QIDO value, or return empty for null/empty input.
-    private static <T> Optional<T> parseIfPresent(String raw,
-                                                  Function<String, Optional<T>> parser) {
-        return (raw != null && !raw.isEmpty()) ? parser.apply(raw) : Optional.empty();
+    private static <T> Optional<T> parseIfPresent(String raw, Function<String, Optional<T>> parser) {
+        return Optional.ofNullable(raw)
+                .filter(s -> !s.isEmpty())
+                .flatMap(parser);
     }
 
     private static void appendStudyUidFilter(StringBuilder sql, MapSqlParameterSource params,
@@ -453,7 +455,7 @@ public class XnatDicomServiceImpl implements XnatDicomService {
     private static void appendStudyDateClauses(
             StringBuilder sql, MapSqlParameterSource params,
             String studyDate, Optional<DicomRangeParser.DicomDateRange> dateRange) {
-        if (studyDate == null || studyDate.isEmpty()) {
+        if (StringUtils.isBlank(studyDate)) {
             return;
         }
         if (dateRange.isPresent()) {
@@ -481,7 +483,7 @@ public class XnatDicomServiceImpl implements XnatDicomService {
     private static void appendStudyTimeClauses(
             StringBuilder sql, MapSqlParameterSource params,
             String studyTime, Optional<DicomRangeParser.DicomTimeRange> timeRange) {
-        if (studyTime == null || studyTime.isEmpty()) {
+        if (StringUtils.isBlank(studyTime)) {
             return;
         }
         if (timeRange.isPresent()) {
