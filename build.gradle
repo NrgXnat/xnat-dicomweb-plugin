@@ -16,7 +16,7 @@ plugins {
 }
 
 group = "org.nrg.xnatx.plugins"
-version = "1.3.0-jdk8-SNAPSHOT"
+version = "1.3.0-jdk8-RC-SNAPSHOT"
 description = "XNAT DICOMweb Plugin"
 
 repositories {
