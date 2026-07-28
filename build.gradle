@@ -1,6 +1,6 @@
 buildscript {
     ext {
-        vXnat = "1.9.3-RC-SNAPSHOT"
+        vXnat = "1.11.0-SNAPSHOT"   // jakarta / Tomcat 10 line
     }
 }
 
@@ -20,7 +20,9 @@ version = "1.3.1-SNAPSHOT"
 description = "XNAT DICOMweb Plugin"
 
 repositories {
-    mavenLocal()
+    // Scope mavenLocal to org.nrg.* so a locally-published SNAPSHOT of core is consumed without shadowing
+    // partial third-party artifacts (e.g. ehcache-*-jakarta classifiers). See migration guide.
+    mavenLocal { content { includeGroupByRegex 'org\\.nrg.*' } }
     mavenCentral()
     maven { url = "https://nrgxnat.jfrog.io/nrgxnat/libs-release" }
     maven { url = "https://nrgxnat.jfrog.io/nrgxnat/libs-snapshot" }
@@ -32,25 +34,29 @@ repositories {
 }
 
 java {
-    sourceCompatibility = JavaVersion.VERSION_1_8
-    targetCompatibility = JavaVersion.VERSION_1_8
+    // Pin the toolchain to 21 (was Java 1.8): the jakarta / Tomcat 10 line requires 17+/21, and old jars
+    // trip JDK 22+'s strict zip64 CEN validation. Match core.
+    toolchain { languageVersion = JavaLanguageVersion.of(21) }
     withSourcesJar()
     withJavadocJar()
 }
 
 configurations {
-    all*.exclude group: 'edu.ucar', module: 'netcdf'
-    all*.exclude group: 'jakarta-regexp'
-    all*.exclude group: 'net.sf.saxon', module: 'Saxon-B'
-    all*.exclude group: 'org.apache.geronimo.specs'
-    all*.exclude group: 'javax.sql', module: 'jdbc-stdext'
-    all*.exclude group: 'javax.transaction', module: 'jta'
-    all*.exclude group: 'javax.servlet', module: 'servlet-api'
-
+    implementAndInclude
     implementation.extendsFrom(implementAndInclude)
-    all {
-    	exclude group: 'com.sun.media', module: 'jai_imageio'
-    }
+}
+
+// Gradle 9 forbids mutating a configuration's excludes after it has been resolved, which the old
+// `all*.exclude` / `all { exclude }` form can trigger. Apply excludes lazily per-configuration instead.
+configurations.configureEach {
+    exclude group: 'edu.ucar', module: 'netcdf'
+    exclude group: 'jakarta-regexp'
+    exclude group: 'net.sf.saxon', module: 'Saxon-B'
+    exclude group: 'org.apache.geronimo.specs'
+    exclude group: 'javax.sql', module: 'jdbc-stdext'
+    exclude group: 'javax.transaction', module: 'jta'
+    exclude group: 'javax.servlet', module: 'servlet-api'
+    exclude group: 'com.sun.media', module: 'jai_imageio'
 }
 
 idea {
@@ -72,10 +78,6 @@ sourceSets {
     }
 }
 
-compileJava {
-    options.fork = false
-}
-
 configurations.testRuntimeClasspath {
     exclude group: 'com.sun.media', module: 'jai_imageio'
 }
@@ -91,26 +93,29 @@ dependencies {
     implementAndInclude "icr.etherj:etherj-core:1.1.6"
 
     compileOnly "org.slf4j:slf4j-api"
-    compileOnly "log4j:log4j"
-    compileOnly 'javax.servlet:javax.servlet-api'
+    // log4j:log4j (1.x) removed: gone from the 1.11.0 BOM and unused by source (slf4j only)
+    compileOnly 'jakarta.servlet:jakarta.servlet-api'
     compileOnly 'com.google.guava:guava'
-    compileOnly 'commons-lang:commons-lang'
     compileOnly 'com.fasterxml.jackson.core:jackson-core'
     compileOnly 'com.fasterxml.jackson.core:jackson-annotations'
     compileOnly 'com.fasterxml.jackson.core:jackson-databind'
-    compileOnly 'org.hibernate.javax.persistence:hibernate-jpa-2.1-api'
-    compileOnly 'javax.inject:javax.inject'
+    compileOnly 'org.apache.commons:commons-lang3'   // StringUtils (was commons-lang 2.x, gone in the jakarta line)
+    // removed (unused in source and/or gone in the jakarta line):
+    //   org.hibernate.javax.persistence:hibernate-jpa-2.1-api, javax.inject:javax.inject,
+    //   commons-lang:commons-lang, org.nrg.xnat:xnat-data-models (merged into org.nrg.xnat:web, guide §3)
     compileOnly "org.nrg.xnat:web"
-    compileOnly "org.nrg.xnat:xnat-data-models"
     compileOnly "org.nrg.xdat:core"
+    // org.nrg.action.ClientException/ActionException expose org.restlet.data.Status in their API, so restlet
+    // must be on the compile classpath to reference them (provided by XNAT at runtime). Now 2.6 from the BOM.
+    compileOnly "org.restlet:org.restlet"
     compileOnly "org.nrg:framework"
     compileOnly "org.nrg:config"
     compileOnly "org.springframework:spring-beans"
     compileOnly "org.springframework:spring-context"
     compileOnly "org.springframework:spring-web"
     compileOnly "org.springframework:spring-webmvc"
-    compileOnly "io.springfox:springfox-swagger2"
-    compileOnly "io.springfox:springfox-swagger-ui"
+    // springfox is dead on Spring 6; source only uses io.swagger.annotations.* -> provide those directly
+    compileOnly "io.swagger:swagger-annotations:1.5.20"
 
     // DCM4CHE for DICOMweb support (provided by XNAT at runtime)
     compileOnly "org.dcm4che:dcm4che-core"
@@ -130,7 +135,7 @@ dependencies {
     // Additional dependencies (provided by XNAT at runtime)
     compileOnly 'commons-io:commons-io'
     compileOnly 'org.apache.commons:commons-compress'
-    compileOnly 'commons-fileupload:commons-fileupload'
+    // commons-fileupload:commons-fileupload removed: unused by source and dropped in the jakarta line
 
     // AnimatedGifEncoder for animated GIF generation (packaged in plugin)
     implementAndInclude 'com.madgag:animated-gif-lib:1.4'
@@ -140,11 +145,10 @@ dependencies {
     testImplementation "org.springframework:spring-web"
     testImplementation "org.springframework:spring-webmvc"
     testImplementation "org.mockito:mockito-core"
-    testImplementation "javax.servlet:javax.servlet-api"
+    testImplementation "jakarta.servlet:jakarta.servlet-api"
     testImplementation "org.slf4j:slf4j-simple"
     testImplementation "org.nrg:framework"
     testImplementation "org.nrg.xdat:core"
-    testImplementation "org.nrg.xnat:xnat-data-models"
     testImplementation "org.nrg.xnat:web"
 }
 
@@ -175,7 +179,11 @@ try {
 
 compileJava {
     dependsOn xnatDataBuilder
-    options.fork = false
+    options.fork = true   // a cross-JDK toolchain (21) must fork
+    // Spring 6 no longer discovers method parameter names from bytecode; the 8 xapi @RestController
+    // handlers here (@RequestParam/@PathVariable without explicit names) resolve only when compiled with
+    // -parameters. Core sets this in its buildSrc convention; this standalone build must too.
+    options.compilerArgs << '-parameters'
 }
 
 jar {
