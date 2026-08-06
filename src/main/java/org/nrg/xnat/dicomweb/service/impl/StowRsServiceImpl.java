@@ -33,7 +33,6 @@ import org.nrg.xnat.helpers.prearchive.PrearcUtils;
 import org.nrg.xnat.helpers.prearchive.SessionData;
 import org.nrg.xnat.helpers.prearchive.handlers.PrearchiveOperationHandlerResolver;
 import org.nrg.xnat.helpers.prearchive.handlers.PrearchiveRebuildHandler;
-import org.nrg.xnat.helpers.prearchive.handlers.PrearchiveSeparatePetMrHandler;
 import org.nrg.xnat.helpers.uri.URIManager;
 import org.nrg.xnat.restlet.util.RequestUtil;
 import org.nrg.xnat.services.messaging.prearchive.PrearchiveOperationRequest;
@@ -375,8 +374,7 @@ public class StowRsServiceImpl implements StowRsService {
                     boolean buildSuccessful = handler.rebuild();
 
                     if (buildSuccessful) {
-                        handlePostBuild(user, archiveUrls, override, appendMerge,
-                            request, handler, sessionData, params, resolver);
+                        handlePostBuild(user, archiveUrls, override, appendMerge, request, handler);
                     }
                 }
             } catch (Exception e) {
@@ -389,35 +387,20 @@ public class StowRsServiceImpl implements StowRsService {
     }
 
     /**
-     * Handle post-build operations including PET/MR separation and archiving
+     * Handle post-build operations and archiving.
+     *
+     * XNAT-8342 (XNAT 1.10.1) removed the PET/MR separation machinery from core
+     * (PrearchiveRebuildHandler.needToHandleSeparablePetMrSession(),
+     * Operation.Separate, PrearchiveSeparatePetMrHandler). The separation branch
+     * that used to live here referenced those symbols, which made every STOW
+     * build die with a NoSuchMethodError on 1.10.1+. This now mirrors what
+     * core's own PrearchiveRebuildHandler.execute() does post-8342.
      */
     private void handlePostBuild(UserI user, Set<String> archiveUrls, boolean override,
                                  boolean appendMerge, PrearchiveOperationRequest request,
-                                 PrearchiveRebuildHandler handler, SessionData sessionData,
-                                 Map<String, Object> params,
-                                 PrearchiveOperationHandlerResolver resolver) throws Exception {
-        final boolean isSeparatePetMr = handler.needToHandleSeparablePetMrSession();
-        if (isSeparatePetMr) {
-            PrearchiveOperationRequest separateRequest = new PrearchiveOperationRequest(
-                user,
-                Operation.Separate,
-                sessionData,
-                new File(sessionData.getUrl()),
-                populateAdditionalValues(params)
-            );
-            PrearchiveSeparatePetMrHandler separatePetMrHandler =
-                (PrearchiveSeparatePetMrHandler) resolver.getHandler(separateRequest);
-            List<PrearchiveOperationRequest> requestList = separatePetMrHandler.separate();
-
-            if (requestList != null) {
-                for (PrearchiveOperationRequest r : requestList) {
-                    archiveSession(archiveUrls, override, appendMerge, r, user);
-                }
-            }
-        } else {
-            handler.postBuild();
-            archiveSession(archiveUrls, override, appendMerge, request, user);
-        }
+                                 PrearchiveRebuildHandler handler) throws Exception {
+        handler.postBuild();
+        archiveSession(archiveUrls, override, appendMerge, request, user);
     }
 
     /**
@@ -641,9 +624,15 @@ public class StowRsServiceImpl implements StowRsService {
                     Set<String> archiveUrls = buildSessions(user, urisForSession, params);
                     buildFuture.complete(archiveUrls);
                     logger.info("Build completed successfully for session {}: {}", sessionKey, archiveUrls);
-                } catch (Exception e) {
-                    logger.error("Failed to build session: {}", sessionKey, e);
-                    buildFuture.completeExceptionally(e);
+                } catch (Throwable t) {
+                    // Throwable, not Exception: a LinkageError here (e.g. plugin built
+                    // against a different XNAT core than it runs on, see XNAT-8342)
+                    // would otherwise escape the runnable, be swallowed by the
+                    // scheduler, and leave the future incomplete — surfacing to the
+                    // client as an undiagnosable 30-second "Build timeout" instead
+                    // of the real error.
+                    logger.error("Failed to build session: {}", sessionKey, t);
+                    buildFuture.completeExceptionally(t);
                 } finally {
                     // Clean up maps
                     buildFutures.remove(sessionKey);
