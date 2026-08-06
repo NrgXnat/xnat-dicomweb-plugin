@@ -374,8 +374,7 @@ public class StowRsServiceImpl implements StowRsService {
                     boolean buildSuccessful = handler.rebuild();
 
                     if (buildSuccessful) {
-                        handlePostBuild(user, archiveUrls, override, appendMerge,
-                            request, handler, sessionData, params, resolver);
+                        handlePostBuild(user, archiveUrls, override, appendMerge, request, handler);
                     }
                 }
             } catch (Exception e) {
@@ -399,9 +398,7 @@ public class StowRsServiceImpl implements StowRsService {
      */
     private void handlePostBuild(UserI user, Set<String> archiveUrls, boolean override,
                                  boolean appendMerge, PrearchiveOperationRequest request,
-                                 PrearchiveRebuildHandler handler, SessionData sessionData,
-                                 Map<String, Object> params,
-                                 PrearchiveOperationHandlerResolver resolver) throws Exception {
+                                 PrearchiveRebuildHandler handler) throws Exception {
         handler.postBuild();
         archiveSession(archiveUrls, override, appendMerge, request, user);
     }
