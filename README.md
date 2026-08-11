@@ -226,8 +226,8 @@ Run tests:
 
 ## License
 
-This plugin follows the same license as XNAT.
+See [LICENSE.md]('./LICENSE.md')
 
-## Support
+## Support and Attribution
 
-For issues and feature requests, please use the project's issue tracker.
+This plugin has been developed by XNAT Works Inc. For issues and feature requests, please use the project's issue tracker.
