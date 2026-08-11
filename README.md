@@ -226,7 +226,7 @@ Run tests:
 
 ## License
 
-See [LICENSE.md]('./LICENSE.md')
+See [LICENSE.md](LICENSE.md)
 
 ## Support and Attribution
 
