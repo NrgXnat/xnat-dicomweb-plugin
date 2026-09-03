@@ -2,6 +2,41 @@
 
 All notable changes to the XNAT DICOMweb Plugin will be documented in this file.
 
+## [Unreleased]
+
+### Fixed
+- **QIDO-RS date and time parameters are now validated** — a malformed
+  `StudyDate` or `StudyTime` returns **HTTP 400** with an
+  `InvalidParameter` error, per PS3.18 §10.6.3.1. Previously such
+  values produced an HTTP 200 with an empty result list, because the
+  `BadRequestException` raised while building the query was caught by
+  the catch-all in `XnatDicomServiceImpl.searchStudies` and logged
+  rather than propagated.
+  - A malformed but 8-digit date such as `StudyDate=20251345` reached
+    the database as `2025-13-45` and failed there, with the same
+    swallowed result.
+  - A malformed date of any other length, such as `StudyDate=garbage`,
+    matched no filter branch at all and was silently dropped, so the
+    query returned **every** study rather than none.
+  - `StudyTime` values were never validated; an invalid time simply
+    matched nothing.
+- **Partial-precision `StudyTime` values are now accepted.** PS3.5 §6.2
+  allows the TM components `MM`, `SS` and `FFFFFF` to be unspecified
+  from the right, so `10`, `1030` and `103000.5` are valid times. The
+  range parser previously required exactly 6 digits, which rejected
+  `StudyTime=1000-1800` — the worked example in PS3.4 §C.2.2.2.5.4.
+  Leap seconds (`SS`=60) are also accepted.
+
+### Changed
+- **Wildcards are no longer accepted in `StudyDate` / `StudyTime`.**
+  PS3.4 §C.2.2.2.4 defines Wild Card Matching only for attributes of
+  VR AE, CS, LO, LT, PN, SH, ST, UC, UR and UT; DA and TM are excluded.
+  `StudyDate=2025*` now returns 400. A bare `*` is still accepted as
+  universal matching, per the §C.2.2.2.4 note that "Wild Card Matching
+  on a value of `*` is equivalent to Universal Matching". Wildcard
+  matching on `PatientName`, `SeriesDescription` and other string
+  attributes is unaffected.
+
 ## [1.2.0] - 2026-04-09
 
 ### Added
