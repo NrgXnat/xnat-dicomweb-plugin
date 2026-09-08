@@ -3,7 +3,7 @@
 ## XNAT DICOMweb Plugin
 
 **Product:** XNAT DICOMweb Plugin
-**Version:** 1.3.0-SNAPSHOT
+**Version:** 1.3.0
 **DICOM Standard reference:** PS3.18
 **Date:** 2026-07-08
 
