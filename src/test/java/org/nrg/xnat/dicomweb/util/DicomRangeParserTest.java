@@ -194,14 +194,41 @@ public class DicomRangeParserTest {
 
     // ---- Time parsing: malformed → 400 ----
 
-    @Test(expected = BadRequestException.class)
-    public void nonSixDigitTimeStartRejected() {
-        DicomRangeParser.parseDicomTimeRange("0800-180000");
+    // PS3.5 §6.2 TM: "One or more of the components MM, SS, or FFFFFF
+    // may be unspecified as long as every component to the right of an
+    // unspecified component is also unspecified". Partial-precision
+    // endpoints are therefore valid, and unspecified components
+    // resolve to zero.
+
+    @Test
+    public void partialPrecisionHourMinuteEndpointsAccepted() {
+        DicomTimeRange r = DicomRangeParser.parseDicomTimeRange(
+                "0800-180000").get();
+        assertEquals(LocalTime.of(8, 0, 0), r.start);
+        assertEquals(LocalTime.of(18, 0, 0), r.end);
+    }
+
+    @Test
+    public void partialPrecisionHourOnlyEndpointAccepted() {
+        DicomTimeRange r = DicomRangeParser.parseDicomTimeRange(
+                "080000-18").get();
+        assertEquals(LocalTime.of(8, 0, 0), r.start);
+        assertEquals(LocalTime.of(18, 0, 0), r.end);
+    }
+
+    @Test
+    public void ps3_4NoteExampleTimeRangeParses() {
+        // The Study Time from the PS3.4 §C.2.2.2.5.4 worked example.
+        DicomTimeRange r = DicomRangeParser.parseDicomTimeRange(
+                "1000-1800").get();
+        assertEquals(LocalTime.of(10, 0), r.start);
+        assertEquals(LocalTime.of(18, 0), r.end);
     }
 
     @Test(expected = BadRequestException.class)
-    public void nonSixDigitTimeEndRejected() {
-        DicomRangeParser.parseDicomTimeRange("080000-18");
+    public void oddDigitCountTimeRejected() {
+        // PS3.5 §6.2 cites "021 " as an invalid TM value.
+        DicomRangeParser.parseDicomTimeRange("021-180000");
     }
 
     @Test(expected = BadRequestException.class)
@@ -219,11 +246,33 @@ public class DicomRangeParserTest {
         DicomRangeParser.parseDicomTimeRange("08????-180000");
     }
 
+    @Test
+    public void fractionalSecondsInTimeRangeAccepted() {
+        // PS3.5 §6.2 TM: "The FFFFFF component, if present, shall
+        // contain 1 to 6 digits."
+        DicomTimeRange r = DicomRangeParser.parseDicomTimeRange(
+                "080000.5-180000").get();
+        assertEquals(LocalTime.of(8, 0, 0, 500_000_000), r.start);
+        assertEquals(LocalTime.of(18, 0, 0), r.end);
+    }
+
     @Test(expected = BadRequestException.class)
-    public void fractionalSecondsInTimeRangeRejected() {
-        // Not in scope for this fix — matches series/instance-level
-        // exact-form expectations at the study level.
-        DicomRangeParser.parseDicomTimeRange("080000.500000-180000");
+    public void fractionWithoutSecondsRejected() {
+        DicomRangeParser.parseDicomTimeRange("0800.5-180000");
+    }
+
+    @Test(expected = BadRequestException.class)
+    public void overlongFractionRejected() {
+        DicomRangeParser.parseDicomTimeRange("080000.1234567-180000");
+    }
+
+    @Test
+    public void leapSecondEndpointAccepted() {
+        // PS3.5 §6.2 TM: SS "range '00' - '60'"; the SS component
+        // "may have a Value of 60 only for a leap second".
+        DicomTimeRange r = DicomRangeParser.parseDicomTimeRange(
+                "080000-235960").get();
+        assertEquals(LocalTime.of(23, 59, 59, 999_999_999), r.end);
     }
 
     // ---- Combined DA + TM into DT range ----

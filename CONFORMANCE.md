@@ -130,6 +130,26 @@ Clients relying on the PS3.18 convention will not detect that more
 results remain. Clients aware of the plugin's `X-Total-Count` can
 compute the remainder as `X-Total-Count − offset − returned`.
 
+### 0.11 A partial-precision `StudyTime` matches every time sharing its components
+
+PS3.5 §6.2 allows a TM value to omit components from the right,
+"which indicates that the Value is not precise to the precision of
+those unspecified components", but PS3.4 §C.2.2.2.1 defines Single
+Value Matching as matching "exactly the value specified in the
+request" without saying how the two interact.
+
+The plugin resolves this by comparing only the components the client
+supplied: `StudyTime=10` matches every session in the 10:00 hour and
+`StudyTime=1030` every session in the 10:30 minute, rather than
+matching only 10:00:00 and 10:30:00 exactly. A fractional second in
+a single value is accepted but ignored, because XNAT stores no
+sub-second precision.
+
+Note that this differs from the *range* case, where an unspecified
+component resolves to zero because a range endpoint denotes a single
+instant — `StudyTime=1000-1800` ends at 18:00:00 exactly, per the
+worked example in PS3.4 §C.2.2.2.5.4.
+
 ---
 
 ## 1. Overview
@@ -376,8 +396,8 @@ enforce TLS itself and does not configure CORS (see Section 10.2).
 | Parameter            | Levels                  | DICOM Tag    | Notes                                  |
 |----------------------|-------------------------|--------------|----------------------------------------|
 | `StudyInstanceUID`   | Study, Series, Instance | (0020,000D)  | UID-list (comma-separated) not supported |
-| `StudyDate`          | Study                   | (0008,0020)  | Exact, wildcard, or range              |
-| `StudyTime`          | Study                   | (0008,0030)  | Exact, wildcard, or range              |
+| `StudyDate`          | Study                   | (0008,0020)  | Exact or range; malformed values → 400 |
+| `StudyTime`          | Study                   | (0008,0030)  | Exact or range; malformed values → 400 |
 | `PatientName`        | Study                   | (0010,0010)  |                                        |
 | `PatientID`          | Study                   | (0010,0020)  |                                        |
 | `AccessionNumber`    | Study                   | (0008,0050)  | Matches the XNAT session ID (see 6.5)  |
@@ -402,16 +422,35 @@ enforce TLS itself and does not configure CORS (see Section 10.2).
   files.
 - **Wildcard** — `*` and `?`, translated to SQL `ILIKE` patterns for
   study-level keys and to regex-like Java matching for lower levels.
-  No escape mechanism for literal `*` / `?`.
+  No escape mechanism for literal `*` / `?`. Per PS3.4 §C.2.2.2.4
+  this applies only to attributes of VR AE, CS, LO, LT, PN, SH, ST,
+  UC, UR and UT, so it is **not** available on `StudyDate` or
+  `StudyTime` — see below.
 - **Range** — supported at all levels, per PS3.4 §C.2.2.2.5.1 (DA)
-  and §C.2.2.2.5.2 (TM). Range endpoints must be full 8-digit
-  `yyyyMMdd` (DA) or 6-digit `HHmmss` (TM); wildcards inside a range
-  endpoint are not permitted. Malformed range values at the study
-  level return HTTP 400.
+  and §C.2.2.2.5.2 (TM). Wildcards inside a range endpoint are not
+  permitted. Endpoints follow the VR grammar of PS3.5 §6.2: a date
+  is a full 8-digit `yyyyMMdd`, while a time may use the
+  partial-precision forms `HH`, `HHmm` and `HHmmss` and an optional
+  1-to-6-digit fractional second. Unspecified time components
+  resolve to zero, so `StudyTime=1000-1800` spans 10:00:00 to
+  18:00:00 — the worked example in PS3.4 §C.2.2.2.5.4.
 - **Universal** — empty parameter value matches everything.
   The DICOM range marker `-` (both bounds omitted) is treated the
-  same way at the study level.
-- **Date format** — DICOM `yyyyMMdd` only.
+  same way at the study level, as is a bare `*` in `StudyDate` or
+  `StudyTime` (PS3.4 §C.2.2.2.4 note: "Wild Card Matching on a value
+  of `*` is equivalent to Universal Matching").
+- **Date and time validation** — `StudyDate` and `StudyTime` values
+  are validated against the DA and TM grammars at the REST boundary.
+  A malformed value returns HTTP 400 with an `InvalidParameter`
+  error naming the parameter, per PS3.18 §10.6.3.1 ("400 (Bad
+  Request) — The was a problem with the request. For example, the
+  Query Parameter syntax is incorrect."). This covers malformed
+  single values (`20251345`), malformed range endpoints
+  (`20250101-nonsense`), malformed range structure
+  (`20250101-20250201-20250301`), and wildcards.
+- **Date format** — DICOM `yyyyMMdd` only. The ISO `yyyy-MM-dd` form
+  is rejected: `-` is the DICOM range separator, so `2025-01-15`
+  parses as a three-part range and returns 400.
 
 ### 6.4 Pagination
 

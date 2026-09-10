@@ -9,6 +9,7 @@ package org.nrg.xnat.dicomweb.util;
 import org.dcm4che3.data.Attributes;
 import org.dcm4che3.data.Tag;
 import org.junit.Test;
+import org.nrg.xnat.dicomweb.exceptions.BadRequestException;
 
 import java.util.Collections;
 import java.util.HashMap;
@@ -248,5 +249,67 @@ public class QidoQueryParamParserTest {
         q.put("studydateplus", "20200101");
         Attributes attrs = QidoQueryParamParser.parse(q);
         assertFalse(attrs.contains(Tag.StudyDate));
+    }
+
+    // ---- Date and time validation at the REST boundary ----
+    // Malformed DA/TM values must fail here, where the exception can
+    // reach GlobalExceptionHandler, rather than downstream inside the
+    // query-execution try/catch where it was previously swallowed
+    // into an HTTP 200 with an empty result set.
+
+    @Test(expected = BadRequestException.class)
+    public void malformedStudyDateRejected() {
+        Map<String, String> q = new HashMap<>();
+        q.put("StudyDate", "20251345");
+        QidoQueryParamParser.parse(q);
+    }
+
+    @Test(expected = BadRequestException.class)
+    public void malformedStudyDateRangeRejected() {
+        Map<String, String> q = new HashMap<>();
+        q.put("StudyDate", "20250101-nonsense");
+        QidoQueryParamParser.parse(q);
+    }
+
+    @Test(expected = BadRequestException.class)
+    public void malformedStudyTimeRejected() {
+        Map<String, String> q = new HashMap<>();
+        q.put("StudyTime", "250000");
+        QidoQueryParamParser.parse(q);
+    }
+
+    @Test(expected = BadRequestException.class)
+    public void malformedStudyDateInHexFormRejected() {
+        // Validation keys off the VR, so it applies to the tag
+        // spelling as well as the keyword spelling.
+        Map<String, String> q = new HashMap<>();
+        q.put("00080020", "not-a-date");
+        QidoQueryParamParser.parse(q);
+    }
+
+    @Test
+    public void validStudyTimePrecisionsPreserved() {
+        Map<String, String> q = new HashMap<>();
+        q.put("StudyTime", "1030");
+        Attributes attrs = QidoQueryParamParser.parse(q);
+        assertEquals("1030", attrs.getString(Tag.StudyTime));
+    }
+
+    @Test
+    public void bareAsteriskDateIsDroppedAsUniversalMatch() {
+        Map<String, String> q = new HashMap<>();
+        q.put("StudyDate", "*");
+        Attributes attrs = QidoQueryParamParser.parse(q);
+        assertFalse(attrs.contains(Tag.StudyDate));
+    }
+
+    @Test
+    public void wildcardsStillAcceptedOnStringVrs() {
+        // PS3.4 §C.2.2.2.4 does define Wild Card Matching for PN, so
+        // rejecting it for DA/TM must not disturb these.
+        Map<String, String> q = new HashMap<>();
+        q.put("PatientName", "Doe*");
+        Attributes attrs = QidoQueryParamParser.parse(q);
+        assertEquals("Doe*", attrs.getString(Tag.PatientName));
     }
 }

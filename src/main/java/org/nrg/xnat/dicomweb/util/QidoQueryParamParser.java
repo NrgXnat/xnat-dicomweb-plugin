@@ -35,6 +35,13 @@ import java.util.Map;
  * <p>Only the parameters enumerated in the plugin's QIDO-RS
  * conformance table (CONFORMANCE &sect;6.2) are recognized; anything
  * else is logged at debug and dropped.
+ *
+ * <p>Values of recognized parameters whose VR constrains their syntax
+ * are validated here, at the REST boundary, by
+ * {@link DicomQueryValueValidator}. This is deliberate: it is the one
+ * point every QIDO-RS endpoint passes through, and it sits outside
+ * the query-execution error handling, so a malformed value surfaces
+ * as HTTP 400 rather than being swallowed into an empty result set.
  */
 public final class QidoQueryParamParser {
 
@@ -122,10 +129,29 @@ public final class QidoQueryParamParser {
                 log.debug("Unsupported query parameter: {}", key);
                 continue;
             }
+            if (!isApplicableFilter(key, value, info.vr)) {
+                continue;
+            }
             attrs.setString(info.tag, info.vr, value);
         }
         log.debug("Parsed {} query parameters into DICOM attributes", attrs.size());
         return attrs;
+    }
+
+    // Validate values whose VR constrains their syntax, so that a
+    // malformed date or time is reported as HTTP 400 here rather than
+    // silently degrading into an empty or unfiltered result set
+    // downstream. Returns false when the value denotes Universal
+    // Matching, in which case the parameter is dropped rather than
+    // carried into the query as a filter.
+    private static boolean isApplicableFilter(String key, String value, VR vr) {
+        if (vr == VR.DA) {
+            return DicomQueryValueValidator.validateDate(key, value);
+        }
+        if (vr == VR.TM) {
+            return DicomQueryValueValidator.validateTime(key, value);
+        }
+        return true;
     }
 
     // Lower-case and strip parentheses / commas so that the
