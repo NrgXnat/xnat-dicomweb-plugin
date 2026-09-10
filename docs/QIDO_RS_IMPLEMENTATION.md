@@ -225,7 +225,37 @@ StudyTime=080000-170000
 
 # Combined date and time
 StudyDate=20240101-20240131&StudyTime=080000-170000
+
+# Open-ended ranges
+StudyDate=20240101-        # on or after Jan 1
+StudyDate=-20240131        # on or before Jan 31
+
+# Times may use partial precision (PS3.5 §6.2)
+StudyTime=10               # the 10:00 hour
+StudyTime=1000-1800        # 10:00:00 through 18:00:00
 ```
+
+### Validation
+
+`StudyDate` and `StudyTime` values are validated against the DICOM DA
+and TM grammars before the query runs. A malformed value returns
+**HTTP 400** with an `InvalidParameter` error naming the parameter —
+it does *not* return an empty result set.
+
+```bash
+StudyDate=20251345                    # 400 — no such month/day
+StudyDate=2025-01-15                  # 400 — "-" is the range separator,
+                                      #       so this parses as a 3-part range
+StudyDate=20250101-nonsense           # 400 — malformed range endpoint
+StudyTime=250000                      # 400 — hour out of range
+StudyDate=2025*                       # 400 — wildcards are not defined for
+                                      #       dates/times (PS3.4 §C.2.2.2.4)
+```
+
+Wildcard matching applies only to string-valued attributes such as
+`PatientName` and `SeriesDescription`. A bare `StudyDate=*` is
+accepted as universal matching and is equivalent to omitting the
+parameter.
 
 ---
 

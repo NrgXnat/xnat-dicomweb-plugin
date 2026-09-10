@@ -11,9 +11,6 @@ import org.nrg.xnat.dicomweb.exceptions.BadRequestException;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.LocalTime;
-import java.time.format.DateTimeFormatter;
-import java.time.format.DateTimeParseException;
-import java.time.format.ResolverStyle;
 import java.util.Optional;
 
 /**
@@ -27,22 +24,13 @@ import java.util.Optional;
  * {@code -end}, or the bare universal marker {@code -}. Wildcards
  * ({@code *}, {@code ?}) are not permitted inside a range endpoint.
  *
- * <p>Endpoints must be full 8-digit {@code yyyyMMdd} dates or
- * 6-digit {@code HHmmss} times. Partial precision and fractional
- * seconds are not accepted; a malformed value raises
- * {@link BadRequestException} (HTTP 400).
+ * <p>Endpoint syntax is that of the underlying VR, as defined in
+ * PS3.5 &sect;6.2 and implemented by {@link DicomDateTimeValues}:
+ * dates are a full 8 digits, while times may carry the
+ * partial-precision and fractional-second forms the TM VR allows.
+ * A malformed endpoint raises {@link BadRequestException} (HTTP 400).
  */
 public final class DicomRangeParser {
-
-    // Strict resolver style catches invalid calendar dates like
-    // 20200230; it requires the proleptic-year pattern 'uuuu' rather
-    // than 'yyyy' since the latter needs an era in strict mode.
-    private static final DateTimeFormatter DA_FORMAT =
-            DateTimeFormatter.ofPattern("uuuuMMdd")
-                    .withResolverStyle(ResolverStyle.STRICT);
-    private static final DateTimeFormatter TM_FORMAT =
-            DateTimeFormatter.ofPattern("HHmmss")
-                    .withResolverStyle(ResolverStyle.STRICT);
 
     private DicomRangeParser() {}
 
@@ -57,14 +45,29 @@ public final class DicomRangeParser {
      *                             is malformed
      */
     public static Optional<DicomDateRange> parseDicomDateRange(String value) {
+        return parseDicomDateRange(value, "StudyDate");
+    }
+
+    /**
+     * Parse a DICOM DA range, reporting errors against the parameter
+     * name the client actually sent.
+     *
+     * @param value     the raw query value
+     * @param paramName query parameter name, for the error message
+     * @return the parsed range, or {@link Optional#empty()} if the
+     *         value is not a range
+     * @throws BadRequestException if the value looks like a range but
+     *                             is malformed
+     */
+    public static Optional<DicomDateRange> parseDicomDateRange(String value, String paramName) {
         if (value == null || !value.contains("-")) {
             return Optional.empty();
         }
-        String[] parts = splitRange(value, "StudyDate");
+        String[] parts = splitRange(value, paramName);
         LocalDate start = parts[0].isEmpty()
-                ? null : parseDate(parts[0], "StudyDate");
+                ? null : parseDate(parts[0], paramName);
         LocalDate end = parts[1].isEmpty()
-                ? null : parseDate(parts[1], "StudyDate");
+                ? null : parseDate(parts[1], paramName);
         return Optional.of(new DicomDateRange(start, end));
     }
 
@@ -78,14 +81,29 @@ public final class DicomRangeParser {
      *                             is malformed
      */
     public static Optional<DicomTimeRange> parseDicomTimeRange(String value) {
+        return parseDicomTimeRange(value, "StudyTime");
+    }
+
+    /**
+     * Parse a DICOM TM range, reporting errors against the parameter
+     * name the client actually sent.
+     *
+     * @param value     the raw query value
+     * @param paramName query parameter name, for the error message
+     * @return the parsed range, or {@link Optional#empty()} if the
+     *         value is not a range
+     * @throws BadRequestException if the value looks like a range but
+     *                             is malformed
+     */
+    public static Optional<DicomTimeRange> parseDicomTimeRange(String value, String paramName) {
         if (value == null || !value.contains("-")) {
             return Optional.empty();
         }
-        String[] parts = splitRange(value, "StudyTime");
+        String[] parts = splitRange(value, paramName);
         LocalTime start = parts[0].isEmpty()
-                ? null : parseTime(parts[0], "StudyTime");
+                ? null : parseTime(parts[0], paramName);
         LocalTime end = parts[1].isEmpty()
-                ? null : parseTime(parts[1], "StudyTime");
+                ? null : parseTime(parts[1], paramName);
         return Optional.of(new DicomTimeRange(start, end));
     }
 
@@ -103,23 +121,11 @@ public final class DicomRangeParser {
     }
 
     private static LocalDate parseDate(String s, String paramName) {
-        try {
-            return LocalDate.parse(s, DA_FORMAT);
-        } catch (DateTimeParseException e) {
-            throw new BadRequestException(paramName,
-                    "range endpoint '" + s + "' is not a valid DICOM "
-                    + "date (yyyyMMdd)");
-        }
+        return DicomDateTimeValues.parseDate(paramName, s);
     }
 
     private static LocalTime parseTime(String s, String paramName) {
-        try {
-            return LocalTime.parse(s, TM_FORMAT);
-        } catch (DateTimeParseException e) {
-            throw new BadRequestException(paramName,
-                    "range endpoint '" + s + "' is not a valid DICOM "
-                    + "time (HHmmss)");
-        }
+        return DicomDateTimeValues.parseTime(paramName, s);
     }
 
     /**
