@@ -1,9 +1,16 @@
 package org.nrg.xnat.dicomweb.util;
 
 import org.dcm4che3.data.Attributes;
+import org.dcm4che3.data.BulkData;
+import org.dcm4che3.data.Fragments;
 import org.dcm4che3.data.Tag;
 import org.dcm4che3.data.VR;
 import org.junit.Test;
+
+import javax.json.Json;
+import javax.json.JsonObject;
+import javax.json.JsonReader;
+import java.io.StringReader;
 
 import static org.junit.Assert.*;
 
@@ -105,5 +112,89 @@ public class DicomWebUtilsTest {
         assertNotNull(json);
         // Ensure special characters are properly escaped in JSON
         assertTrue("JSON should be valid", json.length() > 0);
+    }
+
+    /**
+     * Regression: encapsulated/fragmented PixelData previously broke the regex
+     * post-processor that used to live in toJsonWithBulkDataURI and produced
+     * malformed JSON (a keyless `,{…}` sibling at the dataset level and an
+     * orphan `]`). The fix replaces PixelData structurally on the Attributes
+     * before serialization so dcm4che's JSONWriter emits a single well-formed
+     * element regardless of whether the source value was byte[], BulkData, or
+     * Fragments.
+     */
+    @Test
+    public void testReplaceBulkDataWithURIThenToJsonForFragmentedPixelData() throws Exception {
+        Attributes attrs = new Attributes();
+        attrs.setString(Tag.PatientID, VR.LO, "PATIENT001");
+        attrs.setString(Tag.StudyInstanceUID, VR.UI, "1.2.3");
+        attrs.setString(Tag.SeriesInstanceUID, VR.UI, "1.2.3.4");
+        attrs.setString(Tag.SOPInstanceUID, VR.UI, "1.2.3.4.5");
+
+        // Encapsulated multi-frame PixelData: a Fragments sequence with a null
+        // Basic Offset Table entry plus two BulkData fragments. dcm4che's
+        // JSONWriter would emit this as a PixelData element containing nested
+        // BulkDataURI objects — exactly the shape the old `[^}]*` regex
+        // corrupted.
+        Fragments fragments = new Fragments(VR.OB, false, 3);
+        fragments.add(null);
+        fragments.add(new BulkData(null, "http://upstream/frame?offset=100&length=200", false));
+        fragments.add(new BulkData(null, "http://upstream/frame?offset=300&length=400", false));
+        attrs.setValue(Tag.PixelData, VR.OB, fragments);
+
+        String baseUri = "http://upstream/xapi/dicomweb";
+        DicomWebUtils.replaceBulkDataWithURI(attrs, baseUri, "1.2.3", "1.2.3.4", "1.2.3.4.5");
+        String json = DicomWebUtils.toJson(attrs);
+
+        assertNotNull(json);
+
+        // Must parse as a single well-formed JSON object — the regression
+        // produced sibling `,{...}` and orphan `]` that fail any compliant
+        // parser at this step.
+        JsonObject root;
+        try (JsonReader reader = Json.createReader(new StringReader(json))) {
+            root = reader.readObject();
+        }
+
+        // PixelData (7FE00010) must be present as a single object with vr=OB
+        // and a BulkDataURI pointing at the substituted location — not the
+        // original fragment offset/length URLs.
+        assertTrue("JSON must contain PixelData element", root.containsKey("7FE00010"));
+        JsonObject pixelData = root.getJsonObject("7FE00010");
+        assertEquals("PixelData VR must be preserved", "OB", pixelData.getString("vr"));
+        assertEquals(
+                "PixelData must be substituted with the canonical BulkDataURI",
+                baseUri + "/studies/1.2.3/series/1.2.3.4/instances/1.2.3.4.5/bulkdata/7FE00010",
+                pixelData.getString("BulkDataURI"));
+    }
+
+    /**
+     * Companion to the fragmented case: a simple PixelData with a byte[] value
+     * exceeding the bulk-data threshold should also produce a single
+     * BulkDataURI-typed element. (Previously worked because the regex didn't
+     * encounter nested braces; covered here to lock the simple path against
+     * future regressions in the same area.)
+     */
+    @Test
+    public void testReplaceBulkDataWithURIThenToJsonForByteArrayPixelData() throws Exception {
+        Attributes attrs = new Attributes();
+        attrs.setString(Tag.PatientID, VR.LO, "PATIENT001");
+
+        // Any byte[] hits the always-substitute branch for tag 7FE00010
+        attrs.setBytes(Tag.PixelData, VR.OW, new byte[]{1, 2, 3, 4, 5, 6, 7, 8});
+
+        DicomWebUtils.replaceBulkDataWithURI(attrs,
+                "http://upstream/xapi/dicomweb", "1.2.3", "1.2.3.4", "1.2.3.4.5");
+        String json = DicomWebUtils.toJson(attrs);
+
+        JsonObject root;
+        try (JsonReader reader = Json.createReader(new StringReader(json))) {
+            root = reader.readObject();
+        }
+        assertTrue(root.containsKey("7FE00010"));
+        JsonObject pixelData = root.getJsonObject("7FE00010");
+        assertEquals("OW", pixelData.getString("vr"));
+        assertTrue("Expected BulkDataURI on substituted PixelData",
+                pixelData.containsKey("BulkDataURI"));
     }
 }

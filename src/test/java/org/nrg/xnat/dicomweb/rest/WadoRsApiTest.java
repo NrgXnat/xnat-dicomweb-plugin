@@ -10,7 +10,6 @@ import org.mockito.MockitoAnnotations;
 import org.nrg.xdat.security.services.RoleHolder;
 import org.nrg.xdat.security.services.UserManagementServiceI;
 import org.nrg.xft.security.UserI;
-import org.nrg.xnat.dicomweb.exceptions.BadRequestException;
 import org.nrg.xnat.dicomweb.exceptions.ResourceNotFoundException;
 import org.nrg.xnat.dicomweb.service.ImageFormat;
 import org.nrg.xnat.dicomweb.service.RenderedInstanceResult;
@@ -23,7 +22,9 @@ import org.springframework.http.ResponseEntity;
 
 import javax.servlet.http.HttpServletRequest;
 import javax.servlet.http.HttpServletResponse;
+import java.io.File;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.List;
 import java.util.stream.Stream;
 
@@ -79,7 +80,7 @@ public class WadoRsApiTest {
         when(mockRequest.getRequestURL()).thenReturn(new StringBuffer("http://localhost:8080/xapi/dicomweb/projects/TestProject/studies/" + studyUID + "/metadata"));
 
         // Act
-        ResponseEntity<String> response = wadoRsApi.retrieveStudyMetadata(projectId, studyUID, mockRequest);
+        ResponseEntity<String> response = wadoRsApi.retrieveStudyMetadata(projectId, studyUID, null, null, mockRequest);
 
         // Assert
         assertEquals("Should return 200 OK", HttpStatus.OK, response.getStatusCode());
@@ -108,7 +109,7 @@ public class WadoRsApiTest {
         when(mockRequest.getRequestURL()).thenReturn(new StringBuffer("http://localhost:8080/xapi/dicomweb/projects/TestProject/studies/" + studyUID + "/metadata"));
 
         // Act - should throw ResourceNotFoundException
-        wadoRsApi.retrieveStudyMetadata(projectId, studyUID, mockRequest);
+        wadoRsApi.retrieveStudyMetadata(projectId, studyUID, null, null, mockRequest);
     }
 
     @Test
@@ -127,7 +128,7 @@ public class WadoRsApiTest {
         when(mockRequest.getRequestURL()).thenReturn(new StringBuffer("http://localhost:8080/xapi/dicomweb/projects/TestProject/studies/" + studyUID + "/metadata"));
 
         // Act
-        ResponseEntity<String> response = wadoRsApi.retrieveStudyMetadata(projectId, studyUID, mockRequest);
+        ResponseEntity<String> response = wadoRsApi.retrieveStudyMetadata(projectId, studyUID, null, null, mockRequest);
 
         // Assert
         String responseBody = response.getBody();
@@ -155,7 +156,7 @@ public class WadoRsApiTest {
         when(mockRequest.getRequestURL()).thenReturn(new StringBuffer("http://localhost:8080/xapi/dicomweb/projects/TestProject/studies/" + studyUID + "/metadata"));
 
         // Act - should not throw NullPointerException
-        ResponseEntity<String> response = wadoRsApi.retrieveStudyMetadata(projectId, studyUID, mockRequest);
+        ResponseEntity<String> response = wadoRsApi.retrieveStudyMetadata(projectId, studyUID, null, null, mockRequest);
 
         // Assert
         assertEquals("Should successfully return all instances without NPE", HttpStatus.OK, response.getStatusCode());
@@ -203,15 +204,16 @@ public class WadoRsApiTest {
         String seriesUID = "1.2.3.4.5.100";
         String instanceUID = "1.2.3.4.5.6.1";
 
-        byte[] mockDicomData = new byte[]{0x00, 0x01, 0x02, 0x03};
-        java.io.ByteArrayInputStream mockStream = new java.io.ByteArrayInputStream(mockDicomData);
-
-        when(mockDicomService.retrieveInstance(any(UserI.class), eq(projectId), eq(studyUID),
+        // The handler resolves a File and returns a StreamingResponseBody that
+        // reads from it later. A stub File path is enough to verify status and
+        // Content-Type on the ResponseEntity; the streaming body is not invoked
+        // here.
+        when(mockDicomService.resolveInstanceFile(any(UserI.class), eq(projectId), eq(studyUID),
                 eq(seriesUID), eq(instanceUID)))
-            .thenReturn(mockStream);
+            .thenReturn(new File("/dev/null"));
 
         // Act
-        ResponseEntity<?> response = wadoRsApi.retrieveInstance(projectId, studyUID, seriesUID, instanceUID);
+        ResponseEntity<?> response = wadoRsApi.retrieveInstance(projectId, studyUID, seriesUID, instanceUID, null, null);
 
         // Assert
         assertEquals("Should return 200 OK", HttpStatus.OK, response.getStatusCode());
@@ -228,12 +230,14 @@ public class WadoRsApiTest {
         String seriesUID = "1.2.3.4.5.100";
         String instanceUID = "1.2.3.4.5.6.999";
 
-        when(mockDicomService.retrieveInstance(any(UserI.class), eq(projectId), eq(studyUID),
+        // The service is contracted to throw ResourceNotFoundException itself
+        // when no such instance is found; the handler does not null-check.
+        when(mockDicomService.resolveInstanceFile(any(UserI.class), eq(projectId), eq(studyUID),
                 eq(seriesUID), eq(instanceUID)))
             .thenThrow(new ResourceNotFoundException("Instance", instanceUID));
 
         // Act - should throw ResourceNotFoundException
-        wadoRsApi.retrieveInstance(projectId, studyUID, seriesUID, instanceUID);
+        wadoRsApi.retrieveInstance(projectId, studyUID, seriesUID, instanceUID, null, null);
     }
 
     // ========== Instance Metadata Tests ==========
@@ -258,11 +262,9 @@ public class WadoRsApiTest {
         when(mockRequest.getRequestURL()).thenReturn(new StringBuffer(
                 "http://localhost:8080/xapi/dicomweb/projects/TestProject/studies/" + studyUID +
                 "/series/" + seriesUID + "/instances/" + instanceUID + "/metadata"));
-        when(mockRequest.getHeader("Accept")).thenReturn("application/dicom+json");
-
         // Act
         ResponseEntity<String> response = wadoRsApi.retrieveInstanceMetadata(projectId, studyUID,
-                seriesUID, instanceUID, mockRequest);
+                seriesUID, instanceUID, null, "application/dicom+json", mockRequest);
 
         // Assert
         assertEquals("Should return 200 OK", HttpStatus.OK, response.getStatusCode());
@@ -288,7 +290,7 @@ public class WadoRsApiTest {
                 "/series/" + seriesUID + "/instances/" + instanceUID + "/metadata"));
 
         // Act - should throw ResourceNotFoundException
-        wadoRsApi.retrieveInstanceMetadata(projectId, studyUID, seriesUID, instanceUID, mockRequest);
+        wadoRsApi.retrieveInstanceMetadata(projectId, studyUID, seriesUID, instanceUID, null, null, mockRequest);
     }
 
     // ========== Series Retrieval Tests ==========
@@ -300,12 +302,12 @@ public class WadoRsApiTest {
         String studyUID = "1.2.3.4.5";
         String seriesUID = "1.2.3.4.5.100";
 
-        List<java.io.InputStream> mockStreams = new ArrayList<>();
-        mockStreams.add(new java.io.ByteArrayInputStream(new byte[]{1, 2, 3}));
-        mockStreams.add(new java.io.ByteArrayInputStream(new byte[]{4, 5, 6}));
-
-        when(mockDicomService.retrieveSeries(any(UserI.class), eq(projectId), eq(studyUID), eq(seriesUID)))
-            .thenReturn(mockStreams);
+        // 404 gate is the resolveSeriesFiles call on the request thread. Non-empty list
+        // means "series exists"; the streaming body iterates the files later. Returning
+        // a stub file is enough for the 200 + multipart Content-Type to be observable on
+        // the ResponseEntity (the StreamingResponseBody is not invoked in this test).
+        when(mockDicomService.resolveSeriesFiles(any(UserI.class), eq(projectId), eq(studyUID), eq(seriesUID)))
+            .thenReturn(Collections.singletonList(new File("/dev/null")));
 
         // Act
         ResponseEntity<?> response = wadoRsApi.retrieveSeries(projectId, studyUID, seriesUID);
@@ -324,8 +326,8 @@ public class WadoRsApiTest {
         String studyUID = "1.2.3.4.5";
         String seriesUID = "1.2.3.4.5.999";
 
-        when(mockDicomService.retrieveSeries(any(UserI.class), eq(projectId), eq(studyUID), eq(seriesUID)))
-            .thenReturn(new ArrayList<>());
+        when(mockDicomService.resolveSeriesFiles(any(UserI.class), eq(projectId), eq(studyUID), eq(seriesUID)))
+            .thenReturn(Collections.emptyList());
 
         // Act - should throw ResourceNotFoundException
         wadoRsApi.retrieveSeries(projectId, studyUID, seriesUID);
@@ -339,13 +341,11 @@ public class WadoRsApiTest {
         String projectId = "TestProject";
         String studyUID = "1.2.3.4.5";
 
-        List<java.io.InputStream> mockStreams = new ArrayList<>();
-        mockStreams.add(new java.io.ByteArrayInputStream(new byte[]{1, 2, 3}));
-        mockStreams.add(new java.io.ByteArrayInputStream(new byte[]{4, 5, 6}));
-        mockStreams.add(new java.io.ByteArrayInputStream(new byte[]{7, 8, 9}));
-
-        when(mockDicomService.retrieveStudy(any(UserI.class), eq(projectId), eq(studyUID)))
-            .thenReturn(mockStreams);
+        // 404 gate is resolveStudyFiles. Non-empty list means "study exists"; the
+        // streaming body iterates the files later. The StreamingResponseBody is not
+        // invoked in this test.
+        when(mockDicomService.resolveStudyFiles(any(UserI.class), eq(projectId), eq(studyUID)))
+            .thenReturn(Collections.singletonList(new File("/dev/null")));
 
         // Act
         ResponseEntity<?> response = wadoRsApi.retrieveStudy(projectId, studyUID);
@@ -363,8 +363,8 @@ public class WadoRsApiTest {
         String projectId = "TestProject";
         String studyUID = "1.2.3.4.5.999";
 
-        when(mockDicomService.retrieveStudy(any(UserI.class), eq(projectId), eq(studyUID)))
-            .thenReturn(new ArrayList<>());
+        when(mockDicomService.resolveStudyFiles(any(UserI.class), eq(projectId), eq(studyUID)))
+            .thenReturn(Collections.emptyList());
 
         // Act - should throw ResourceNotFoundException
         wadoRsApi.retrieveStudy(projectId, studyUID);
@@ -389,11 +389,9 @@ public class WadoRsApiTest {
         when(mockRequest.getRequestURL()).thenReturn(new StringBuffer(
                 "http://localhost:8080/xapi/dicomweb/projects/TestProject/studies/" + studyUID +
                 "/series/" + seriesUID + "/metadata"));
-        when(mockRequest.getHeader("Accept")).thenReturn("application/dicom+json");
-
         // Act
         ResponseEntity<String> response = wadoRsApi.retrieveSeriesMetadata(projectId, studyUID,
-                seriesUID, null, mockRequest);
+                seriesUID, null, "application/dicom+json", mockRequest);
 
         // Assert
         assertEquals("Should return 200 OK", HttpStatus.OK, response.getStatusCode());
@@ -421,7 +419,7 @@ public class WadoRsApiTest {
                 "/series/" + seriesUID + "/metadata"));
 
         // Act - should throw ResourceNotFoundException
-        wadoRsApi.retrieveSeriesMetadata(projectId, studyUID, seriesUID, null, mockRequest);
+        wadoRsApi.retrieveSeriesMetadata(projectId, studyUID, seriesUID, null, null, mockRequest);
     }
 
     // ========== Rendered Instance Tests ==========
@@ -443,15 +441,13 @@ public class WadoRsApiTest {
                 eq(seriesUID), eq(instanceUID), any(), any(), any()))
             .thenReturn(mockResult);
 
-        HttpServletRequest mockRequest = mock(HttpServletRequest.class);
-        when(mockRequest.getHeader("Accept")).thenReturn("image/jpeg");
-
         HttpServletResponse mockResponse = mock(HttpServletResponse.class);
         javax.servlet.ServletOutputStream mockOutputStream = mock(javax.servlet.ServletOutputStream.class);
         when(mockResponse.getOutputStream()).thenReturn(mockOutputStream);
 
         // Act
-        wadoRsApi.retrieveInstanceRendered(projectId, studyUID, seriesUID, instanceUID, null, mockRequest, mockResponse);
+        wadoRsApi.retrieveInstanceRendered(projectId, studyUID, seriesUID, instanceUID, null,
+                null, null, null, null, "image/jpeg", mockResponse);
 
         // Assert
         verify(mockResponse).setContentType("image/jpeg");
@@ -470,13 +466,11 @@ public class WadoRsApiTest {
                 eq(seriesUID), eq(instanceUID), any(), any(), any()))
             .thenThrow(new ResourceNotFoundException("Instance", instanceUID));
 
-        HttpServletRequest mockRequest = mock(HttpServletRequest.class);
-        when(mockRequest.getHeader("Accept")).thenReturn("image/jpeg");
-
         HttpServletResponse mockResponse = mock(HttpServletResponse.class);
 
         // Act - should throw ResourceNotFoundException
-        wadoRsApi.retrieveInstanceRendered(projectId, studyUID, seriesUID, instanceUID, null, mockRequest, mockResponse);
+        wadoRsApi.retrieveInstanceRendered(projectId, studyUID, seriesUID, instanceUID, null,
+                null, null, null, null, "image/jpeg", mockResponse);
     }
 
     @Test
@@ -497,15 +491,13 @@ public class WadoRsApiTest {
                 eq(seriesUID), eq(instanceUID), eq(frameNumber), any(), any()))
             .thenReturn(mockResult);
 
-        HttpServletRequest mockRequest = mock(HttpServletRequest.class);
-        when(mockRequest.getHeader("Accept")).thenReturn("image/jpeg");
-
         HttpServletResponse mockResponse = mock(HttpServletResponse.class);
         javax.servlet.ServletOutputStream mockOutputStream = mock(javax.servlet.ServletOutputStream.class);
         when(mockResponse.getOutputStream()).thenReturn(mockOutputStream);
 
         // Act
-        wadoRsApi.retrieveInstanceRendered(projectId, studyUID, seriesUID, instanceUID, frameNumber, mockRequest, mockResponse);
+        wadoRsApi.retrieveInstanceRendered(projectId, studyUID, seriesUID, instanceUID, frameNumber,
+                null, null, null, null, "image/jpeg", mockResponse);
 
         // Assert
         verify(mockResponse).setHeader("X-Frame-Count", "10");
@@ -533,7 +525,7 @@ public class WadoRsApiTest {
 
         // Act
         ResponseEntity<?> response = wadoRsApi.retrieveFrames(projectId, studyUID, seriesUID,
-                instanceUID, frameList, null);
+                instanceUID, frameList);
 
         // Assert
         assertEquals("Should return 200 OK", HttpStatus.OK, response.getStatusCode());
@@ -562,7 +554,7 @@ public class WadoRsApiTest {
 
         // Act
         ResponseEntity<?> response = wadoRsApi.retrieveFrames(projectId, studyUID, seriesUID,
-                instanceUID, frameList, null);
+                instanceUID, frameList);
 
         // Assert
         assertEquals("Should return 200 OK", HttpStatus.OK, response.getStatusCode());
@@ -587,7 +579,7 @@ public class WadoRsApiTest {
             .thenThrow(new ResourceNotFoundException("Instance", instanceUID));
 
         // Act - should throw ResourceNotFoundException
-        wadoRsApi.retrieveFrames(projectId, studyUID, seriesUID, instanceUID, frameList, null);
+        wadoRsApi.retrieveFrames(projectId, studyUID, seriesUID, instanceUID, frameList);
     }
 
     @Test(expected = ResourceNotFoundException.class)
@@ -605,7 +597,7 @@ public class WadoRsApiTest {
             .thenReturn(new ArrayList<>());
 
         // Act - should throw ResourceNotFoundException
-        wadoRsApi.retrieveFrames(projectId, studyUID, seriesUID, instanceUID, frameList, null);
+        wadoRsApi.retrieveFrames(projectId, studyUID, seriesUID, instanceUID, frameList);
     }
 
     @Test
@@ -628,7 +620,7 @@ public class WadoRsApiTest {
 
         // Act
         ResponseEntity<?> response = wadoRsApi.retrieveFrames(projectId, studyUID, seriesUID,
-                instanceUID, frameList, null);
+                instanceUID, frameList);
 
         // Assert
         assertEquals("Should return 200 OK for non-sequential frames",
@@ -650,10 +642,8 @@ public class WadoRsApiTest {
         HttpServletRequest mockRequest = mock(HttpServletRequest.class);
         when(mockRequest.getRequestURL()).thenReturn(new StringBuffer(
                 "http://localhost:8080/xapi/dicomweb/projects/P/studies/1/series/2/instances/3/metadata"));
-        when(mockRequest.getHeader("Accept")).thenReturn("application/dicom+json");
-
         ResponseEntity<String> response = wadoRsApi.retrieveInstanceMetadata(
-                "P", "1", "2", "3", mockRequest);
+                "P", "1", "2", "3", null, "application/dicom+json", mockRequest);
 
         assertEquals(HttpStatus.OK, response.getStatusCode());
         assertEquals("application/dicom+json", response.getHeaders().getContentType().toString());
@@ -670,10 +660,8 @@ public class WadoRsApiTest {
         HttpServletRequest mockRequest = mock(HttpServletRequest.class);
         when(mockRequest.getRequestURL()).thenReturn(new StringBuffer(
                 "http://localhost:8080/xapi/dicomweb/projects/P/studies/1/series/2/instances/3/metadata"));
-        when(mockRequest.getHeader("Accept")).thenReturn("application/dicom+xml");
-
         ResponseEntity<String> response = wadoRsApi.retrieveInstanceMetadata(
-                "P", "1", "2", "3", mockRequest);
+                "P", "1", "2", "3", null, "application/dicom+xml", mockRequest);
 
         assertEquals(HttpStatus.OK, response.getStatusCode());
         assertEquals("application/dicom+xml", response.getHeaders().getContentType().toString());
@@ -689,10 +677,10 @@ public class WadoRsApiTest {
         HttpServletRequest mockRequest = mock(HttpServletRequest.class);
         when(mockRequest.getRequestURL()).thenReturn(new StringBuffer(
                 "http://localhost:8080/xapi/dicomweb/projects/P/studies/1/series/2/instances/3/metadata"));
-        // No Accept header set — getHeader returns null
+        // No Accept header — should default to JSON
 
         ResponseEntity<String> response = wadoRsApi.retrieveInstanceMetadata(
-                "P", "1", "2", "3", mockRequest);
+                "P", "1", "2", "3", null, null, mockRequest);
 
         assertEquals(HttpStatus.OK, response.getStatusCode());
         assertEquals("application/dicom+json", response.getHeaders().getContentType().toString());
@@ -708,10 +696,8 @@ public class WadoRsApiTest {
         HttpServletRequest mockRequest = mock(HttpServletRequest.class);
         when(mockRequest.getRequestURL()).thenReturn(new StringBuffer(
                 "http://localhost:8080/xapi/dicomweb/projects/P/studies/1/series/2/instances/3/metadata"));
-        when(mockRequest.getHeader("Accept")).thenReturn("*/*");
-
         ResponseEntity<String> response = wadoRsApi.retrieveInstanceMetadata(
-                "P", "1", "2", "3", mockRequest);
+                "P", "1", "2", "3", null, "*/*", mockRequest);
 
         assertEquals(HttpStatus.OK, response.getStatusCode());
         assertEquals("application/dicom+json", response.getHeaders().getContentType().toString());
@@ -728,10 +714,8 @@ public class WadoRsApiTest {
         HttpServletRequest mockRequest = mock(HttpServletRequest.class);
         when(mockRequest.getRequestURL()).thenReturn(new StringBuffer(
                 "http://localhost:8080/xapi/dicomweb/projects/P/studies/1/series/2/instances/3/metadata"));
-        when(mockRequest.getHeader("Accept")).thenReturn("image/jpeg");
-
         ResponseEntity<String> response = wadoRsApi.retrieveInstanceMetadata(
-                "P", "1", "2", "3", mockRequest);
+                "P", "1", "2", "3", null, "image/jpeg", mockRequest);
 
         assertEquals(HttpStatus.OK, response.getStatusCode());
         assertEquals("application/dicom+json", response.getHeaders().getContentType().toString());
@@ -748,11 +732,9 @@ public class WadoRsApiTest {
         HttpServletRequest mockRequest = mock(HttpServletRequest.class);
         when(mockRequest.getRequestURL()).thenReturn(new StringBuffer(
                 "http://localhost:8080/xapi/dicomweb/projects/P/studies/1/metadata"));
-        when(mockRequest.getHeader("Accept")).thenReturn(
-                "application/dicom+json;q=0.5, application/dicom+xml;q=1.0");
-
         ResponseEntity<String> response = wadoRsApi.retrieveStudyMetadata(
-                "P", "1", mockRequest);
+                "P", "1", null,
+                "application/dicom+json;q=0.5, application/dicom+xml;q=1.0", mockRequest);
 
         assertEquals(HttpStatus.OK, response.getStatusCode());
         assertEquals("application/dicom+xml", response.getHeaders().getContentType().toString());
@@ -768,11 +750,9 @@ public class WadoRsApiTest {
         HttpServletRequest mockRequest = mock(HttpServletRequest.class);
         when(mockRequest.getRequestURL()).thenReturn(new StringBuffer(
                 "http://localhost:8080/xapi/dicomweb/projects/P/studies/1/series/2/metadata"));
-        when(mockRequest.getHeader("Accept")).thenReturn(
-                "application/dicom+xml;q=0.8, application/dicom+json;q=1.0");
-
         ResponseEntity<String> response = wadoRsApi.retrieveSeriesMetadata(
-                "P", "1", "2", null, mockRequest);
+                "P", "1", "2", null,
+                "application/dicom+xml;q=0.8, application/dicom+json;q=1.0", mockRequest);
 
         assertEquals(HttpStatus.OK, response.getStatusCode());
         assertEquals("application/dicom+json", response.getHeaders().getContentType().toString());
@@ -791,29 +771,16 @@ public class WadoRsApiTest {
         when(mockRequest.getRequestURL()).thenReturn(new StringBuffer(
                 "http://localhost:8080/xapi/dicomweb/projects/P/studies/1/series/2/instances/3/metadata"));
         // Header says JSON, but query param says XML — param wins
-        when(mockRequest.getHeader("Accept")).thenReturn("application/dicom+json");
-
         ResponseEntity<String> response = wadoRsApi.retrieveInstanceMetadata(
-                "P", "1", "2", "3", "application/dicom+xml", mockRequest);
+                "P", "1", "2", "3", "application/dicom+xml", "application/dicom+json", mockRequest);
 
         assertEquals(HttpStatus.OK, response.getStatusCode());
         assertEquals("application/dicom+xml", response.getHeaders().getContentType().toString());
     }
 
-    @Test(expected = BadRequestException.class)
-    public void testInstanceMetadata_AcceptQueryParamWildcard_Rejected() throws Exception {
-        Attributes mockAttrs = createMockInstances(1).get(0);
-        when(mockDicomService.retrieveMetadata(any(UserI.class), anyString(), anyString(),
-                anyString(), anyString()))
-            .thenReturn(mockAttrs);
-
-        HttpServletRequest mockRequest = mock(HttpServletRequest.class);
-        when(mockRequest.getRequestURL()).thenReturn(new StringBuffer(
-                "http://localhost:8080/xapi/dicomweb/projects/P/studies/1/series/2/instances/3/metadata"));
-
-        // Wildcards not allowed in accept query parameter per PS 3.18
-        wadoRsApi.retrieveInstanceMetadata("P", "1", "2", "3", "*/*", mockRequest);
-    }
+    // Wildcards in the accept query parameter are rejected by
+    // AcceptParamWildcardInterceptor before the handler runs;
+    // see AcceptParamWildcardInterceptorTest.
 
     // ---- Rendered: content negotiation ----
 
@@ -827,14 +794,12 @@ public class WadoRsApiTest {
                 anyString(), anyString(), any(), eq(ImageFormat.GIF), any()))
             .thenReturn(mockResult);
 
-        HttpServletRequest mockRequest = mock(HttpServletRequest.class);
-        when(mockRequest.getHeader("Accept")).thenReturn("image/gif");
-
         HttpServletResponse mockResponse = mock(HttpServletResponse.class);
         javax.servlet.ServletOutputStream mockOutputStream = mock(javax.servlet.ServletOutputStream.class);
         when(mockResponse.getOutputStream()).thenReturn(mockOutputStream);
 
-        wadoRsApi.retrieveInstanceRendered("P", "1", "2", "3", null, mockRequest, mockResponse);
+        wadoRsApi.retrieveInstanceRendered("P", "1", "2", "3", null,
+                null, null, null, null, "image/gif", mockResponse);
 
         verify(mockDicomService).retrieveRenderedInstance(
                 any(UserI.class), eq("P"), eq("1"), eq("2"), eq("3"),
@@ -851,14 +816,12 @@ public class WadoRsApiTest {
                 anyString(), anyString(), any(), eq(ImageFormat.PNG), any()))
             .thenReturn(mockResult);
 
-        HttpServletRequest mockRequest = mock(HttpServletRequest.class);
-        when(mockRequest.getHeader("Accept")).thenReturn("image/png");
-
         HttpServletResponse mockResponse = mock(HttpServletResponse.class);
         javax.servlet.ServletOutputStream mockOutputStream = mock(javax.servlet.ServletOutputStream.class);
         when(mockResponse.getOutputStream()).thenReturn(mockOutputStream);
 
-        wadoRsApi.retrieveInstanceRendered("P", "1", "2", "3", null, mockRequest, mockResponse);
+        wadoRsApi.retrieveInstanceRendered("P", "1", "2", "3", null,
+                null, null, null, null, "image/png", mockResponse);
 
         verify(mockDicomService).retrieveRenderedInstance(
                 any(UserI.class), eq("P"), eq("1"), eq("2"), eq("3"),
@@ -875,14 +838,13 @@ public class WadoRsApiTest {
                 anyString(), anyString(), any(), eq(ImageFormat.JPEG), any()))
             .thenReturn(mockResult);
 
-        HttpServletRequest mockRequest = mock(HttpServletRequest.class);
-        // No Accept header
-
         HttpServletResponse mockResponse = mock(HttpServletResponse.class);
         javax.servlet.ServletOutputStream mockOutputStream = mock(javax.servlet.ServletOutputStream.class);
         when(mockResponse.getOutputStream()).thenReturn(mockOutputStream);
 
-        wadoRsApi.retrieveInstanceRendered("P", "1", "2", "3", null, mockRequest, mockResponse);
+        // No Accept header — should default to JPEG
+        wadoRsApi.retrieveInstanceRendered("P", "1", "2", "3", null,
+                null, null, null, null, null, mockResponse);
 
         verify(mockDicomService).retrieveRenderedInstance(
                 any(UserI.class), eq("P"), eq("1"), eq("2"), eq("3"),
@@ -899,14 +861,12 @@ public class WadoRsApiTest {
                 anyString(), anyString(), any(), eq(ImageFormat.GIF), any()))
             .thenReturn(mockResult);
 
-        HttpServletRequest mockRequest = mock(HttpServletRequest.class);
-        when(mockRequest.getHeader("Accept")).thenReturn("image/jpeg;q=0.5, image/gif;q=1.0");
-
         HttpServletResponse mockResponse = mock(HttpServletResponse.class);
         javax.servlet.ServletOutputStream mockOutputStream = mock(javax.servlet.ServletOutputStream.class);
         when(mockResponse.getOutputStream()).thenReturn(mockOutputStream);
 
-        wadoRsApi.retrieveInstanceRendered("P", "1", "2", "3", null, mockRequest, mockResponse);
+        wadoRsApi.retrieveInstanceRendered("P", "1", "2", "3", null,
+                null, null, null, null, "image/jpeg;q=0.5, image/gif;q=1.0", mockResponse);
 
         verify(mockDicomService).retrieveRenderedInstance(
                 any(UserI.class), eq("P"), eq("1"), eq("2"), eq("3"),
@@ -923,16 +883,13 @@ public class WadoRsApiTest {
                 anyString(), anyString(), any(), eq(ImageFormat.GIF), any()))
             .thenReturn(mockResult);
 
-        HttpServletRequest mockRequest = mock(HttpServletRequest.class);
-        when(mockRequest.getHeader("Accept")).thenReturn("image/jpeg");
-
         HttpServletResponse mockResponse = mock(HttpServletResponse.class);
         javax.servlet.ServletOutputStream mockOutputStream = mock(javax.servlet.ServletOutputStream.class);
         when(mockResponse.getOutputStream()).thenReturn(mockOutputStream);
 
         // Header says JPEG, query param says GIF — param wins
         wadoRsApi.retrieveInstanceRendered("P", "1", "2", "3", null,
-                "image/gif", null, null, null, mockRequest, mockResponse);
+                "image/gif", null, null, null, "image/jpeg", mockResponse);
 
         verify(mockDicomService).retrieveRenderedInstance(
                 any(UserI.class), eq("P"), eq("1"), eq("2"), eq("3"),
@@ -950,14 +907,12 @@ public class WadoRsApiTest {
                 anyString(), anyString(), any(), eq(ImageFormat.JPEG), any()))
             .thenReturn(mockResult);
 
-        HttpServletRequest mockRequest = mock(HttpServletRequest.class);
-        when(mockRequest.getHeader("Accept")).thenReturn("video/mp4");
-
         HttpServletResponse mockResponse = mock(HttpServletResponse.class);
         javax.servlet.ServletOutputStream mockOutputStream = mock(javax.servlet.ServletOutputStream.class);
         when(mockResponse.getOutputStream()).thenReturn(mockOutputStream);
 
-        wadoRsApi.retrieveInstanceRendered("P", "1", "2", "3", null, mockRequest, mockResponse);
+        wadoRsApi.retrieveInstanceRendered("P", "1", "2", "3", null,
+                null, null, null, null, "video/mp4", mockResponse);
 
         verify(mockDicomService).retrieveRenderedInstance(
                 any(UserI.class), eq("P"), eq("1"), eq("2"), eq("3"),
@@ -968,18 +923,12 @@ public class WadoRsApiTest {
 
     @Test
     public void testRetrieveInstance_AcceptDicom_Succeeds() throws Exception {
-        byte[] mockDicomData = new byte[]{0x00, 0x01, 0x02, 0x03};
-        java.io.ByteArrayInputStream mockStream = new java.io.ByteArrayInputStream(mockDicomData);
-
-        when(mockDicomService.retrieveInstance(any(UserI.class), anyString(), anyString(),
+        when(mockDicomService.resolveInstanceFile(any(UserI.class), anyString(), anyString(),
                 anyString(), anyString()))
-            .thenReturn(mockStream);
-
-        HttpServletRequest mockRequest = mock(HttpServletRequest.class);
-        when(mockRequest.getHeader("Accept")).thenReturn("application/dicom");
+            .thenReturn(new File("/dev/null"));
 
         ResponseEntity<?> response = wadoRsApi.retrieveInstance(
-                "P", "1", "2", "3", null, mockRequest);
+                "P", "1", "2", "3", null, "application/dicom");
 
         assertEquals(HttpStatus.OK, response.getStatusCode());
         assertEquals("application/dicom", response.getHeaders().getContentType().toString());
@@ -987,18 +936,12 @@ public class WadoRsApiTest {
 
     @Test
     public void testRetrieveInstance_WildcardAccept_Succeeds() throws Exception {
-        byte[] mockDicomData = new byte[]{0x00, 0x01, 0x02, 0x03};
-        java.io.ByteArrayInputStream mockStream = new java.io.ByteArrayInputStream(mockDicomData);
-
-        when(mockDicomService.retrieveInstance(any(UserI.class), anyString(), anyString(),
+        when(mockDicomService.resolveInstanceFile(any(UserI.class), anyString(), anyString(),
                 anyString(), anyString()))
-            .thenReturn(mockStream);
-
-        HttpServletRequest mockRequest = mock(HttpServletRequest.class);
-        when(mockRequest.getHeader("Accept")).thenReturn("*/*");
+            .thenReturn(new File("/dev/null"));
 
         ResponseEntity<?> response = wadoRsApi.retrieveInstance(
-                "P", "1", "2", "3", null, mockRequest);
+                "P", "1", "2", "3", null, "*/*");
 
         assertEquals(HttpStatus.OK, response.getStatusCode());
     }
@@ -1007,18 +950,10 @@ public class WadoRsApiTest {
 
     @Test
     public void testRetrieveStudy_AcceptMultipartDicom_Succeeds() throws Exception {
-        List<java.io.InputStream> mockStreams = new ArrayList<>();
-        mockStreams.add(new java.io.ByteArrayInputStream(new byte[]{1, 2, 3}));
+        when(mockDicomService.resolveStudyFiles(any(UserI.class), anyString(), anyString()))
+            .thenReturn(Collections.singletonList(new File("/dev/null")));
 
-        when(mockDicomService.retrieveStudy(any(UserI.class), anyString(), anyString()))
-            .thenReturn(mockStreams);
-
-        HttpServletRequest mockRequest = mock(HttpServletRequest.class);
-        when(mockRequest.getHeader("Accept")).thenReturn(
-                "multipart/related;type=\"application/dicom\"");
-
-        ResponseEntity<?> response = wadoRsApi.retrieveStudy(
-                "P", "1", null, mockRequest);
+        ResponseEntity<?> response = wadoRsApi.retrieveStudy("P", "1");
 
         assertEquals(HttpStatus.OK, response.getStatusCode());
         String contentType = response.getHeaders().getContentType().toString();
@@ -1027,34 +962,20 @@ public class WadoRsApiTest {
 
     @Test
     public void testRetrieveStudy_WildcardAccept_Succeeds() throws Exception {
-        List<java.io.InputStream> mockStreams = new ArrayList<>();
-        mockStreams.add(new java.io.ByteArrayInputStream(new byte[]{1, 2, 3}));
+        when(mockDicomService.resolveStudyFiles(any(UserI.class), anyString(), anyString()))
+            .thenReturn(Collections.singletonList(new File("/dev/null")));
 
-        when(mockDicomService.retrieveStudy(any(UserI.class), anyString(), anyString()))
-            .thenReturn(mockStreams);
-
-        HttpServletRequest mockRequest = mock(HttpServletRequest.class);
-        when(mockRequest.getHeader("Accept")).thenReturn("*/*");
-
-        ResponseEntity<?> response = wadoRsApi.retrieveStudy(
-                "P", "1", null, mockRequest);
+        ResponseEntity<?> response = wadoRsApi.retrieveStudy("P", "1");
 
         assertEquals(HttpStatus.OK, response.getStatusCode());
     }
 
     @Test
     public void testRetrieveSeries_NoAcceptHeader_Succeeds() throws Exception {
-        List<java.io.InputStream> mockStreams = new ArrayList<>();
-        mockStreams.add(new java.io.ByteArrayInputStream(new byte[]{1, 2, 3}));
+        when(mockDicomService.resolveSeriesFiles(any(UserI.class), anyString(), anyString(), anyString()))
+            .thenReturn(Collections.singletonList(new File("/dev/null")));
 
-        when(mockDicomService.retrieveSeries(any(UserI.class), anyString(), anyString(), anyString()))
-            .thenReturn(mockStreams);
-
-        HttpServletRequest mockRequest = mock(HttpServletRequest.class);
-        // No Accept header
-
-        ResponseEntity<?> response = wadoRsApi.retrieveSeries(
-                "P", "1", "2", null, mockRequest);
+        ResponseEntity<?> response = wadoRsApi.retrieveSeries("P", "1", "2");
 
         assertEquals(HttpStatus.OK, response.getStatusCode());
         String contentType = response.getHeaders().getContentType().toString();
@@ -1082,7 +1003,7 @@ public class WadoRsApiTest {
             .thenReturn(mockItems);
 
         ResponseEntity<?> response = wadoRsApi.retrieveInstanceBulkData(
-                projectId, studyUID, seriesUID, instanceUID);
+                projectId, studyUID, seriesUID, instanceUID, null);
 
         assertEquals(HttpStatus.OK, response.getStatusCode());
         String contentType = response.getHeaders().getContentType().toString();
@@ -1106,7 +1027,7 @@ public class WadoRsApiTest {
             .thenReturn(mockItems);
 
         ResponseEntity<InputStreamResource> response = wadoRsApi.retrieveInstanceBulkData(
-                projectId, studyUID, seriesUID, instanceUID);
+                projectId, studyUID, seriesUID, instanceUID, null);
 
         // Read the multipart body and verify Content-Location header is present
         InputStreamResource resource = response.getBody();
@@ -1123,7 +1044,7 @@ public class WadoRsApiTest {
                 anyString(), anyString(), anyString(), anyString()))
             .thenReturn(new ArrayList<>());
 
-        wadoRsApi.retrieveInstanceBulkData("P", "1", "2", "3");
+        wadoRsApi.retrieveInstanceBulkData("P", "1", "2", "3", null);
     }
 
     // ========== Series Bulk Data Tests ==========
@@ -1143,7 +1064,7 @@ public class WadoRsApiTest {
             .thenReturn(mockItems);
 
         ResponseEntity<?> response = wadoRsApi.retrieveSeriesBulkData(
-                projectId, studyUID, seriesUID);
+                projectId, studyUID, seriesUID, null);
 
         assertEquals(HttpStatus.OK, response.getStatusCode());
         String contentType = response.getHeaders().getContentType().toString();
@@ -1166,7 +1087,7 @@ public class WadoRsApiTest {
                 eq(studyUID), anyString()))
             .thenReturn(mockItems);
 
-        ResponseEntity<?> response = wadoRsApi.retrieveStudyBulkData(projectId, studyUID);
+        ResponseEntity<?> response = wadoRsApi.retrieveStudyBulkData(projectId, studyUID, null);
 
         assertEquals(HttpStatus.OK, response.getStatusCode());
     }
@@ -1190,7 +1111,7 @@ public class WadoRsApiTest {
             .thenReturn(mockItems);
 
         ResponseEntity<?> response = wadoRsApi.retrieveInstancePixelData(
-                projectId, studyUID, seriesUID, instanceUID);
+                projectId, studyUID, seriesUID, instanceUID, null);
 
         assertEquals(HttpStatus.OK, response.getStatusCode());
         String contentType = response.getHeaders().getContentType().toString();
@@ -1203,52 +1124,7 @@ public class WadoRsApiTest {
                 anyString(), anyString(), anyString(), anyString()))
             .thenReturn(new ArrayList<>());
 
-        wadoRsApi.retrieveInstancePixelData("P", "1", "2", "3");
-    }
-
-    // ========== Existing single-tag bulk data Content-Location test ==========
-
-    @Test
-    public void testRetrieveBulkData_HasContentLocationHeader() throws Exception {
-        String projectId = "TestProject";
-        String studyUID = "1.2.3.4.5";
-        String seriesUID = "1.2.3.4.5.100";
-        String instanceUID = "1.2.3.4.5.6.1";
-        String tag = "7FE00010";
-
-        // Create a minimal valid DICOM dataset with pixel data
-        org.dcm4che3.data.Attributes attrs = new org.dcm4che3.data.Attributes();
-        attrs.setBytes(org.dcm4che3.data.Tag.PixelData, org.dcm4che3.data.VR.OW, new byte[]{1, 2, 3, 4});
-        attrs.setString(org.dcm4che3.data.Tag.SOPClassUID, org.dcm4che3.data.VR.UI, "1.2.840.10008.5.1.4.1.1.2");
-        attrs.setString(org.dcm4che3.data.Tag.SOPInstanceUID, org.dcm4che3.data.VR.UI, instanceUID);
-
-        // Write to a byte array as Part 10 format
-        java.io.ByteArrayOutputStream baos = new java.io.ByteArrayOutputStream();
-        org.dcm4che3.io.DicomOutputStream dos = new org.dcm4che3.io.DicomOutputStream(baos, "1.2.840.10008.1.2.1");
-        org.dcm4che3.data.Attributes fmi = attrs.createFileMetaInformation("1.2.840.10008.1.2.1");
-        dos.writeDataset(fmi, attrs);
-        dos.close();
-
-        java.io.ByteArrayInputStream mockStream = new java.io.ByteArrayInputStream(baos.toByteArray());
-        when(mockDicomService.retrieveInstance(any(UserI.class), eq(projectId), eq(studyUID),
-                eq(seriesUID), eq(instanceUID)))
-            .thenReturn(mockStream);
-
-        HttpServletRequest mockRequest = mock(HttpServletRequest.class);
-        when(mockRequest.getRequestURL()).thenReturn(new StringBuffer(
-                "http://localhost:8080/xapi/dicomweb/projects/" + projectId +
-                "/studies/" + studyUID + "/series/" + seriesUID +
-                "/instances/" + instanceUID + "/bulkdata/" + tag));
-        when(mockRequest.getHeader("Accept")).thenReturn("application/octet-stream");
-
-        HttpServletResponse mockResponse = mock(HttpServletResponse.class);
-        javax.servlet.ServletOutputStream mockOutputStream = mock(javax.servlet.ServletOutputStream.class);
-        when(mockResponse.getOutputStream()).thenReturn(mockOutputStream);
-
-        wadoRsApi.retrieveBulkData(projectId, studyUID, seriesUID, instanceUID, tag,
-                null, mockRequest, mockResponse);
-
-        verify(mockResponse).setHeader(eq("Content-Location"), contains("7FE00010"));
+        wadoRsApi.retrieveInstancePixelData("P", "1", "2", "3", null);
     }
 
     // ========== Content Negotiation for Bulk Data Endpoints ==========
@@ -1263,12 +1139,11 @@ public class WadoRsApiTest {
             .thenReturn(mockItems);
 
         HttpServletRequest mockRequest = mock(HttpServletRequest.class);
-        when(mockRequest.getHeader("Accept")).thenReturn("application/octet-stream");
         when(mockRequest.getRequestURL()).thenReturn(new StringBuffer(
                 "http://localhost:8080/xapi/dicomweb/projects/P/studies/1/series/2/instances/3/bulkdata"));
 
         ResponseEntity<?> response = wadoRsApi.retrieveInstanceBulkData(
-                "P", "1", "2", "3", null, mockRequest);
+                "P", "1", "2", "3", mockRequest);
 
         assertEquals(HttpStatus.OK, response.getStatusCode());
     }
@@ -1283,13 +1158,11 @@ public class WadoRsApiTest {
             .thenReturn(mockItems);
 
         HttpServletRequest mockRequest = mock(HttpServletRequest.class);
-        when(mockRequest.getHeader("Accept")).thenReturn(
-                "multipart/related;type=\"application/octet-stream\"");
         when(mockRequest.getRequestURL()).thenReturn(new StringBuffer(
                 "http://localhost:8080/xapi/dicomweb/projects/P/studies/1/series/2/instances/3/bulkdata"));
 
         ResponseEntity<?> response = wadoRsApi.retrieveInstanceBulkData(
-                "P", "1", "2", "3", null, mockRequest);
+                "P", "1", "2", "3", mockRequest);
 
         assertEquals(HttpStatus.OK, response.getStatusCode());
     }
@@ -1314,11 +1187,8 @@ public class WadoRsApiTest {
                 anyString(), anyString(), anyString()))
             .thenReturn(mockFrames);
 
-        HttpServletRequest mockRequest = mock(HttpServletRequest.class);
-        when(mockRequest.getHeader("Accept")).thenReturn("application/octet-stream");
-
         ResponseEntity<?> response = wadoRsApi.retrieveFrames(
-                "P", "1", "2", "3", "1", null, mockRequest);
+                "P", "1", "2", "3", "1");
 
         assertEquals(HttpStatus.OK, response.getStatusCode());
         assertEquals("application/octet-stream",
@@ -1337,14 +1207,12 @@ public class WadoRsApiTest {
                 any(), any(ImageFormat.class), any()))
             .thenReturn(mockResult);
 
-        HttpServletRequest mockRequest = mock(HttpServletRequest.class);
-        when(mockRequest.getHeader("Accept")).thenReturn("image/jpeg");
-
         HttpServletResponse mockResponse = mock(HttpServletResponse.class);
         javax.servlet.ServletOutputStream mockOutputStream = mock(javax.servlet.ServletOutputStream.class);
         when(mockResponse.getOutputStream()).thenReturn(mockOutputStream);
 
-        wadoRsApi.retrieveStudyRendered("P", "1", mockRequest, mockResponse);
+        wadoRsApi.retrieveStudyRendered("P", "1",
+                null, null, null, null, null, "image/jpeg", mockResponse);
 
         verify(mockResponse).setContentType("image/jpeg");
         verify(mockOutputStream).write(mockImageData);
@@ -1356,12 +1224,10 @@ public class WadoRsApiTest {
                 any(), any(ImageFormat.class), any()))
             .thenThrow(new ResourceNotFoundException("Study", "1.2.3"));
 
-        HttpServletRequest mockRequest = mock(HttpServletRequest.class);
-        when(mockRequest.getHeader("Accept")).thenReturn("image/jpeg");
-
         HttpServletResponse mockResponse = mock(HttpServletResponse.class);
 
-        wadoRsApi.retrieveStudyRendered("P", "1.2.3", mockRequest, mockResponse);
+        wadoRsApi.retrieveStudyRendered("P", "1.2.3",
+                null, null, null, null, null, "image/jpeg", mockResponse);
     }
 
     // ========== Series Rendered Tests ==========
@@ -1376,14 +1242,12 @@ public class WadoRsApiTest {
                 any(), any(ImageFormat.class), any()))
             .thenReturn(mockResult);
 
-        HttpServletRequest mockRequest = mock(HttpServletRequest.class);
-        when(mockRequest.getHeader("Accept")).thenReturn("image/jpeg");
-
         HttpServletResponse mockResponse = mock(HttpServletResponse.class);
         javax.servlet.ServletOutputStream mockOutputStream = mock(javax.servlet.ServletOutputStream.class);
         when(mockResponse.getOutputStream()).thenReturn(mockOutputStream);
 
-        wadoRsApi.retrieveSeriesRendered("P", "1", "2", mockRequest, mockResponse);
+        wadoRsApi.retrieveSeriesRendered("P", "1", "2",
+                null, null, null, null, null, "image/jpeg", mockResponse);
 
         verify(mockResponse).setContentType("image/jpeg");
         verify(mockOutputStream).write(mockImageData);
@@ -1395,12 +1259,10 @@ public class WadoRsApiTest {
                 anyString(), any(), any(ImageFormat.class), any()))
             .thenThrow(new ResourceNotFoundException("Series", "1.2.3"));
 
-        HttpServletRequest mockRequest = mock(HttpServletRequest.class);
-        when(mockRequest.getHeader("Accept")).thenReturn("image/jpeg");
-
         HttpServletResponse mockResponse = mock(HttpServletResponse.class);
 
-        wadoRsApi.retrieveSeriesRendered("P", "1", "1.2.3", mockRequest, mockResponse);
+        wadoRsApi.retrieveSeriesRendered("P", "1", "1.2.3",
+                null, null, null, null, null, "image/jpeg", mockResponse);
     }
 
     // ========== Frame Rendered Tests ==========
@@ -1415,14 +1277,12 @@ public class WadoRsApiTest {
                 eq("3"), eq(3), any(ImageFormat.class), any()))
             .thenReturn(mockResult);
 
-        HttpServletRequest mockRequest = mock(HttpServletRequest.class);
-        when(mockRequest.getHeader("Accept")).thenReturn("image/jpeg");
-
         HttpServletResponse mockResponse = mock(HttpServletResponse.class);
         javax.servlet.ServletOutputStream mockOutputStream = mock(javax.servlet.ServletOutputStream.class);
         when(mockResponse.getOutputStream()).thenReturn(mockOutputStream);
 
-        wadoRsApi.retrieveFrameRendered("P", "1", "2", "3", "3", mockRequest, mockResponse);
+        wadoRsApi.retrieveFrameRendered("P", "1", "2", "3", "3",
+                null, null, null, null, "image/jpeg", mockResponse);
 
         verify(mockResponse).setContentType("image/jpeg");
         verify(mockResponse).setHeader("X-Frame-Count", "10");
@@ -1444,7 +1304,7 @@ public class WadoRsApiTest {
         javax.servlet.ServletOutputStream mockOutputStream = mock(javax.servlet.ServletOutputStream.class);
         when(mockResponse.getOutputStream()).thenReturn(mockOutputStream);
 
-        wadoRsApi.retrieveStudyThumbnail("P", "1", mockResponse);
+        wadoRsApi.retrieveStudyThumbnail("P", "1", null, null, null, mockResponse);
 
         verify(mockResponse).setContentType("image/jpeg");
         verify(mockOutputStream).write(mockImageData);
@@ -1463,7 +1323,7 @@ public class WadoRsApiTest {
         javax.servlet.ServletOutputStream mockOutputStream = mock(javax.servlet.ServletOutputStream.class);
         when(mockResponse.getOutputStream()).thenReturn(mockOutputStream);
 
-        wadoRsApi.retrieveSeriesThumbnail("P", "1", "2", mockResponse);
+        wadoRsApi.retrieveSeriesThumbnail("P", "1", "2", null, null, null, mockResponse);
 
         verify(mockResponse).setContentType("image/jpeg");
         verify(mockOutputStream).write(mockImageData);
@@ -1483,7 +1343,7 @@ public class WadoRsApiTest {
         javax.servlet.ServletOutputStream mockOutputStream = mock(javax.servlet.ServletOutputStream.class);
         when(mockResponse.getOutputStream()).thenReturn(mockOutputStream);
 
-        wadoRsApi.retrieveInstanceThumbnail("P", "1", "2", "3", mockResponse);
+        wadoRsApi.retrieveInstanceThumbnail("P", "1", "2", "3", null, null, null, mockResponse);
 
         verify(mockResponse).setContentType("image/jpeg");
         verify(mockOutputStream).write(mockImageData);
@@ -1503,7 +1363,7 @@ public class WadoRsApiTest {
         javax.servlet.ServletOutputStream mockOutputStream = mock(javax.servlet.ServletOutputStream.class);
         when(mockResponse.getOutputStream()).thenReturn(mockOutputStream);
 
-        wadoRsApi.retrieveFrameThumbnail("P", "1", "2", "3", "5", mockResponse);
+        wadoRsApi.retrieveFrameThumbnail("P", "1", "2", "3", "5", null, null, null, mockResponse);
 
         verify(mockResponse).setContentType("image/jpeg");
         verify(mockOutputStream).write(mockImageData);
@@ -1516,7 +1376,7 @@ public class WadoRsApiTest {
 
         HttpServletResponse mockResponse = mock(HttpServletResponse.class);
 
-        wadoRsApi.retrieveStudyThumbnail("P", "1.2.3", mockResponse);
+        wadoRsApi.retrieveStudyThumbnail("P", "1.2.3", null, null, null, mockResponse);
     }
 
     @Test(expected = ResourceNotFoundException.class)
@@ -1527,7 +1387,7 @@ public class WadoRsApiTest {
 
         HttpServletResponse mockResponse = mock(HttpServletResponse.class);
 
-        wadoRsApi.retrieveInstanceThumbnail("P", "1", "2", "1.2.3", mockResponse);
+        wadoRsApi.retrieveInstanceThumbnail("P", "1", "2", "1.2.3", null, null, null, mockResponse);
     }
 
     // ========== Rendered with RenderingParams Tests ==========
@@ -1542,15 +1402,12 @@ public class WadoRsApiTest {
                 eq("3"), isNull(), eq(ImageFormat.JPEG), any(RenderingParams.class)))
             .thenReturn(mockResult);
 
-        HttpServletRequest mockRequest = mock(HttpServletRequest.class);
-        when(mockRequest.getHeader("Accept")).thenReturn("image/jpeg");
-
         HttpServletResponse mockResponse = mock(HttpServletResponse.class);
         javax.servlet.ServletOutputStream mockOutputStream = mock(javax.servlet.ServletOutputStream.class);
         when(mockResponse.getOutputStream()).thenReturn(mockOutputStream);
 
         wadoRsApi.retrieveInstanceRendered("P", "1", "2", "3", null, null,
-                "640,480", "400,2000", "85", mockRequest, mockResponse);
+                "640,480", "400,2000", "85", "image/jpeg", mockResponse);
 
         verify(mockDicomService).retrieveRenderedInstance(
                 any(UserI.class), eq("P"), eq("1"), eq("2"), eq("3"),
@@ -1567,15 +1424,12 @@ public class WadoRsApiTest {
                 any(), eq(ImageFormat.GIF), any()))
             .thenReturn(mockResult);
 
-        HttpServletRequest mockRequest = mock(HttpServletRequest.class);
-        when(mockRequest.getHeader("Accept")).thenReturn("image/gif");
-
         HttpServletResponse mockResponse = mock(HttpServletResponse.class);
         javax.servlet.ServletOutputStream mockOutputStream = mock(javax.servlet.ServletOutputStream.class);
         when(mockResponse.getOutputStream()).thenReturn(mockOutputStream);
 
         wadoRsApi.retrieveStudyRendered("P", "1", null, null,
-                null, null, null, mockRequest, mockResponse);
+                null, null, null, "image/gif", mockResponse);
 
         verify(mockDicomService).retrieveRenderedStudy(
                 any(UserI.class), eq("P"), eq("1"),
@@ -1592,15 +1446,13 @@ public class WadoRsApiTest {
                 any(), eq(ImageFormat.JPEG), any()))
             .thenReturn(mockResult);
 
-        HttpServletRequest mockRequest = mock(HttpServletRequest.class);
-        // No Accept header
-
         HttpServletResponse mockResponse = mock(HttpServletResponse.class);
         javax.servlet.ServletOutputStream mockOutputStream = mock(javax.servlet.ServletOutputStream.class);
         when(mockResponse.getOutputStream()).thenReturn(mockOutputStream);
 
+        // No Accept header — should default to JPEG
         wadoRsApi.retrieveStudyRendered("P", "1", null, null,
-                null, null, null, mockRequest, mockResponse);
+                null, null, null, null, mockResponse);
 
         verify(mockDicomService).retrieveRenderedStudy(
                 any(UserI.class), eq("P"), eq("1"),

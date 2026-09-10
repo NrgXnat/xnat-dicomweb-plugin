@@ -1,6 +1,6 @@
 buildscript {
     ext {
-        vXnat = "1.9.3-RC-SNAPSHOT"
+        vXnat = "1.9.3"
     }
 }
 
@@ -16,7 +16,7 @@ plugins {
 }
 
 group = "org.nrg.xnatx.plugins"
-version = "1.2.0"
+version = "1.3.0"
 description = "XNAT DICOMweb Plugin"
 
 repositories {
@@ -76,6 +76,13 @@ compileJava {
     options.fork = false
 }
 
+// Jenkins runs the JVM under a POSIX/C locale (file.encoding=ANSI_X3.4-1968), so javac
+// reads sources as ASCII and chokes on UTF-8 punctuation (em-dashes, arrows, etc.).
+// Pin all Java compilation to UTF-8 so the build is locale-independent.
+tasks.withType(JavaCompile).configureEach {
+    options.encoding = "UTF-8"
+}
+
 configurations.testRuntimeClasspath {
     exclude group: 'com.sun.media', module: 'jai_imageio'
 }
@@ -117,11 +124,10 @@ dependencies {
     compileOnly "org.dcm4che:dcm4che-imageio"
     compileOnly "org.dcm4che:dcm4che-image"
     compileOnly "org.dcm4che:dcm4che-net"
-    implementAndInclude "org.dcm4che:dcm4che-json:5.33.1"
-    compileOnly "jakarta.json:jakarta.json-api:2.1.3"
-    implementAndInclude "org.dcm4che:dcm4che-ws-rs:5.33.1"
-    // OpenCV image I/O for advanced compression formats (JPEG-LS, JPEG 2000)
-    implementAndInclude "org.dcm4che:dcm4che-imageio-opencv:5.33.1"
+    implementAndInclude "org.dcm4che:dcm4che-json"
+    compileOnly "javax.json:javax.json-api:1.1.4"
+    compileOnly "org.dcm4che:dcm4che-ws-rs:5.31.0"
+    implementAndInclude "org.dcm4che:dcm4che-imageio-opencv:5.31.0"
 
     // Apache Mime4J for multipart/related parsing (packaged in plugin)
     implementAndInclude 'org.apache.james:apache-mime4j-core:0.8.9'
@@ -134,6 +140,9 @@ dependencies {
 
     // AnimatedGifEncoder for animated GIF generation (packaged in plugin)
     implementAndInclude 'com.madgag:animated-gif-lib:1.4'
+
+    // JSON-P (javax.json) provider for tests — matches the javax.json API used in main code.
+    testImplementation "org.glassfish:javax.json:1.1.4"
 
     testImplementation 'junit:junit'
     testImplementation "org.springframework:spring-test"
@@ -206,6 +215,8 @@ tasks.register("xnatPluginJar", Jar) {
         exclude "org/checkerframework/**"
         exclude "javax/annotation/**"
         exclude "jakarta/ws/**"
+        exclude "javax/ws/**"
+        exclude "org/glassfish/**"
         exclude "org/dcm4che2/**"
         exclude "org/apache/commons/io/**"
         exclude "com/j256/**"

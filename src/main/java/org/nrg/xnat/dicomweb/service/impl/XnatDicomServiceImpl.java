@@ -24,6 +24,7 @@ import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.function.Function;
 import java.util.function.Predicate;
 import java.util.stream.Collectors;
 import java.util.stream.IntStream;
@@ -38,6 +39,7 @@ import javax.imageio.ImageWriter;
 import javax.imageio.stream.ImageInputStream;
 
 import lombok.extern.slf4j.Slf4j;
+import org.apache.commons.lang.StringUtils;
 import org.dcm4che3.data.Attributes;
 import org.dcm4che3.data.Tag;
 import org.dcm4che3.data.VR;
@@ -72,6 +74,7 @@ import org.nrg.xnat.dicomweb.service.RenderingParams;
 import org.nrg.xnat.dicomweb.service.SiteWideProjectFilter;
 import org.nrg.xnat.dicomweb.service.XnatDicomService;
 import org.nrg.xnat.dicomweb.util.BulkDataHandler;
+import org.nrg.xnat.dicomweb.util.DicomRangeParser;
 import org.nrg.xnat.dicomweb.util.DicomWebUtils;
 import org.nrg.xnat.utils.CatalogUtils;
 
@@ -334,77 +337,168 @@ public class XnatDicomServiceImpl implements XnatDicomService {
      * as a parameterized ILIKE clause, supporting DICOM wildcard matching (* and ?).
      */
     private static void addQueryAttributeFilters(StringBuilder sql, MapSqlParameterSource params,
-                                                  Attributes queryAttributes, boolean siteWide,
-                                                  boolean isAdmin) {
+                                                 Attributes queryAttributes, boolean siteWide,
+                                                 boolean isAdmin) {
         if (queryAttributes == null || queryAttributes.isEmpty()) {
             return;
         }
+        appendStudyUidFilter(sql, params, queryAttributes);
+        appendPatientNameFilter(sql, params, queryAttributes, isAdmin);
+        appendPatientIdFilter(sql, params, queryAttributes, siteWide);
+        appendStudyDateTimeFilter(sql, params, queryAttributes);
+        appendAccessionNumberFilter(sql, params, queryAttributes);
+        appendModalityFilter(sql, params, queryAttributes);
+    }
 
-        // StudyInstanceUID → i.uid
-        String studyUid = dicomWildcardToSqlLike(queryAttributes.getString(Tag.StudyInstanceUID));
-        if (studyUid != null) {
-            sql.append("AND i.uid ILIKE :q_study_uid ESCAPE E'\\\\' ");
-            params.addValue("q_study_uid", studyUid);
+    // Emit "AND <column> ILIKE :<param> ESCAPE E'\\'" for a raw DICOM query value.
+    // Wildcards (* and ?) in the value are translated to SQL LIKE (% and _). No-op
+    // if the raw value is null or empty.
+    private static void appendIlikeFilter(StringBuilder sql, MapSqlParameterSource params,
+                                          String rawValue, String columnExpr,
+                                          String paramName) {
+        String likePat = dicomWildcardToSqlLike(rawValue);
+        if (likePat == null) {
+            return;
         }
+        sql.append("AND ").append(columnExpr)
+                .append(" ILIKE :").append(paramName)
+                .append(" ESCAPE E'\\\\' ");
+        params.addValue(paramName, likePat);
+    }
 
-        // PatientName → experiment_label (pe.experiment_label for permission queries, e.label for admin)
-        String patientName = dicomWildcardToSqlLike(queryAttributes.getString(Tag.PatientName));
-        if (patientName != null) {
-            if (isAdmin) {
-                sql.append("AND e.label ILIKE :q_patient_name ESCAPE E'\\\\' ");
-            } else {
-                sql.append("AND pe.experiment_label ILIKE :q_patient_name ESCAPE E'\\\\' ");
-            }
-            params.addValue("q_patient_name", patientName);
+    // Apply a range parser to a raw QIDO value, or return empty for null/empty input.
+    private static <T> Optional<T> parseIfPresent(String raw, Function<String, Optional<T>> parser) {
+        return Optional.ofNullable(raw)
+                .filter(s -> !s.isEmpty())
+                .flatMap(parser);
+    }
+
+    private static void appendStudyUidFilter(StringBuilder sql, MapSqlParameterSource params,
+                                             Attributes queryAttributes) {
+        appendIlikeFilter(sql, params,
+                queryAttributes.getString(Tag.StudyInstanceUID),
+                "i.uid", "q_study_uid");
+    }
+
+    // PatientName maps to the session label; column depends on admin vs. permission-scoped query.
+    private static void appendPatientNameFilter(StringBuilder sql, MapSqlParameterSource params,
+                                                Attributes queryAttributes, boolean isAdmin) {
+        String column = isAdmin ? "e.label" : "pe.experiment_label";
+        appendIlikeFilter(sql, params,
+                queryAttributes.getString(Tag.PatientName),
+                column, "q_patient_name");
+    }
+
+    // PatientID maps to the subject label; column depends on site-wide vs. project-scoped query.
+    private static void appendPatientIdFilter(StringBuilder sql, MapSqlParameterSource params,
+                                              Attributes queryAttributes, boolean siteWide) {
+        String column = siteWide ? "s.label" : "psl.subject_label";
+        appendIlikeFilter(sql, params,
+                queryAttributes.getString(Tag.PatientID),
+                column, "q_patient_id");
+    }
+
+    private static void appendAccessionNumberFilter(StringBuilder sql, MapSqlParameterSource params,
+                                                    Attributes queryAttributes) {
+        appendIlikeFilter(sql, params,
+                queryAttributes.getString(Tag.AccessionNumber),
+                "e.id", "q_accession_number");
+    }
+
+    private static void appendModalityFilter(StringBuilder sql, MapSqlParameterSource params,
+                                             Attributes queryAttributes) {
+        String elementNameLike = modalityToElementNameLike(
+                queryAttributes.getString(Tag.Modality));
+        if (elementNameLike == null) {
+            return;
         }
+        sql.append("AND LOWER(me.element_name) LIKE :q_modality ");
+        params.addValue("q_modality", elementNameLike);
+    }
 
-        // PatientID → subject_label (s.label for site-wide/admin, psl.subject_label for project-scoped)
-        String patientId = dicomWildcardToSqlLike(queryAttributes.getString(Tag.PatientID));
-        if (patientId != null) {
-            if (siteWide) {
-                sql.append("AND s.label ILIKE :q_patient_id ESCAPE E'\\\\' ");
-            } else {
-                sql.append("AND psl.subject_label ILIKE :q_patient_id ESCAPE E'\\\\' ");
-            }
-            params.addValue("q_patient_id", patientId);
-        }
-
-        // StudyDate → e.date
+    // StudyDate + StudyTime combined date-time matching per PS3.18 §8.3.4.1.1 → PS3.4
+    // §C.2.2.2.5.4: when both DA and TM values are Range Matching values of the same
+    // form, emit a single TIMESTAMP clause against (e.date + e.time). Otherwise fall
+    // through to independent DA and TM handling.
+    private static void appendStudyDateTimeFilter(StringBuilder sql,
+                                                  MapSqlParameterSource params,
+                                                  Attributes queryAttributes) {
         String studyDate = queryAttributes.getString(Tag.StudyDate);
-        if (studyDate != null && !studyDate.isEmpty()) {
-            // DICOM date format is yyyyMMdd; convert to yyyy-MM-dd for SQL date comparison
-            if (studyDate.contains("*") || studyDate.contains("?")) {
-                String likePat = dicomWildcardToSqlLike(studyDate);
-                sql.append("AND TO_CHAR(e.date, 'YYYYMMDD') ILIKE :q_study_date ESCAPE E'\\\\' ");
-                params.addValue("q_study_date", likePat);
-            } else if (studyDate.length() == 8) {
-                String sqlDate = studyDate.substring(0, 4) + "-" + studyDate.substring(4, 6) + "-" + studyDate.substring(6, 8);
-                sql.append("AND e.date = CAST(:q_study_date AS DATE) ");
-                params.addValue("q_study_date", sqlDate);
-            }
-        }
-
-        // StudyTime → e.time
         String studyTime = queryAttributes.getString(Tag.StudyTime);
-        if (studyTime != null && !studyTime.isEmpty()) {
-            String likePat = dicomWildcardToSqlLike(studyTime);
-            sql.append("AND TO_CHAR(e.time, 'HH24MISS') ILIKE :q_study_time ESCAPE E'\\\\' ");
-            params.addValue("q_study_time", likePat);
-        }
+        Optional<DicomRangeParser.DicomDateRange> dateRange =
+                parseIfPresent(studyDate, DicomRangeParser::parseDicomDateRange);
+        Optional<DicomRangeParser.DicomTimeRange> timeRange =
+                parseIfPresent(studyTime, DicomRangeParser::parseDicomTimeRange);
 
-        // AccessionNumber → e.id
-        String accessionNumber = dicomWildcardToSqlLike(queryAttributes.getString(Tag.AccessionNumber));
-        if (accessionNumber != null) {
-            sql.append("AND e.id ILIKE :q_accession_number ESCAPE E'\\\\' ");
-            params.addValue("q_accession_number", accessionNumber);
+        Optional<DicomRangeParser.DicomDateTimeRange> combined =
+                DicomRangeParser.combineIntoDateTimeRange(dateRange, timeRange);
+        if (combined.isPresent()) {
+            appendCombinedDtClauses(sql, params, combined.get());
+            return;
         }
+        appendStudyDateClauses(sql, params, studyDate, dateRange);
+        appendStudyTimeClauses(sql, params, studyTime, timeRange);
+    }
 
-        // Modality → me.element_name (reverse mapped)
-        String modality = queryAttributes.getString(Tag.Modality);
-        String elementNameLike = modalityToElementNameLike(modality);
-        if (elementNameLike != null) {
-            sql.append("AND LOWER(me.element_name) LIKE :q_modality ");
-            params.addValue("q_modality", elementNameLike);
+    private static void appendCombinedDtClauses(StringBuilder sql, MapSqlParameterSource params,
+                                                DicomRangeParser.DicomDateTimeRange r) {
+        if (r.start != null) {
+            sql.append("AND (e.date + e.time) >= CAST(:q_study_dt_start AS TIMESTAMP) ");
+            params.addValue("q_study_dt_start", r.start.toString());
+        }
+        if (r.end != null) {
+            sql.append("AND (e.date + e.time) <= CAST(:q_study_dt_end AS TIMESTAMP) ");
+            params.addValue("q_study_dt_end", r.end.toString());
+        }
+    }
+
+    private static void appendStudyDateClauses(
+            StringBuilder sql, MapSqlParameterSource params,
+            String studyDate, Optional<DicomRangeParser.DicomDateRange> dateRange) {
+        if (StringUtils.isBlank(studyDate)) {
+            return;
+        }
+        if (dateRange.isPresent()) {
+            DicomRangeParser.DicomDateRange r = dateRange.get();
+            if (r.start != null) {
+                sql.append("AND e.date >= CAST(:q_study_date_start AS DATE) ");
+                params.addValue("q_study_date_start", r.start.toString());
+            }
+            if (r.end != null) {
+                sql.append("AND e.date <= CAST(:q_study_date_end AS DATE) ");
+                params.addValue("q_study_date_end", r.end.toString());
+            }
+        } else if (studyDate.contains("*") || studyDate.contains("?")) {
+            appendIlikeFilter(sql, params, studyDate,
+                    "TO_CHAR(e.date, 'YYYYMMDD')", "q_study_date");
+        } else if (studyDate.length() == 8) {
+            String sqlDate = studyDate.substring(0, 4) + "-"
+                    + studyDate.substring(4, 6) + "-"
+                    + studyDate.substring(6, 8);
+            sql.append("AND e.date = CAST(:q_study_date AS DATE) ");
+            params.addValue("q_study_date", sqlDate);
+        }
+    }
+
+    private static void appendStudyTimeClauses(
+            StringBuilder sql, MapSqlParameterSource params,
+            String studyTime, Optional<DicomRangeParser.DicomTimeRange> timeRange) {
+        if (StringUtils.isBlank(studyTime)) {
+            return;
+        }
+        if (timeRange.isPresent()) {
+            DicomRangeParser.DicomTimeRange r = timeRange.get();
+            if (r.start != null) {
+                sql.append("AND e.time >= CAST(:q_study_time_start AS TIME) ");
+                params.addValue("q_study_time_start", r.start.toString());
+            }
+            if (r.end != null) {
+                sql.append("AND e.time <= CAST(:q_study_time_end AS TIME) ");
+                params.addValue("q_study_time_end", r.end.toString());
+            }
+        } else {
+            appendIlikeFilter(sql, params, studyTime,
+                    "TO_CHAR(e.time, 'HH24MISS')", "q_study_time");
         }
     }
 
@@ -623,8 +717,7 @@ public class XnatDicomServiceImpl implements XnatDicomService {
     @Override
     public Attributes retrieveMetadata(UserI user, String projectId, String studyInstanceUID,
                                             String seriesInstanceUID, String sopInstanceUID) {
-      // FIXME: DwInstance may cache metadata; check there first before going to the file system.
-        final File dicomFile = getInstance(user, projectId, studyInstanceUID, seriesInstanceUID, sopInstanceUID);
+        final File dicomFile = resolveInstanceFile(user, projectId, studyInstanceUID, seriesInstanceUID, sopInstanceUID);
         try (DicomInputStream dis = new DicomInputStream(dicomFile)) {
             dis.setURI(makeInstanceUri(projectId, studyInstanceUID, seriesInstanceUID, sopInstanceUID));
             dis.setBulkDataDescriptor(bulkDataHandler);
@@ -650,8 +743,7 @@ public class XnatDicomServiceImpl implements XnatDicomService {
             }
         }
 
-        // Find all sessions with matching StudyInstanceUID (XNAT allows multiple sessions with same UID)
-        List<XnatImagesessiondata> targetSessions = findSessionsByUID(user, projectId, studyInstanceUID);
+        final List<XnatImagesessiondata> targetSessions = findSessionsByUID(user, projectId, studyInstanceUID);
 
         if (!targetSessions.isEmpty()) {
             final List<Attributes> results = targetSessions.stream()
@@ -659,34 +751,90 @@ public class XnatDicomServiceImpl implements XnatDicomService {
                     .filter(Objects::nonNull)
                     .flatMap(this::readInstanceSearchResponseFromScanFiles)
                     .filter(matchesInstanceQuery(queryAttributes))
-                    .peek(attrs -> {
-                        final String uri = makeInstanceUri(projectId, studyInstanceUID, seriesInstanceUID, attrs.getString(Tag.SOPInstanceUID));
-                        attrs.setString(Tag.RetrieveURL, VR.UR, uri);
-                        attrs.setString(Tag.InstanceAvailability, VR.CS, InstanceAvailability.ONLINE.name());
-                    }).collect(Collectors.toList());
+                    .peek(attrs -> annotateInstanceUriAndAvailability(attrs, projectId, studyInstanceUID, seriesInstanceUID))
+                    .collect(Collectors.toList());
             log.debug("Instance search for series {} returned {} instances", seriesInstanceUID, results.size());
             return results;
         }
 
-        // Fallback: check pending DirectToArchive files
-        File pendingDir = findPendingArchiveDir(projectId, studyInstanceUID);
+        final File pendingDir = findPendingArchiveDir(projectId, studyInstanceUID);
         if (pendingDir != null) {
-            List<File> pendingFiles = listFilesInPendingArchive(pendingDir, seriesInstanceUID);
+            final List<File> pendingFiles = listFilesInPendingArchive(pendingDir, seriesInstanceUID);
             if (!pendingFiles.isEmpty()) {
                 final List<Attributes> results = pendingFiles.stream()
                         .flatMap(InstanceResource::fromFile)
                         .filter(matchesInstanceQuery(queryAttributes))
-                        .peek(attrs -> {
-                            final String uri = makeInstanceUri(projectId, studyInstanceUID, seriesInstanceUID, attrs.getString(Tag.SOPInstanceUID));
-                            attrs.setString(Tag.RetrieveURL, VR.UR, uri);
-                            attrs.setString(Tag.InstanceAvailability, VR.CS, InstanceAvailability.ONLINE.name());
-                        }).collect(Collectors.toList());
-                log.debug("Instance search for series {} found {} pending instances", seriesInstanceUID, results.size());
+                        .peek(attrs -> annotateInstanceUriAndAvailability(attrs, projectId, studyInstanceUID, seriesInstanceUID))
+                        .collect(Collectors.toList());
+                log.debug("Instance search for pending series {} returned {} instances", seriesInstanceUID, results.size());
                 return results;
             }
         }
 
         log.warn("Study not found: {}", studyInstanceUID);
+        return Collections.emptyList();
+    }
+
+    private void annotateInstanceUriAndAvailability(final Attributes attrs, final String projectId,
+                                                    final String studyInstanceUID, final String seriesInstanceUID) {
+        final String uri = makeInstanceUri(projectId, studyInstanceUID, seriesInstanceUID, attrs.getString(Tag.SOPInstanceUID));
+        attrs.setString(Tag.RetrieveURL, VR.UR, uri);
+        attrs.setString(Tag.InstanceAvailability, VR.CS, InstanceAvailability.ONLINE.name());
+    }
+
+    @Override
+    public List<File> resolveSeriesFiles(UserI user, String projectId, String studyInstanceUID, String seriesInstanceUID) {
+        if (projectId != null) {
+            XnatProjectdata project = XnatProjectdata.getXnatProjectdatasById(projectId, user, false);
+            if (project == null) {
+                log.warn("Project not found or user does not have access: {}", projectId);
+                return Collections.emptyList();
+            }
+        }
+
+        final List<XnatImagesessiondata> targetSessions = findSessionsByUID(user, projectId, studyInstanceUID);
+        if (!targetSessions.isEmpty()) {
+            return targetSessions.stream()
+                    .map(session -> findScanBySeriesUIDDirect(session.getScans_scan(), seriesInstanceUID))
+                    .filter(Objects::nonNull)
+                    .flatMap(scan -> dicomResourceStream(scan)
+                            .flatMap(resource -> resolveDicomFiles(resource, scan, null)))
+                    .collect(Collectors.toList());
+        }
+
+        final File pendingDir = findPendingArchiveDir(projectId, studyInstanceUID);
+        if (pendingDir != null) {
+            return listFilesInPendingArchive(pendingDir, seriesInstanceUID);
+        }
+
+        return Collections.emptyList();
+    }
+
+    @Override
+    public List<File> resolveStudyFiles(UserI user, String projectId, String studyInstanceUID) {
+        if (projectId != null) {
+            XnatProjectdata project = XnatProjectdata.getXnatProjectdatasById(projectId, user, false);
+            if (project == null) {
+                log.warn("Project not found or user does not have access: {}", projectId);
+                return Collections.emptyList();
+            }
+        }
+
+        final List<XnatImagesessiondata> targetSessions = findSessionsByUID(user, projectId, studyInstanceUID);
+        if (!targetSessions.isEmpty()) {
+            return targetSessions.stream()
+                    .map(XnatImagesessiondata::getScans_scan)
+                    .flatMap(List::stream)
+                    .flatMap(scan -> dicomResourceStream(scan)
+                            .flatMap(resource -> resolveDicomFiles(resource, scan, null)))
+                    .collect(Collectors.toList());
+        }
+
+        final File pendingDir = findPendingArchiveDir(projectId, studyInstanceUID);
+        if (pendingDir != null) {
+            return listFilesInPendingArchive(pendingDir, null);
+        }
+
         return Collections.emptyList();
     }
 
@@ -975,19 +1123,18 @@ public class XnatDicomServiceImpl implements XnatDicomService {
      *
      * @throws ResourceNotFoundException if the project, study, series, or instance cannot be found
      */
-    private File getInstance(UserI user, String projectId, String studyInstanceUID,
+    @Override
+    public File resolveInstanceFile(UserI user, String projectId, String studyInstanceUID,
                              String seriesInstanceUID, String sopInstanceUID) {
         if (projectId != null) {
-            XnatProjectdata project = XnatProjectdata.getXnatProjectdatasById(projectId, user, false);
-            if (project == null) {
+            if (null == XnatProjectdata.getXnatProjectdatasById(projectId, user, false)) {
                 throw new ResourceNotFoundException("Project", projectId);
             }
         }
 
-        List<XnatImagesessiondata> targetSessions = findSessionsByUID(user, projectId, studyInstanceUID);
-
+        final List<XnatImagesessiondata> targetSessions = findSessionsByUID(user, projectId, studyInstanceUID);
         if (!targetSessions.isEmpty()) {
-            Optional<File> dbResult = targetSessions.stream()
+            final Optional<File> dbResult = targetSessions.stream()
                     .filter(canReadSession(user))
                     .map(session -> findScanBySeriesUIDDirect(session.getScans_scan(), seriesInstanceUID))
                     .filter(Objects::nonNull)
@@ -999,9 +1146,9 @@ public class XnatDicomServiceImpl implements XnatDicomService {
         }
 
         // Fallback: check pending DirectToArchive files not yet in XNAT database
-        File pendingDir = findPendingArchiveDir(projectId, studyInstanceUID);
+        final File pendingDir = findPendingArchiveDir(projectId, studyInstanceUID);
         if (pendingDir != null) {
-            File pendingFile = findFileInPendingArchive(pendingDir, seriesInstanceUID, sopInstanceUID);
+            final File pendingFile = findFileInPendingArchive(pendingDir, seriesInstanceUID, sopInstanceUID);
             if (pendingFile != null) {
                 log.debug("Found instance {} in pending archive: {}", sopInstanceUID, pendingFile);
                 return pendingFile;
@@ -1011,14 +1158,6 @@ public class XnatDicomServiceImpl implements XnatDicomService {
         throw new ResourceNotFoundException(
                 targetSessions.isEmpty() ? "Study" : "Instance",
                 targetSessions.isEmpty() ? studyInstanceUID : sopInstanceUID);
-    }
-
-    @Override
-    public InputStream retrieveInstance(UserI user, String projectId, String studyInstanceUID,
-                                       String seriesInstanceUID, String sopInstanceUID) throws IOException {
-        File dicomFile = getInstance(user, projectId, studyInstanceUID, seriesInstanceUID, sopInstanceUID);
-        log.trace("Retrieved instance: {}", sopInstanceUID);
-        return Files.newInputStream(dicomFile.toPath());
     }
 
     @Override
@@ -1096,21 +1235,20 @@ public class XnatDicomServiceImpl implements XnatDicomService {
 
     @Override
     public List<InputStream> retrieveSeries(UserI user, String projectId, String studyInstanceUID, String seriesInstanceUID) {
-        List<InputStream> streams = new ArrayList<>();
-
+        final List<InputStream> streams = new ArrayList<>();
         try {
-            List<Attributes> instances = searchInstances(user, projectId, studyInstanceUID, seriesInstanceUID, null);
-
+            final List<Attributes> instances = searchInstances(user, projectId, studyInstanceUID, seriesInstanceUID, null);
             for (Attributes attrs : instances) {
-                String sopUID = attrs.getString(Tag.SOPInstanceUID);
-                InputStream stream = retrieveInstance(user, projectId, studyInstanceUID, seriesInstanceUID, sopUID);
-                if (stream != null) {
-                    streams.add(stream);
+                final String sopUID = attrs.getString(Tag.SOPInstanceUID);
+                try {
+                    final File file = resolveInstanceFile(user, projectId, studyInstanceUID, seriesInstanceUID, sopUID);
+                    streams.add(Files.newInputStream(file.toPath()));
+                } catch (ResourceNotFoundException e) {
+                    log.debug("instance {}:{}:{}:{} not found in series, skipping", projectId, studyInstanceUID, seriesInstanceUID, sopUID);
                 }
             }
-
         } catch (Exception e) {
-            log.error("Error retrieving series: " + seriesInstanceUID, e);
+            log.error("Error retrieving series: {} ", seriesInstanceUID, e);
         }
 
         return streams;
@@ -1121,7 +1259,7 @@ public class XnatDicomServiceImpl implements XnatDicomService {
                                           String seriesInstanceUID, String sopInstanceUID,
                                           Integer frameNumber, ImageFormat format,
                                           RenderingParams params) {
-        File dicomFile = getInstance(user, projectId, studyInstanceUID, seriesInstanceUID, sopInstanceUID);
+        File dicomFile = resolveInstanceFile(user, projectId, studyInstanceUID, seriesInstanceUID, sopInstanceUID);
         return renderInstance(dicomFile, sopInstanceUID, frameNumber, format, params);
     }
 
@@ -1265,7 +1403,7 @@ public class XnatDicomServiceImpl implements XnatDicomService {
 
         int midIndex = instances.size() / 2;
         String sopUID = instances.get(midIndex).getString(Tag.SOPInstanceUID);
-        return getInstance(user, projectId, studyUID, effectiveSeriesUID, sopUID);
+        return resolveInstanceFile(user, projectId, studyUID, effectiveSeriesUID, sopUID);
     }
 
     // Helper methods
@@ -1607,9 +1745,12 @@ public class XnatDicomServiceImpl implements XnatDicomService {
     }
 
     private Integer getFileCount(XnatImagescandataI scan) {
-        return scan.getFile().stream()
+        // Use the same permissive predicate as dicomResourceStream so QIDO searchSeries
+        // populates NumberOfSeriesRelatedInstances consistently with what the multipart
+        // retrieve path will actually return. A strict "DICOM".equals(label) check here
+        // would leave the count unset for labels like DICOM_RAW / DICOM-orig / *secondary*.
+        return dicomResourceStream(scan)
                 .filter(XnatResourcecatalog.class::isInstance)
-                .filter(resource -> "DICOM".equals(resource.getLabel()))
                 .map(XnatAbstractresourceI::getFileCount)
                 .findAny()
                 .orElse(-1);
@@ -2268,7 +2409,7 @@ public class XnatDicomServiceImpl implements XnatDicomService {
     @Override
     public List<byte[]> retrieveFrames(UserI user, String projectId, String studyInstanceUID,
                                       String seriesInstanceUID, String sopInstanceUID, String frameNumbers) {
-        File dicomFile = getInstance(user, projectId, studyInstanceUID, seriesInstanceUID, sopInstanceUID);
+        File dicomFile = resolveInstanceFile(user, projectId, studyInstanceUID, seriesInstanceUID, sopInstanceUID);
 
         List<Integer> frameList = parseFrameNumbers(frameNumbers);
         if (frameList.isEmpty()) {
@@ -2500,7 +2641,7 @@ public class XnatDicomServiceImpl implements XnatDicomService {
             return attrs -> true;
         }
         return attrs -> IntStream.of(tags)
-                .allMatch(tag -> matchesDicomValue(query.getString(tag), attrs.getString(tag)));
+                .allMatch(tag -> matchesDicomValue(attrs.getString(tag), query.getString(tag)));
     }
 
     /**
@@ -2937,7 +3078,7 @@ public class XnatDicomServiceImpl implements XnatDicomService {
     public List<BulkDataHandler.BulkDataItem> retrieveInstanceBulkData(
             UserI user, String projectId, String studyUID, String seriesUID,
             String instanceUID, String baseUri) {
-        File dicomFile = getInstance(user, projectId, studyUID, seriesUID, instanceUID);
+        File dicomFile = resolveInstanceFile(user, projectId, studyUID, seriesUID, instanceUID);
         return extractBulkDataItems(dicomFile, baseUri, studyUID, seriesUID, instanceUID, false);
     }
 
@@ -2966,7 +3107,7 @@ public class XnatDicomServiceImpl implements XnatDicomService {
     public List<BulkDataHandler.BulkDataItem> retrieveInstancePixelData(
             UserI user, String projectId, String studyUID, String seriesUID,
             String instanceUID, String baseUri) {
-        File dicomFile = getInstance(user, projectId, studyUID, seriesUID, instanceUID);
+        File dicomFile = resolveInstanceFile(user, projectId, studyUID, seriesUID, instanceUID);
         return extractBulkDataItems(dicomFile, baseUri, studyUID, seriesUID, instanceUID, true);
     }
 
@@ -2999,7 +3140,7 @@ public class XnatDicomServiceImpl implements XnatDicomService {
             for (Attributes attrs : instances) {
                 String sopUID = attrs.getString(Tag.SOPInstanceUID);
                 try {
-                    File dicomFile = getInstance(user, projectId, studyUID, seriesUID, sopUID);
+                    File dicomFile = resolveInstanceFile(user, projectId, studyUID, seriesUID, sopUID);
                     items.addAll(extractBulkDataItems(dicomFile, baseUri, studyUID, seriesUID, sopUID, pixelDataOnly));
                 } catch (ResourceNotFoundException e) {
                     log.debug("Instance {} not found while retrieving bulk data", sopUID);
