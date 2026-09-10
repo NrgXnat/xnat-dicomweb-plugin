@@ -310,6 +310,19 @@ Add query parameters to filter results:
 ```bash
 ?StudyDate=20241201                    # Specific date
 ?StudyDate=20240101-20241231          # Date range (all of 2024)
+?StudyDate=20240101-                  # On or after Jan 1
+?StudyDate=-20241231                  # On or before Dec 31
+```
+
+Dates use the DICOM `YYYYMMDD` format. A malformed date returns
+**400 Bad Request** rather than an empty result list:
+
+```bash
+?StudyDate=2024-12-01                 # 400 — use 20241201; a hyphen
+                                      #       means a range, not a separator
+?StudyDate=20241345                   # 400 — no month 13
+?StudyDate=2024*                      # 400 — wildcards work on names,
+                                      #       not on dates or times
 ```
 
 **By Patient ID:**
@@ -384,8 +397,8 @@ curl -u user:pass \
 |-----------|------------|---------|------------------|
 | `PatientName` | Studies | `DOE^JOHN` | Yes (`*`, `?`) |
 | `PatientID` | Studies | `P12345` | No |
-| `StudyDate` | Studies | `20241201-20241231` | Range supported |
-| `StudyTime` | Studies | `080000-170000` | Range supported |
+| `StudyDate` | Studies | `20241201-20241231` | No — range supported; malformed values return 400 |
+| `StudyTime` | Studies | `080000-170000` | No — range supported; malformed values return 400 |
 | `StudyInstanceUID` | Studies | `1.2.840...` | No |
 | `AccessionNumber` | Studies | `ACC123` | No |
 | `Modality` | Studies, Series | `CT` | No |

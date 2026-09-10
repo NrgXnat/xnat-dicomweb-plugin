@@ -74,6 +74,7 @@ import org.nrg.xnat.dicomweb.service.RenderingParams;
 import org.nrg.xnat.dicomweb.service.SiteWideProjectFilter;
 import org.nrg.xnat.dicomweb.service.XnatDicomService;
 import org.nrg.xnat.dicomweb.util.BulkDataHandler;
+import org.nrg.xnat.dicomweb.util.DicomDateTimeValues;
 import org.nrg.xnat.dicomweb.util.DicomRangeParser;
 import org.nrg.xnat.dicomweb.util.DicomWebUtils;
 import org.nrg.xnat.utils.CatalogUtils;
@@ -468,16 +469,13 @@ public class XnatDicomServiceImpl implements XnatDicomService {
                 sql.append("AND e.date <= CAST(:q_study_date_end AS DATE) ");
                 params.addValue("q_study_date_end", r.end.toString());
             }
-        } else if (studyDate.contains("*") || studyDate.contains("?")) {
-            appendIlikeFilter(sql, params, studyDate,
-                    "TO_CHAR(e.date, 'YYYYMMDD')", "q_study_date");
-        } else if (studyDate.length() == 8) {
-            String sqlDate = studyDate.substring(0, 4) + "-"
-                    + studyDate.substring(4, 6) + "-"
-                    + studyDate.substring(6, 8);
-            sql.append("AND e.date = CAST(:q_study_date AS DATE) ");
-            params.addValue("q_study_date", sqlDate);
+            return;
         }
+        // Single Value Matching, PS3.4 §C.2.2.2.1. The value reached
+        // here through QidoQueryParamParser, so it is a well-formed DA.
+        sql.append("AND e.date = CAST(:q_study_date AS DATE) ");
+        params.addValue("q_study_date",
+                DicomDateTimeValues.parseDate("StudyDate", studyDate).toString());
     }
 
     private static void appendStudyTimeClauses(
@@ -496,10 +494,18 @@ public class XnatDicomServiceImpl implements XnatDicomService {
                 sql.append("AND e.time <= CAST(:q_study_time_end AS TIME) ");
                 params.addValue("q_study_time_end", r.end.toString());
             }
-        } else {
-            appendIlikeFilter(sql, params, studyTime,
-                    "TO_CHAR(e.time, 'HH24MISS')", "q_study_time");
+            return;
         }
+        // Single Value Matching, PS3.4 §C.2.2.2.1. TM permits partial
+        // precision (PS3.5 §6.2), and a value "not precise to the
+        // precision of those unspecified components" matches every
+        // stored time sharing the specified components — so compare
+        // only as many leading digits as the client supplied.
+        String prefix = DicomDateTimeValues.timeMatchPrefix(studyTime);
+        sql.append("AND LEFT(TO_CHAR(e.time, 'HH24MISS'), :q_study_time_digits) "
+                + "= :q_study_time ");
+        params.addValue("q_study_time_digits", prefix.length());
+        params.addValue("q_study_time", prefix);
     }
 
     @Override
@@ -643,6 +649,12 @@ public class XnatDicomServiceImpl implements XnatDicomService {
             }
 
             log.debug("Found {} studies{}", results.size(), siteWide ? " (site-wide)" : " in project " + projectId);
+        } catch (DicomWebException e) {
+            // A client error (e.g. a malformed query value) must reach
+            // GlobalExceptionHandler and become its own status code.
+            // Folding it into the catch-all below would report an
+            // invalid request as an empty but successful result set.
+            throw e;
         } catch (Exception e) {
             log.error("Error searching studies{}", projectId != null ? " in project " + projectId : " (site-wide)", e);
         }
