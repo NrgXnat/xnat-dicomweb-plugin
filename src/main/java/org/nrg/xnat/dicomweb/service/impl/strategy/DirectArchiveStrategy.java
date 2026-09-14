@@ -30,7 +30,7 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.context.annotation.Lazy;
 import org.springframework.stereotype.Component;
 
-import javax.servlet.http.HttpServletRequest;
+import jakarta.servlet.http.HttpServletRequest;
 import javax.sql.DataSource;
 import java.io.BufferedOutputStream;
 import java.io.File;
@@ -668,8 +668,22 @@ public class DirectArchiveStrategy implements DicomImportStrategy {
             throw new ArchivingException("Failed to invoke getOrCreate: " + e.getMessage());
         }
 
-        // 2-arg fallback
-        return directArchiveSessionService.getOrCreate(initialize, isNew);
+        // 2-arg fallback (older XNAT). XNAT 1.11.0 exposes only the 3-arg getOrCreate, so invoke the
+        // legacy 2-arg form reflectively — this keeps compiling against 1.11.0 while still working at
+        // runtime on an older XNAT that has the 2-arg method.
+        try {
+            java.lang.reflect.Method method2 = directArchiveSessionService.getClass()
+                    .getMethod("getOrCreate", SessionData.class, AtomicBoolean.class);
+            return (SessionData) method2.invoke(directArchiveSessionService, initialize, isNew);
+        } catch (java.lang.reflect.InvocationTargetException e) {
+            Throwable cause = e.getCause();
+            if (cause instanceof ArchivingException) {
+                throw (ArchivingException) cause;
+            }
+            throw new ArchivingException(cause != null ? cause.getMessage() : e.getMessage());
+        } catch (Exception e) {
+            throw new ArchivingException("Failed to invoke getOrCreate: " + e.getMessage());
+        }
     }
 
     /**

@@ -12,7 +12,7 @@ import org.nrg.xnat.dicomweb.service.FailedInstance;
 import org.nrg.xnat.dicomweb.service.StowRsImportResult;
 import org.nrg.xnat.dicomweb.service.SuccessfulInstance;
 
-import javax.servlet.http.HttpServletRequest;
+import jakarta.servlet.http.HttpServletRequest;
 import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.List;

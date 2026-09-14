@@ -39,7 +39,7 @@ import javax.imageio.ImageWriter;
 import javax.imageio.stream.ImageInputStream;
 
 import lombok.extern.slf4j.Slf4j;
-import org.apache.commons.lang.StringUtils;
+import org.apache.commons.lang3.StringUtils;
 import org.dcm4che3.data.Attributes;
 import org.dcm4che3.data.Tag;
 import org.dcm4che3.data.VR;
