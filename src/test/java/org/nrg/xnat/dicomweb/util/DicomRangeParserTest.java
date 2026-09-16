@@ -315,10 +315,42 @@ public class DicomRangeParserTest {
     @Test
     public void leapSecondEndpointAccepted() {
         // PS3.5 §6.2 TM: SS "range '00' - '60'"; the SS component
-        // "may have a Value of 60 only for a leap second".
+        // "may have a Value of 60 only for a leap second". Clamped to
+        // microsecond precision, not nanosecond — a 9-digit fraction
+        // gets rounded up by Postgres into the following minute.
         DicomTimeRange r = DicomRangeParser.parseDicomTimeRange(
                 "080000-235960").get();
-        assertEquals(LocalTime.of(23, 59, 59, 999_999_999), r.end);
+        assertEquals(LocalTime.of(23, 59, 59, 999_999_000), r.end);
+    }
+
+    @Test(expected = BadRequestException.class)
+    public void leapSecondOutsideMinute59RejectedAsRangeEndpoint() {
+        // The value from the QA report: 10:30:60 is not a leap second
+        // under any timezone offset.
+        DicomRangeParser.parseDicomTimeRange("103000-103060");
+    }
+
+    @Test
+    public void leapSecondRangeEndpointsStayOrdered() {
+        // The clamp must not perturb the inverted-range check: second
+        // 59 clamps below the leap second, so this stays a valid range.
+        DicomTimeRange r = DicomRangeParser.parseDicomTimeRange(
+                "235959-235960").get();
+        assertEquals(LocalTime.of(23, 59, 59), r.start);
+        assertEquals(LocalTime.of(23, 59, 59, 999_999_000), r.end);
+        assertTrue(r.start.isBefore(r.end));
+    }
+
+    @Test
+    public void leapSecondOnBothEndsIsNotInverted() {
+        DicomTimeRange r = DicomRangeParser.parseDicomTimeRange(
+                "235960-235960").get();
+        assertEquals(r.start, r.end);
+    }
+
+    @Test(expected = BadRequestException.class)
+    public void invertedRangeAgainstLeapSecondStillRejected() {
+        DicomRangeParser.parseDicomTimeRange("120000-115960");
     }
 
     // ---- Inverted time ranges → 400 ----

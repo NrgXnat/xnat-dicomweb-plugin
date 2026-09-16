@@ -10,6 +10,7 @@ import org.junit.Test;
 import org.nrg.xnat.dicomweb.exceptions.BadRequestException;
 
 import java.time.LocalDate;
+import java.time.LocalDateTime;
 import java.time.LocalTime;
 
 import static org.junit.Assert.assertEquals;
@@ -215,10 +216,116 @@ public class DicomQueryValueValidatorTest {
                 DicomDateTimeValues.parseTime("StudyTime", "1030"));
     }
 
+    // ---- Leap seconds (SS=60) ----
+    // PS3.5 §6.2: SS range "00" - "60", and "The SS component may have
+    // a Value of 60 only for a leap second." Per IERS Bulletin C a leap
+    // second always falls at 23:59:60 UTC, so the minute is always 59
+    // while the hour varies with the local UTC offset.
+
     @Test
-    public void leapSecondClampsToEndOfMinute() {
-        assertEquals(LocalTime.of(23, 59, 59, 999_999_999),
+    public void leapSecondAcceptedInMinute59AtAnyHour() {
+        assertTrue(DicomQueryValueValidator.validateTime("StudyTime", "235960"));
+        assertTrue(DicomQueryValueValidator.validateTime("StudyTime", "115960"));
+        assertTrue(DicomQueryValueValidator.validateTime("StudyTime", "005960"));
+    }
+
+    @Test
+    public void leapSecondClampsToLastMicrosecondOfMinute() {
+        // Microsecond, not nanosecond: a 9-digit fraction is rounded up
+        // by Postgres and carries into the following minute, which is
+        // the defect this guards against.
+        assertEquals(LocalTime.of(23, 59, 59, 999_999_000),
                 DicomDateTimeValues.parseTime("StudyTime", "235960"));
+    }
+
+    @Test
+    public void leapSecondClampIsAWholeNumberOfMicroseconds() {
+        // The clamp must stay renderable in six fractional digits.
+        assertEquals(0,
+                DicomDateTimeValues.parseTime("StudyTime", "235960").getNano() % 1_000);
+    }
+
+    @Test(expected = BadRequestException.class)
+    public void secondSixtyRejectedInMinuteThirty() {
+        // The value from the QA report — never a leap second.
+        DicomQueryValueValidator.validateTime("StudyTime", "103060");
+    }
+
+    @Test(expected = BadRequestException.class)
+    public void secondSixtyRejectedInMinuteZero() {
+        DicomQueryValueValidator.validateTime("StudyTime", "100060");
+    }
+
+    @Test(expected = BadRequestException.class)
+    public void secondSixtyRejectedInMinuteTwentyNine() {
+        // A fractional-hour offset (+05:30) would render the leap
+        // second here. Rejecting it is a recorded decision, not an
+        // oversight — see CONFORMANCE §0.12. Do not relax this without
+        // revisiting that note.
+        DicomQueryValueValidator.validateTime("StudyTime", "102960");
+    }
+
+    @Test
+    public void secondSixtyRejectionExplainsTheLeapSecondRule() {
+        // "seconds 00-60" alone would read as a contradiction to a
+        // client that just sent second 60, so the message must say why.
+        try {
+            DicomQueryValueValidator.validateTime("StudyTime", "103060");
+            throw new AssertionError("expected BadRequestException");
+        } catch (BadRequestException e) {
+            assertEquals(400, e.getHttpStatus());
+            assertTrue("message should mention leap seconds: " + e.getMessage(),
+                    e.getMessage().toLowerCase().contains("leap second"));
+            assertTrue("message should name the parameter: " + e.getMessage(),
+                    e.getMessage().contains("StudyTime"));
+        }
+    }
+
+    @Test
+    public void leapSecondWithFractionAccepted() {
+        // PS3.5 permits FFFFFF alongside SS; the fraction is subsumed
+        // by the clamp, so it maps to the same bound.
+        assertTrue(DicomQueryValueValidator.validateTime("StudyTime", "235960.5"));
+        assertEquals(DicomDateTimeValues.parseTime("StudyTime", "235960"),
+                DicomDateTimeValues.parseTime("StudyTime", "235960.5"));
+    }
+
+    @Test
+    public void secondSixtyOneStillRejected() {
+        try {
+            DicomQueryValueValidator.validateTime("StudyTime", "235961");
+            throw new AssertionError("expected BadRequestException");
+        } catch (BadRequestException e) {
+            assertEquals(400, e.getHttpStatus());
+        }
+    }
+
+    @Test
+    public void partialPrecisionMinute59IsUnaffected() {
+        // 2359 is minute 59 with no seconds; it must not be dragged
+        // into the leap-second path.
+        assertEquals(LocalTime.of(23, 59, 0),
+                DicomDateTimeValues.parseTime("StudyTime", "2359"));
+    }
+
+    // ---- SQL rendering ----
+
+    @Test
+    public void sqlTimeAlwaysRendersSixFractionalDigits() {
+        assertEquals("23:59:59.999999", DicomDateTimeValues.toSqlTime(
+                DicomDateTimeValues.parseTime("StudyTime", "235960")));
+        assertEquals("10:30:00.000000", DicomDateTimeValues.toSqlTime(
+                DicomDateTimeValues.parseTime("StudyTime", "103000")));
+        assertEquals("10:30:00.500000", DicomDateTimeValues.toSqlTime(
+                DicomDateTimeValues.parseTime("StudyTime", "103000.5")));
+    }
+
+    @Test
+    public void sqlTimestampAlwaysRendersSixFractionalDigits() {
+        assertEquals("2026-06-30T23:59:59.999999",
+                DicomDateTimeValues.toSqlTimestamp(LocalDateTime.of(
+                        LocalDate.of(2026, 6, 30),
+                        DicomDateTimeValues.parseTime("StudyTime", "235960"))));
     }
 
     @Test

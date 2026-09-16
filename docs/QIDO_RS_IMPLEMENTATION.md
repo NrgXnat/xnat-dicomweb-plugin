@@ -237,6 +237,10 @@ StudyDate=20240101-20240101
 # Times may use partial precision (PS3.5 §6.2)
 StudyTime=10               # the 10:00 hour
 StudyTime=1000-1800        # 10:00:00 through 18:00:00
+
+# Second 60 is accepted only in minute 59, where a leap second can
+# actually fall (23:59:60 UTC, shifted by the local UTC offset)
+StudyTime=235959-235960    # through the end of the day
 ```
 
 ### Validation
@@ -253,6 +257,9 @@ StudyDate=2025-01-15                  # 400 — "-" is the range separator,
 StudyDate=20250101-nonsense           # 400 — malformed range endpoint
 StudyDate=20250131-20250101           # 400 — range start after range end
 StudyTime=250000                      # 400 — hour out of range
+StudyTime=103060                      # 400 — second 60 is only valid for a
+                                      #       leap second, which always falls
+                                      #       in minute 59 (e.g. 235960)
 StudyDate=2025*                       # 400 — wildcards are not defined for
                                       #       dates/times (PS3.4 §C.2.2.2.4)
 ```
