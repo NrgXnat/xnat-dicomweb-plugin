@@ -279,6 +279,20 @@ public class QidoQueryParamParserTest {
     }
 
     @Test(expected = BadRequestException.class)
+    public void invertedStudyDateRangeRejected() {
+        Map<String, String> q = new HashMap<>();
+        q.put("StudyDate", "20250131-20250101");
+        QidoQueryParamParser.parse(q);
+    }
+
+    @Test(expected = BadRequestException.class)
+    public void invertedStudyTimeRangeRejected() {
+        Map<String, String> q = new HashMap<>();
+        q.put("StudyTime", "180000-080000");
+        QidoQueryParamParser.parse(q);
+    }
+
+    @Test(expected = BadRequestException.class)
     public void malformedStudyDateInHexFormRejected() {
         // Validation keys off the VR, so it applies to the tag
         // spelling as well as the keyword spelling.

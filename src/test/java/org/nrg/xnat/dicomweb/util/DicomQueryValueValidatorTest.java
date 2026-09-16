@@ -108,6 +108,39 @@ public class DicomQueryValueValidatorTest {
         DicomQueryValueValidator.validateDate("StudyDate", "20250101-20250201-20250301");
     }
 
+    // ---- Inverted ranges ----
+    // PS3.4 §C.2.2.2.5.1 / §C.2.2.2.5.2 define the two-endpoint form
+    // only "where <date1> is less or equal to <date2>" (respectively
+    // <time1> / <time2>).
+
+    @Test(expected = BadRequestException.class)
+    public void invertedDateRangeRejected() {
+        DicomQueryValueValidator.validateDate("StudyDate", "20250131-20250101");
+    }
+
+    @Test(expected = BadRequestException.class)
+    public void invertedTimeRangeRejected() {
+        DicomQueryValueValidator.validateTime("StudyTime", "180000-080000");
+    }
+
+    @Test
+    public void singleDayRangeAccepted() {
+        assertTrue(DicomQueryValueValidator.validateDate("StudyDate",
+                "20250101-20250101"));
+    }
+
+    @Test
+    public void invertedRangeReportsBadRequestNamingTheParameter() {
+        try {
+            DicomQueryValueValidator.validateDate("StudyDate", "20250131-20250101");
+            throw new AssertionError("expected BadRequestException");
+        } catch (BadRequestException e) {
+            assertEquals(400, e.getHttpStatus());
+            assertTrue("message should name the parameter: " + e.getMessage(),
+                    e.getMessage().contains("StudyDate"));
+        }
+    }
+
     // ---- Wildcards are not defined for DA/TM ----
     // PS3.4 §C.2.2.2.4 scopes Wild Card Matching to
     // "AE, CS, LO, LT, PN, SH, ST, UC, UR, UT".

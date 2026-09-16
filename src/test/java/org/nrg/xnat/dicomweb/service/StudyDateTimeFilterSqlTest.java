@@ -11,15 +11,18 @@ import org.dcm4che3.data.Tag;
 import org.dcm4che3.data.VR;
 import org.junit.BeforeClass;
 import org.junit.Test;
+import org.nrg.xnat.dicomweb.exceptions.DicomWebException;
 import org.nrg.xnat.dicomweb.service.impl.XnatDicomServiceImpl;
 import org.springframework.jdbc.core.namedparam.MapSqlParameterSource;
 
+import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Method;
 
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertNull;
 import static org.junit.Assert.assertTrue;
+import static org.junit.Assert.fail;
 
 /**
  * Tests the SQL emitted for StudyDate / StudyTime query parameters by
@@ -143,6 +146,38 @@ public class StudyDateTimeFilterSqlTest {
         Result r = filterFor(null, "1000-1800");
         assertEquals("10:00", r.value("q_study_time_start"));
         assertEquals("18:00", r.value("q_study_time_end"));
+    }
+
+    // ---- Inverted ranges never reach SQL ----
+    // Validation normally happens at the REST boundary, but the query
+    // builder re-parses the range, so an inverted value is rejected
+    // here too rather than emitting a self-contradictory clause pair
+    // (date >= end AND date <= start) that can only match nothing.
+
+    @Test
+    public void invertedDateRangeThrowsInsteadOfEmittingClauses() {
+        assertRejected("20250131-20250101", null, "StudyDate");
+    }
+
+    @Test
+    public void invertedTimeRangeThrowsInsteadOfEmittingClauses() {
+        assertRejected(null, "180000-080000", "StudyTime");
+    }
+
+    private static void assertRejected(String studyDate, String studyTime, String paramName) {
+        try {
+            filterFor(studyDate, studyTime);
+            fail("expected the inverted range to be rejected");
+        } catch (InvocationTargetException e) {
+            Throwable cause = e.getCause();
+            assertTrue("expected a DicomWebException, got " + cause,
+                    cause instanceof DicomWebException);
+            assertEquals(400, ((DicomWebException) cause).getHttpStatus());
+            assertTrue("message should name " + paramName + ": " + cause.getMessage(),
+                    cause.getMessage().contains(paramName));
+        } catch (Exception e) {
+            throw new AssertionError("unexpected exception type", e);
+        }
     }
 
     // ---- Combined DA + TM, PS3.18 §8.3.4.1.1 → PS3.4 §C.2.2.2.5.4 ----

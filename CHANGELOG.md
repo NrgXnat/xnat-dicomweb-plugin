@@ -8,6 +8,7 @@ All notable changes to the XNAT DICOMweb Plugin will be documented in this file.
 - **QIDO-RS date and time parameters are now validated.** 
 - **Partial-precision `StudyTime` values are now accepted.** 
 - **Wildcards are no longer accepted in `StudyDate` / `StudyTime`.**
+- **Inverted date/time ranges are now rejected with 400.**
 
 ## [1.2.0] - 2026-04-09
 

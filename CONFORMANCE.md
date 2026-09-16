@@ -434,6 +434,12 @@ enforce TLS itself and does not configure CORS (see Section 10.2).
   1-to-6-digit fractional second. Unspecified time components
   resolve to zero, so `StudyTime=1000-1800` spans 10:00:00 to
   18:00:00 — the worked example in PS3.4 §C.2.2.2.5.4.
+  A closed range must be correctly ordered: §C.2.2.2.5.1 defines the
+  two-endpoint form only "where `<date1>` is less or equal to
+  `<date2>`" (§C.2.2.2.5.2 likewise for times), so an inverted range
+  such as `StudyDate=20250131-20250101` returns HTTP 400 rather than
+  running a query that cannot match. Equal endpoints
+  (`20250101-20250101`) are a valid single-day range.
 - **Universal** — empty parameter value matches everything.
   The DICOM range marker `-` (both bounds omitted) is treated the
   same way at the study level, as is a bare `*` in `StudyDate` or
@@ -447,7 +453,8 @@ enforce TLS itself and does not configure CORS (see Section 10.2).
   Query Parameter syntax is incorrect."). This covers malformed
   single values (`20251345`), malformed range endpoints
   (`20250101-nonsense`), malformed range structure
-  (`20250101-20250201-20250301`), and wildcards.
+  (`20250101-20250201-20250301`), inverted ranges
+  (`20250131-20250101`), and wildcards.
 - **Date format** — DICOM `yyyyMMdd` only. The ISO `yyyy-MM-dd` form
   is rejected: `-` is the DICOM range separator, so `2025-01-15`
   parses as a three-part range and returns 400.

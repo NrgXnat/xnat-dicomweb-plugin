@@ -21,6 +21,7 @@ import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertNull;
 import static org.junit.Assert.assertTrue;
+import static org.junit.Assert.fail;
 
 /**
  * Unit tests for {@link DicomRangeParser}. Covers DICOM DA and TM
@@ -136,6 +137,51 @@ public class DicomRangeParserTest {
     @Test(expected = BadRequestException.class)
     public void nonNumericDateEndpointRejected() {
         DicomRangeParser.parseDicomDateRange("abcdefgh-20201231");
+    }
+
+    // ---- Inverted ranges → 400 ----
+    // PS3.4 §C.2.2.2.5.1 defines the two-endpoint form only "where
+    // <date1> is less or equal to <date2>". An inverted range can
+    // never match anything, so it is reported as a bad request rather
+    // than run as a query guaranteed to return nothing.
+
+    @Test(expected = BadRequestException.class)
+    public void invertedDateRangeRejected() {
+        DicomRangeParser.parseDicomDateRange("20201231-20200101");
+    }
+
+    @Test
+    public void equalEndpointDateRangeAccepted() {
+        // "less or equal" — a single-day range is still well formed.
+        DicomDateRange r = DicomRangeParser.parseDicomDateRange(
+                "20200101-20200101").get();
+        assertEquals(LocalDate.of(2020, 1, 1), r.start);
+        assertEquals(LocalDate.of(2020, 1, 1), r.end);
+    }
+
+    @Test
+    public void openEndedRangesAreNeverInverted() {
+        // Only a closed range has two bounds to compare; the
+        // open-ended forms must not trip the ordering check.
+        assertTrue(DicomRangeParser.parseDicomDateRange("20201231-").isPresent());
+        assertTrue(DicomRangeParser.parseDicomDateRange("-20200101").isPresent());
+        assertTrue(DicomRangeParser.parseDicomDateRange("-").isPresent());
+    }
+
+    @Test
+    public void invertedDateRangeMessageNamesBothBounds() {
+        try {
+            DicomRangeParser.parseDicomDateRange("20201231-20200101", "StudyDate");
+            fail("expected BadRequestException");
+        } catch (BadRequestException e) {
+            assertEquals(400, e.getHttpStatus());
+            assertTrue("should name the parameter: " + e.getMessage(),
+                    e.getMessage().contains("StudyDate"));
+            assertTrue("should quote the start bound: " + e.getMessage(),
+                    e.getMessage().contains("20201231"));
+            assertTrue("should quote the end bound: " + e.getMessage(),
+                    e.getMessage().contains("20200101"));
+        }
     }
 
     // ---- Time parsing: non-range values fall through ----
@@ -273,6 +319,74 @@ public class DicomRangeParserTest {
         DicomTimeRange r = DicomRangeParser.parseDicomTimeRange(
                 "080000-235960").get();
         assertEquals(LocalTime.of(23, 59, 59, 999_999_999), r.end);
+    }
+
+    // ---- Inverted time ranges → 400 ----
+    // PS3.4 §C.2.2.2.5.2 defines the two-endpoint form only "where
+    // <time1> is less or equal to <time2>", and §C.2.2.2.5.2 also
+    // states that "Range Matching crossing midnight is not
+    // supported" — so an inverted time range is not a shorthand for
+    // an overnight window.
+
+    @Test(expected = BadRequestException.class)
+    public void invertedTimeRangeRejected() {
+        DicomRangeParser.parseDicomTimeRange("180000-080000");
+    }
+
+    @Test(expected = BadRequestException.class)
+    public void invertedPartialPrecisionTimeRangeRejected() {
+        DicomRangeParser.parseDicomTimeRange("18-08");
+    }
+
+    @Test(expected = BadRequestException.class)
+    public void invertedByFractionalSecondRejected() {
+        // Differ only in the fractional component.
+        DicomRangeParser.parseDicomTimeRange("080000.6-080000.5");
+    }
+
+    @Test
+    public void equalEndpointTimeRangeAccepted() {
+        DicomTimeRange r = DicomRangeParser.parseDicomTimeRange(
+                "080000-080000").get();
+        assertEquals(LocalTime.of(8, 0, 0), r.start);
+        assertEquals(LocalTime.of(8, 0, 0), r.end);
+    }
+
+    @Test
+    public void invertedTimeRangeMessageNamesBothBounds() {
+        try {
+            DicomRangeParser.parseDicomTimeRange("180000-080000", "StudyTime");
+            fail("expected BadRequestException");
+        } catch (BadRequestException e) {
+            assertEquals(400, e.getHttpStatus());
+            assertTrue("should name the parameter: " + e.getMessage(),
+                    e.getMessage().contains("StudyTime"));
+            assertTrue("should quote the start bound: " + e.getMessage(),
+                    e.getMessage().contains("180000"));
+            assertTrue("should quote the end bound: " + e.getMessage(),
+                    e.getMessage().contains("080000"));
+        }
+    }
+
+    @Test
+    public void combinedRangeIsOrderedWhenComponentsAreOrdered() {
+        // Documents why the combined DT range needs no ordering check
+        // of its own: if the date bounds differ, the date decides the
+        // ordering regardless of the times; if they are equal, the
+        // already-validated time bounds decide it. So an ordered DA
+        // range plus an ordered TM range always yields an ordered DT
+        // range. Checked for both a multi-day and a same-day span.
+        DicomDateTimeRange multiDay = DicomRangeParser.combineIntoDateTimeRange(
+                DicomRangeParser.parseDicomDateRange("20200101-20200102"),
+                DicomRangeParser.parseDicomTimeRange("080000-180000")
+        ).get();
+        assertTrue(multiDay.start.isBefore(multiDay.end));
+
+        DicomDateTimeRange sameDay = DicomRangeParser.combineIntoDateTimeRange(
+                DicomRangeParser.parseDicomDateRange("20200101-20200101"),
+                DicomRangeParser.parseDicomTimeRange("080000-180000")
+        ).get();
+        assertTrue(sameDay.start.isBefore(sameDay.end));
     }
 
     // ---- Combined DA + TM into DT range ----

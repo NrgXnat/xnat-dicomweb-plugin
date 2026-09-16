@@ -230,6 +230,10 @@ StudyDate=20240101-20240131&StudyTime=080000-170000
 StudyDate=20240101-        # on or after Jan 1
 StudyDate=-20240131        # on or before Jan 31
 
+# A closed range must run forwards (PS3.4 §C.2.2.2.5.1); equal
+# endpoints are a valid single-day range
+StudyDate=20240101-20240101
+
 # Times may use partial precision (PS3.5 §6.2)
 StudyTime=10               # the 10:00 hour
 StudyTime=1000-1800        # 10:00:00 through 18:00:00
@@ -247,6 +251,7 @@ StudyDate=20251345                    # 400 — no such month/day
 StudyDate=2025-01-15                  # 400 — "-" is the range separator,
                                       #       so this parses as a 3-part range
 StudyDate=20250101-nonsense           # 400 — malformed range endpoint
+StudyDate=20250131-20250101           # 400 — range start after range end
 StudyTime=250000                      # 400 — hour out of range
 StudyDate=2025*                       # 400 — wildcards are not defined for
                                       #       dates/times (PS3.4 §C.2.2.2.4)
