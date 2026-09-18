@@ -9,6 +9,7 @@ package org.nrg.xnat.dicomweb.util;
 import org.nrg.xnat.dicomweb.exceptions.BadRequestException;
 
 import java.time.LocalDate;
+import java.time.LocalDateTime;
 import java.time.LocalTime;
 import java.time.format.DateTimeFormatter;
 import java.time.format.DateTimeParseException;
@@ -61,7 +62,47 @@ public final class DicomDateTimeValues {
             DateTimeFormatter.ofPattern("uuuuMMdd")
                     .withResolverStyle(ResolverStyle.STRICT);
 
+    // Renderers for SQL bind parameters. Both emit exactly six
+    // fractional digits, matching the microsecond resolution of the
+    // Postgres `time` and `timestamp` types. Using these rather than
+    // LocalTime.toString() / LocalDateTime.toString() guarantees the
+    // fraction can never reach nine digits and be rounded up by the
+    // database — see the leap-second notes below for why that matters.
+    private static final DateTimeFormatter SQL_TIME_FORMAT =
+            DateTimeFormatter.ofPattern("HH:mm:ss.SSSSSS");
+    private static final DateTimeFormatter SQL_TIMESTAMP_FORMAT =
+            DateTimeFormatter.ofPattern("uuuu-MM-dd'T'HH:mm:ss.SSSSSS");
+
+    // The minute a leap second always falls in; see leapSecond below.
+    private static final int LEAP_SECOND_MINUTE = 59;
+
+    // The largest sub-second offset Postgres `time` / `timestamp` can
+    // represent, in nanoseconds: .999999, i.e. a whole microsecond.
+    private static final int MAX_MICROS_NANOS = 999_999_000;
+
     private DicomDateTimeValues() {}
+
+    /**
+     * Render a time as a Postgres {@code time} literal.
+     *
+     * @param time the value to render
+     * @return an {@code HH:mm:ss.SSSSSS} literal, always with exactly
+     *         six fractional digits
+     */
+    public static String toSqlTime(LocalTime time) {
+        return SQL_TIME_FORMAT.format(time);
+    }
+
+    /**
+     * Render a date-time as a Postgres {@code timestamp} literal.
+     *
+     * @param dateTime the value to render
+     * @return a {@code uuuu-MM-dd'T'HH:mm:ss.SSSSSS} literal, always
+     *         with exactly six fractional digits
+     */
+    public static String toSqlTimestamp(LocalDateTime dateTime) {
+        return SQL_TIMESTAMP_FORMAT.format(dateTime);
+    }
 
     /**
      * Parse a DICOM DA value.
@@ -92,13 +133,16 @@ public final class DicomDateTimeValues {
      *
      * <p>Unspecified components are resolved to zero, so {@code "10"}
      * denotes 10:00:00 exactly. A leap second ({@code SS} = 60, which
-     * PS3.5 permits) is clamped to the last representable instant of
-     * the same minute, since {@link LocalTime} cannot represent it.
+     * PS3.5 permits) is accepted only in minute 59, where a leap
+     * second can actually fall, and is clamped to the last instant of
+     * that minute that Postgres can represent. See the notes on
+     * {@code leapSecond} for the reasoning on both points.
      *
      * @param paramName query parameter name, for the error message
      * @param value     the raw value; trailing SPACE padding is allowed
      * @return the parsed time
-     * @throws BadRequestException if the value is not a valid TM
+     * @throws BadRequestException if the value is not a valid TM, or
+     *                             uses second 60 outside minute 59
      */
     public static LocalTime parseTime(String paramName, String value) {
         final String v = stripPadding(value);
@@ -135,11 +179,70 @@ public final class DicomDateTimeValues {
                     + "00-23, minutes 00-59, seconds 00-60");
         }
         if (second == 60) {
-            // Leap second: no LocalTime equivalent, so use the last
-            // instant of the minute for comparison purposes.
-            return LocalTime.of(hour, minute, 59, 999_999_999);
+            return leapSecond(paramName, value, hour, minute);
         }
         return LocalTime.of(hour, minute, second, nanosOf(fraction));
+    }
+
+    // ---- Second 60: why it exists, and how we compare against it ----
+    //
+    // WHY WE ACCEPT IT AT ALL. Second 60 is in the TM VR solely to
+    // encode a leap second. PS3.5 §6.2 sets the SS range to "00" -
+    // "60" and notes: "The SS component may have a Value of 60 only
+    // for a leap second." So we accept it for conformance — a client
+    // is entitled to send 235960 — not because XNAT can hold data at
+    // that instant. It cannot: xnat:experimentData/time is xs:time,
+    // which becomes a Postgres `time` column, and no `time` value is
+    // ever second 60. A leap-second query bound is therefore always
+    // asking about the boundary of a minute, never about a row.
+    //
+    // WHICH VALUES ARE PLAUSIBLE. A leap second is always inserted at
+    // 23:59:60 UTC. IERS Bulletin C gives the marker sequence as
+    // "23h 59m 59s", "23h 59m 60s", "0h 0m 0s". A DICOM TM carries
+    // local time, and a whole-hour UTC offset shifts the hour but
+    // leaves the minute alone, so any hour is plausible but the minute
+    // must be 59. That is the whole gate: it admits 235960 and its
+    // local renderings such as 115960, and rejects values like 103060
+    // that are not a leap second under any offset. We deliberately do
+    // not check whether a leap second was really inserted on the date
+    // in question — plausibility is the bar, not correctness.
+    //
+    // Known gap: zones at a fractional-hour offset render it at a
+    // different minute (+05:30 gives HH:29:60, +05:45 gives HH:44:60)
+    // and are rejected. Recorded as a deviation in CONFORMANCE §0.12;
+    // the plugin ignores timezone adjustment entirely, so it has no
+    // basis for interpreting a shifted local rendering anyway.
+    private static LocalTime leapSecond(String paramName, String value,
+                                        int hour, int minute) {
+        if (minute != LEAP_SECOND_MINUTE) {
+            throw new BadRequestException(paramName,
+                    "'" + value + "' is not a valid DICOM time; seconds may "
+                    + "be 60 only for a leap second, which always falls in "
+                    + "minute 59 (e.g. 235960)");
+        }
+        // HOW WE COMPARE IT IN SQL. LocalTime has no second 60, and
+        // neither do the `time` / `timestamp` columns we compare
+        // against, so the bound is clamped to the last instant of the
+        // same minute.
+        //
+        // The clamp stops at microseconds — 999_999_000 ns, rendered
+        // ".999999" — and that precision is load-bearing. Postgres
+        // `time` and `timestamp` hold microseconds, so a nanosecond
+        // fraction such as ".999999999" has to be rounded on the way
+        // in, and it rounds *up*: it carries into the next second and
+        // the bound silently becomes the following minute. QA hit this
+        // with an upper bound that resolved to 10:31:00 instead of
+        // staying inside 10:30, which is what prompted this code; the
+        // same rounding applied to every leap-second bound, 235960
+        // included.
+        //
+        // Clamping to ".999999" costs nothing, because it is the
+        // largest value the column can hold in that minute: "<=" against
+        // it still matches every storable row in second 59. Keep any
+        // future change to this value a whole number of microseconds,
+        // and bind it through toSqlTime / toSqlTimestamp so the
+        // rendered fraction can never exceed six digits.
+        return LocalTime.of(hour, LEAP_SECOND_MINUTE, 59, MAX_MICROS_NANOS);
     }
 
     /**
@@ -159,14 +262,41 @@ public final class DicomDateTimeValues {
         return (dot < 0) ? v : v.substring(0, dot);
     }
 
-    // PS3.5 allows trailing SPACE padding on both DA and TM. Leading
-    // and embedded spaces are not allowed, so only strip the tail.
-    private static String stripPadding(String value) {
+    /**
+     * Strip trailing SPACE padding from a DA or TM query value.
+     *
+     * <p>DICOM pads a string value to an even number of bytes, so a
+     * client that lifts a value straight out of a data element and
+     * drops it into a URL can send a trailing space. PS3.5 &sect;6.2
+     * allows it explicitly for DA ("a trailing SPACE character is
+     * allowed for padding") and for TM ("The string may be padded with
+     * trailing spaces"), and the padding carries no meaning.
+     *
+     * <p>Only the tail is stripped. PS3.5 says of TM that "Leading and
+     * embedded spaces are not allowed", and the DA character
+     * repertoire admits no interior space either, so a space anywhere
+     * else is a malformed value and must still be rejected.
+     *
+     * <p>Apply this to the whole query value before splitting a range,
+     * not to the endpoints afterwards: the padding belongs to the
+     * value as a whole, and the range forms that need it most are the
+     * odd-length ones where it lands where an endpoint would be (see
+     * {@link DicomRangeParser}).
+     *
+     * @param value the raw query value
+     * @return the value with trailing spaces removed; may be empty,
+     *         which denotes Universal Matching per PS3.4 §C.2.2.2.3
+     */
+    public static String stripTrailingPadding(String value) {
         int end = value.length();
         while (end > 0 && value.charAt(end - 1) == ' ') {
             end--;
         }
         return value.substring(0, end);
+    }
+
+    private static String stripPadding(String value) {
+        return stripTrailingPadding(value);
     }
 
     private static boolean isAllDigits(String s) {

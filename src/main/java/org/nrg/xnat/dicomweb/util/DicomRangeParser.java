@@ -29,6 +29,25 @@ import java.util.Optional;
  * dates are a full 8 digits, while times may carry the
  * partial-precision and fractional-second forms the TM VR allows.
  * A malformed endpoint raises {@link BadRequestException} (HTTP 400).
+ *
+ * <p>Trailing SPACE padding is stripped from the value <em>before</em>
+ * it is split on the hyphen, which matters more than it looks. DICOM
+ * pads a value to an even number of bytes, so it is exactly the
+ * odd-length range forms that arrive padded: {@code "20250101-"} is 9
+ * characters and {@code "-"} is 1. Stripping afterwards would leave
+ * the pad sitting where the empty endpoint belongs, and an open-ended
+ * range would be rejected as a malformed endpoint. The even-length
+ * forms, such as the 18-byte {@code "20250101-20250131 "}, land the
+ * pad on a real endpoint and would survive either order.
+ *
+ * <p>A closed range must also be correctly ordered. PS3.4
+ * &sect;C.2.2.2.5.1 defines the two-endpoint date form as "A string of
+ * the form &quot;&lt;date1&gt; - &lt;date2&gt;&quot;, where
+ * &lt;date1&gt; is less or equal to &lt;date2&gt;", and
+ * &sect;C.2.2.2.5.2 says the same of &lt;time1&gt; and &lt;time2&gt;.
+ * An inverted range therefore violates the defined form and is
+ * rejected with {@link BadRequestException} rather than silently
+ * matching nothing.
  */
 public final class DicomRangeParser {
 
@@ -42,7 +61,8 @@ public final class DicomRangeParser {
      *         value is not a range (caller should fall through to
      *         exact or wildcard matching)
      * @throws BadRequestException if the value looks like a range but
-     *                             is malformed
+     *                             is malformed, or its bounds are
+     *                             inverted
      */
     public static Optional<DicomDateRange> parseDicomDateRange(String value) {
         return parseDicomDateRange(value, "StudyDate");
@@ -57,10 +77,15 @@ public final class DicomRangeParser {
      * @return the parsed range, or {@link Optional#empty()} if the
      *         value is not a range
      * @throws BadRequestException if the value looks like a range but
-     *                             is malformed
+     *                             is malformed, or its bounds are
+     *                             inverted
      */
     public static Optional<DicomDateRange> parseDicomDateRange(String value, String paramName) {
-        if (value == null || !value.contains("-")) {
+        if (value == null) {
+            return Optional.empty();
+        }
+        value = DicomDateTimeValues.stripTrailingPadding(value);
+        if (!value.contains("-")) {
             return Optional.empty();
         }
         String[] parts = splitRange(value, paramName);
@@ -68,6 +93,9 @@ public final class DicomRangeParser {
                 ? null : parseDate(parts[0], paramName);
         LocalDate end = parts[1].isEmpty()
                 ? null : parseDate(parts[1], paramName);
+        if (start != null && end != null && start.isAfter(end)) {
+            throw inverted(paramName, parts[0], parts[1], "date");
+        }
         return Optional.of(new DicomDateRange(start, end));
     }
 
@@ -78,7 +106,8 @@ public final class DicomRangeParser {
      * @return the parsed range, or {@link Optional#empty()} if the
      *         value is not a range
      * @throws BadRequestException if the value looks like a range but
-     *                             is malformed
+     *                             is malformed, or its bounds are
+     *                             inverted
      */
     public static Optional<DicomTimeRange> parseDicomTimeRange(String value) {
         return parseDicomTimeRange(value, "StudyTime");
@@ -93,10 +122,15 @@ public final class DicomRangeParser {
      * @return the parsed range, or {@link Optional#empty()} if the
      *         value is not a range
      * @throws BadRequestException if the value looks like a range but
-     *                             is malformed
+     *                             is malformed, or its bounds are
+     *                             inverted
      */
     public static Optional<DicomTimeRange> parseDicomTimeRange(String value, String paramName) {
-        if (value == null || !value.contains("-")) {
+        if (value == null) {
+            return Optional.empty();
+        }
+        value = DicomDateTimeValues.stripTrailingPadding(value);
+        if (!value.contains("-")) {
             return Optional.empty();
         }
         String[] parts = splitRange(value, paramName);
@@ -104,7 +138,24 @@ public final class DicomRangeParser {
                 ? null : parseTime(parts[0], paramName);
         LocalTime end = parts[1].isEmpty()
                 ? null : parseTime(parts[1], paramName);
+        if (start != null && end != null && start.isAfter(end)) {
+            throw inverted(paramName, parts[0], parts[1], "time");
+        }
         return Optional.of(new DicomTimeRange(start, end));
+    }
+
+    // A closed range whose lower bound is above its upper bound cannot
+    // match anything, and PS3.4 §C.2.2.2.5.1 / §C.2.2.2.5.2 define the
+    // two-endpoint form only "where <date1> is less or equal to
+    // <date2>" (respectively <time1> / <time2>). Rather than run a
+    // query that is guaranteed to return nothing, report the request
+    // as malformed so the client learns its bounds are reversed.
+    private static BadRequestException inverted(String paramName, String start,
+                                                String end, String kind) {
+        return new BadRequestException(paramName,
+                "range start '" + start + "' is later than range end '" + end
+                + "'; the first " + kind + " of a range must be less than or "
+                + "equal to the second");
     }
 
     private static String[] splitRange(String value, String paramName) {

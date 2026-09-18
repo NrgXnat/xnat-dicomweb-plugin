@@ -55,7 +55,9 @@ public final class DicomQueryValueValidator {
      * Validate a DA query parameter value.
      *
      * @param paramName query parameter name, as spelled by the client
-     * @param value     the raw value
+     * @param value     the raw value; trailing SPACE padding is
+     *                  ignored, and a value that is only padding
+     *                  counts as Universal Matching
      * @return true if the value is a filter to apply, false if it is
      *         Universal Matching and the parameter should be dropped
      * @throws BadRequestException if the value is malformed
@@ -68,7 +70,9 @@ public final class DicomQueryValueValidator {
      * Validate a TM query parameter value.
      *
      * @param paramName query parameter name, as spelled by the client
-     * @param value     the raw value
+     * @param value     the raw value; trailing SPACE padding is
+     *                  ignored, and a value that is only padding
+     *                  counts as Universal Matching
      * @return true if the value is a filter to apply, false if it is
      *         Universal Matching and the parameter should be dropped
      * @throws BadRequestException if the value is malformed
@@ -78,7 +82,18 @@ public final class DicomQueryValueValidator {
     }
 
     private static boolean validate(String paramName, String value, boolean isDate) {
-        if (value == null || value.isEmpty() || UNIVERSAL.equals(value)) {
+        if (value == null) {
+            return false;
+        }
+        // Trailing SPACE padding is meaningless on a DA or TM value
+        // (PS3.5 §6.2) and is dropped before anything else looks at it.
+        // A value that is nothing but padding therefore reduces to zero
+        // length, which PS3.4 §C.2.2.2.3 defines as Universal Matching:
+        // "If the value specified for a Key Attribute in a request is
+        // zero length, then all entities shall match this Attribute."
+        // So `?StudyDate=%20` drops the filter rather than failing.
+        value = DicomDateTimeValues.stripTrailingPadding(value);
+        if (value.isEmpty() || UNIVERSAL.equals(value)) {
             return false;
         }
         rejectWildcards(paramName, value);

@@ -150,6 +150,29 @@ component resolves to zero because a range endpoint denotes a single
 instant — `StudyTime=1000-1800` ends at 18:00:00 exactly, per the
 worked example in PS3.4 §C.2.2.2.5.4.
 
+### 0.12 A leap second is only recognized in minute 59
+
+PS3.5 §6.2 permits `SS=60` in a TM value "only for a leap second", but
+does not say which times those are. Leap seconds are inserted at
+23:59:60 UTC (IERS Bulletin C), so in any zone at a whole-hour offset
+from UTC they land in minute 59 of some hour. The plugin accepts
+`SS=60` on that basis: any hour, but minute 59 only.
+
+Zones at a fractional-hour offset render the same instant at a
+different minute — `+05:30` (India) as `HH:29:60`, `+05:45` (Nepal) and
+`+12:45` (Chatham) as `HH:44:60` — and the plugin rejects those with
+HTTP 400.
+
+This is a deliberate simplification. The plugin ignores
+`timezoneadjustment` and never reads Timezone Offset From UTC
+(0008,0201) when matching (see 0.3 and 6.2), so it has no basis for
+interpreting a shifted local rendering. The only consequence is that a
+client in such a zone cannot *query* for that instant; no data can be
+stored there in any case, because `xnat:experimentData/time` is
+`xs:time` and cannot hold second 60. Widening the rule to
+`MM ∈ {59, 44, 29, 14}` would be a small change if a deployment needs
+it.
+
 ---
 
 ## 1. Overview
@@ -434,11 +457,47 @@ enforce TLS itself and does not configure CORS (see Section 10.2).
   1-to-6-digit fractional second. Unspecified time components
   resolve to zero, so `StudyTime=1000-1800` spans 10:00:00 to
   18:00:00 — the worked example in PS3.4 §C.2.2.2.5.4.
-- **Universal** — empty parameter value matches everything.
+  A closed range must be correctly ordered: §C.2.2.2.5.1 defines the
+  two-endpoint form only "where `<date1>` is less or equal to
+  `<date2>`" (§C.2.2.2.5.2 likewise for times), so an inverted range
+  such as `StudyDate=20250131-20250101` returns HTTP 400 rather than
+  running a query that cannot match. Equal endpoints
+  (`20250101-20250101`) are a valid single-day range.
+- **Leap seconds** — PS3.5 §6.2 puts the TM `SS` component in the
+  range `"00" - "60"` and notes that "The SS component may have a
+  Value of 60 only for a leap second". A leap second is always
+  inserted at 23:59:60 UTC (IERS Bulletin C), and a whole-hour
+  timezone offset shifts the hour but not the minute, so `SS=60` is
+  accepted at any hour **only in minute 59** — `235960` and `115960`
+  are valid, `103060` returns HTTP 400. The plugin does not check
+  whether a leap second was really inserted on the date queried.
+  A leap-second bound is clamped to the last instant of its minute
+  that the database can represent (`23:59:59.999999`), which is the
+  largest value a Postgres `time` column holds in that minute, so an
+  upper bound still matches every stored row in second 59. Nothing in
+  XNAT can be stored at second 60, since `xnat:experimentData/time` is
+  `xs:time`; a leap-second value used for exact matching therefore
+  matches nothing.
+- **Universal** — empty parameter value matches everything, per PS3.4
+  §C.2.2.2.3 ("If the value specified for a Key Attribute in a request
+  is zero length, then all entities shall match this Attribute").
   The DICOM range marker `-` (both bounds omitted) is treated the
   same way at the study level, as is a bare `*` in `StudyDate` or
   `StudyTime` (PS3.4 §C.2.2.2.4 note: "Wild Card Matching on a value
-  of `*` is equivalent to Universal Matching").
+  of `*` is equivalent to Universal Matching"). A `StudyDate` or
+  `StudyTime` consisting only of SPACE padding reduces to zero length
+  and is likewise universal, so `?StudyDate=%20` drops the filter
+  rather than returning 400.
+- **Trailing SPACE padding** — accepted on `StudyDate` and `StudyTime`
+  and stripped before the value is interpreted. DICOM pads a value to
+  an even byte count, and PS3.5 §6.2 allows the pad explicitly for
+  both VRs, so a client copying a value out of a data element into a
+  URL may send one. Padding is removed from the whole value before a
+  range is split, which is what makes the odd-length range forms work:
+  `20250101-` is 9 characters and `-` is 1, so those are exactly the
+  ones that arrive padded. Only the tail is padding — PS3.5 says of TM
+  that "Leading and embedded spaces are not allowed", so `%20`
+  anywhere else is still a 400.
 - **Date and time validation** — `StudyDate` and `StudyTime` values
   are validated against the DA and TM grammars at the REST boundary.
   A malformed value returns HTTP 400 with an `InvalidParameter`
@@ -447,7 +506,9 @@ enforce TLS itself and does not configure CORS (see Section 10.2).
   Query Parameter syntax is incorrect."). This covers malformed
   single values (`20251345`), malformed range endpoints
   (`20250101-nonsense`), malformed range structure
-  (`20250101-20250201-20250301`), and wildcards.
+  (`20250101-20250201-20250301`), inverted ranges
+  (`20250131-20250101`), implausible leap seconds (`103060`), and
+  wildcards.
 - **Date format** — DICOM `yyyyMMdd` only. The ISO `yyyy-MM-dd` form
   is rejected: `-` is the DICOM range separator, so `2025-01-15`
   parses as a three-part range and returns 400.
