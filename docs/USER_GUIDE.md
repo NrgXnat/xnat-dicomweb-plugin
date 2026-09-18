@@ -321,6 +321,7 @@ Dates use the DICOM `YYYYMMDD` format. A malformed date returns
 ?StudyDate=2024-12-01                 # 400 — use 20241201; a hyphen
                                       #       means a range, not a separator
 ?StudyDate=20241345                   # 400 — no month 13
+?StudyDate=20241231-20240101          # 400 — range runs backwards
 ?StudyDate=2024*                      # 400 — wildcards work on names,
                                       #       not on dates or times
 ```

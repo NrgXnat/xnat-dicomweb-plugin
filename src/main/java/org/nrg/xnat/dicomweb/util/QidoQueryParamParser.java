@@ -129,10 +129,15 @@ public final class QidoQueryParamParser {
                 log.debug("Unsupported query parameter: {}", key);
                 continue;
             }
-            if (!isApplicableFilter(key, value, info.vr)) {
+            // Store the normalized form, not the raw one: the query
+            // builder re-reads these attributes and re-parses them, so
+            // stripping padding here keeps it and the validator looking
+            // at the same value.
+            String filterValue = normalizeValue(value, info.vr);
+            if (!isApplicableFilter(key, filterValue, info.vr)) {
                 continue;
             }
-            attrs.setString(info.tag, info.vr, value);
+            attrs.setString(info.tag, info.vr, filterValue);
         }
         log.debug("Parsed {} query parameters into DICOM attributes", attrs.size());
         return attrs;
@@ -144,6 +149,26 @@ public final class QidoQueryParamParser {
     // downstream. Returns false when the value denotes Universal
     // Matching, in which case the parameter is dropped rather than
     // carried into the query as a filter.
+    // Drop trailing SPACE padding from DA and TM values. DICOM pads
+    // string values to an even byte count, so a client that copies a
+    // value out of a data element and into a URL can legitimately send
+    // one — `?StudyDate=20250115%20`, or `?StudyDate=20250101-%20` for
+    // the odd-length open-ended range form. The padding carries no
+    // meaning (PS3.5 §6.2).
+    //
+    // Attributes.setString would trim it anyway — dcm4che trims both
+    // ends of a string VR — but that happens at storage, after
+    // validation has already run and possibly rejected the value. We
+    // normalize here so the validator judges the same string the query
+    // builder will later see. Note the asymmetry with dcm4che is
+    // deliberate: it trims leading spaces too, whereas PS3.5 does not
+    // allow them, so validation rejects those before storage can
+    // quietly make them disappear.
+    private static String normalizeValue(String value, VR vr) {
+        return (vr == VR.DA || vr == VR.TM)
+                ? DicomDateTimeValues.stripTrailingPadding(value) : value;
+    }
+
     private static boolean isApplicableFilter(String key, String value, VR vr) {
         if (vr == VR.DA) {
             return DicomQueryValueValidator.validateDate(key, value);

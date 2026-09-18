@@ -443,13 +443,17 @@ public class XnatDicomServiceImpl implements XnatDicomService {
 
     private static void appendCombinedDtClauses(StringBuilder sql, MapSqlParameterSource params,
                                                 DicomRangeParser.DicomDateTimeRange r) {
+        // Bind through DicomDateTimeValues rather than toString(): the
+        // rendered fraction must stay within the microsecond resolution
+        // of the TIMESTAMP type, or Postgres rounds it up and widens
+        // the bound. See DicomDateTimeValues.leapSecond.
         if (r.start != null) {
             sql.append("AND (e.date + e.time) >= CAST(:q_study_dt_start AS TIMESTAMP) ");
-            params.addValue("q_study_dt_start", r.start.toString());
+            params.addValue("q_study_dt_start", DicomDateTimeValues.toSqlTimestamp(r.start));
         }
         if (r.end != null) {
             sql.append("AND (e.date + e.time) <= CAST(:q_study_dt_end AS TIMESTAMP) ");
-            params.addValue("q_study_dt_end", r.end.toString());
+            params.addValue("q_study_dt_end", DicomDateTimeValues.toSqlTimestamp(r.end));
         }
     }
 
@@ -486,13 +490,19 @@ public class XnatDicomServiceImpl implements XnatDicomService {
         }
         if (timeRange.isPresent()) {
             DicomRangeParser.DicomTimeRange r = timeRange.get();
+            // Bind through DicomDateTimeValues rather than toString():
+            // the rendered fraction must stay within the microsecond
+            // resolution of the TIME type, or Postgres rounds it up and
+            // the bound spills into the next minute. This is the path
+            // a leap-second endpoint such as 235960 arrives on — see
+            // DicomDateTimeValues.leapSecond.
             if (r.start != null) {
                 sql.append("AND e.time >= CAST(:q_study_time_start AS TIME) ");
-                params.addValue("q_study_time_start", r.start.toString());
+                params.addValue("q_study_time_start", DicomDateTimeValues.toSqlTime(r.start));
             }
             if (r.end != null) {
                 sql.append("AND e.time <= CAST(:q_study_time_end AS TIME) ");
-                params.addValue("q_study_time_end", r.end.toString());
+                params.addValue("q_study_time_end", DicomDateTimeValues.toSqlTime(r.end));
             }
             return;
         }
