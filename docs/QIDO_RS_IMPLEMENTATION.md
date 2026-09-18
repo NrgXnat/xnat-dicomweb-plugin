@@ -241,6 +241,13 @@ StudyTime=1000-1800        # 10:00:00 through 18:00:00
 # Second 60 is accepted only in minute 59, where a leap second can
 # actually fall (23:59:60 UTC, shifted by the local UTC offset)
 StudyTime=235959-235960    # through the end of the day
+
+# Trailing SPACE padding is accepted and ignored. DICOM pads values
+# to an even byte count, so the odd-length range forms are the ones
+# that arrive padded.
+StudyDate=20250115%20      # same as 20250115
+StudyDate=20250101-%20     # same as 20250101- (on or after Jan 1)
+StudyDate=%20              # only padding, so no filter at all
 ```
 
 ### Validation

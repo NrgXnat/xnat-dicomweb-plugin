@@ -30,6 +30,16 @@ import java.util.Optional;
  * partial-precision and fractional-second forms the TM VR allows.
  * A malformed endpoint raises {@link BadRequestException} (HTTP 400).
  *
+ * <p>Trailing SPACE padding is stripped from the value <em>before</em>
+ * it is split on the hyphen, which matters more than it looks. DICOM
+ * pads a value to an even number of bytes, so it is exactly the
+ * odd-length range forms that arrive padded: {@code "20250101-"} is 9
+ * characters and {@code "-"} is 1. Stripping afterwards would leave
+ * the pad sitting where the empty endpoint belongs, and an open-ended
+ * range would be rejected as a malformed endpoint. The even-length
+ * forms, such as the 18-byte {@code "20250101-20250131 "}, land the
+ * pad on a real endpoint and would survive either order.
+ *
  * <p>A closed range must also be correctly ordered. PS3.4
  * &sect;C.2.2.2.5.1 defines the two-endpoint date form as "A string of
  * the form &quot;&lt;date1&gt; - &lt;date2&gt;&quot;, where
@@ -71,7 +81,11 @@ public final class DicomRangeParser {
      *                             inverted
      */
     public static Optional<DicomDateRange> parseDicomDateRange(String value, String paramName) {
-        if (value == null || !value.contains("-")) {
+        if (value == null) {
+            return Optional.empty();
+        }
+        value = DicomDateTimeValues.stripTrailingPadding(value);
+        if (!value.contains("-")) {
             return Optional.empty();
         }
         String[] parts = splitRange(value, paramName);
@@ -112,7 +126,11 @@ public final class DicomRangeParser {
      *                             inverted
      */
     public static Optional<DicomTimeRange> parseDicomTimeRange(String value, String paramName) {
-        if (value == null || !value.contains("-")) {
+        if (value == null) {
+            return Optional.empty();
+        }
+        value = DicomDateTimeValues.stripTrailingPadding(value);
+        if (!value.contains("-")) {
             return Optional.empty();
         }
         String[] parts = splitRange(value, paramName);

@@ -317,6 +317,68 @@ public class QidoQueryParamParserTest {
         assertFalse(attrs.contains(Tag.StudyDate));
     }
 
+    // ---- Trailing SPACE padding ----
+    // `?StudyDate=%20` decodes to a single space. Per PS3.4
+    // §C.2.2.2.3 a zero-length value is Universal Matching, and the
+    // pad is not part of the value, so the filter is dropped rather
+    // than rejected.
+
+    @Test
+    public void paddingOnlyDateIsDroppedAsUniversalMatch() {
+        Map<String, String> q = new HashMap<>();
+        q.put("StudyDate", " ");
+        Attributes attrs = QidoQueryParamParser.parse(q);
+        assertFalse(attrs.contains(Tag.StudyDate));
+    }
+
+    @Test
+    public void paddingOnlyTimeIsDroppedAsUniversalMatch() {
+        Map<String, String> q = new HashMap<>();
+        q.put("StudyTime", " ");
+        Attributes attrs = QidoQueryParamParser.parse(q);
+        assertFalse(attrs.contains(Tag.StudyTime));
+    }
+
+    @Test
+    public void paddingIsStrippedFromTheStoredValue() {
+        // The query builder re-reads this attribute and re-parses it,
+        // so the stored form must already be normalized.
+        Map<String, String> q = new HashMap<>();
+        q.put("StudyDate", "20250115 ");
+        Attributes attrs = QidoQueryParamParser.parse(q);
+        assertEquals("20250115", attrs.getString(Tag.StudyDate));
+    }
+
+    @Test
+    public void paddedOpenEndedRangeIsStoredWithoutThePad() {
+        Map<String, String> q = new HashMap<>();
+        q.put("StudyDate", "20250101- ");
+        Attributes attrs = QidoQueryParamParser.parse(q);
+        assertEquals("20250101-", attrs.getString(Tag.StudyDate));
+    }
+
+    @Test
+    public void dcm4cheAlsoTrimsPaddingOnStringVrs() {
+        // Documents the library behavior the parser sits on top of:
+        // Attributes trims both ends of a string VR, so padding on a
+        // PN value disappears without the parser doing anything.
+        Map<String, String> q = new HashMap<>();
+        q.put("PatientName", "Doe ");
+        Attributes attrs = QidoQueryParamParser.parse(q);
+        assertEquals("Doe", attrs.getString(Tag.PatientName));
+    }
+
+    @Test(expected = BadRequestException.class)
+    public void leadingSpaceIsRejectedNotSilentlyTrimmed() {
+        // dcm4che would trim a leading space on storage, turning an
+        // invalid value into a valid-looking one. Validation runs
+        // first precisely so that cannot happen: PS3.5 §6.2 allows
+        // padding only on the tail.
+        Map<String, String> q = new HashMap<>();
+        q.put("StudyDate", " 20250115");
+        QidoQueryParamParser.parse(q);
+    }
+
     @Test
     public void wildcardsStillAcceptedOnStringVrs() {
         // PS3.4 §C.2.2.2.4 does define Wild Card Matching for PN, so

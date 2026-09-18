@@ -478,11 +478,26 @@ enforce TLS itself and does not configure CORS (see Section 10.2).
   XNAT can be stored at second 60, since `xnat:experimentData/time` is
   `xs:time`; a leap-second value used for exact matching therefore
   matches nothing.
-- **Universal** — empty parameter value matches everything.
+- **Universal** — empty parameter value matches everything, per PS3.4
+  §C.2.2.2.3 ("If the value specified for a Key Attribute in a request
+  is zero length, then all entities shall match this Attribute").
   The DICOM range marker `-` (both bounds omitted) is treated the
   same way at the study level, as is a bare `*` in `StudyDate` or
   `StudyTime` (PS3.4 §C.2.2.2.4 note: "Wild Card Matching on a value
-  of `*` is equivalent to Universal Matching").
+  of `*` is equivalent to Universal Matching"). A `StudyDate` or
+  `StudyTime` consisting only of SPACE padding reduces to zero length
+  and is likewise universal, so `?StudyDate=%20` drops the filter
+  rather than returning 400.
+- **Trailing SPACE padding** — accepted on `StudyDate` and `StudyTime`
+  and stripped before the value is interpreted. DICOM pads a value to
+  an even byte count, and PS3.5 §6.2 allows the pad explicitly for
+  both VRs, so a client copying a value out of a data element into a
+  URL may send one. Padding is removed from the whole value before a
+  range is split, which is what makes the odd-length range forms work:
+  `20250101-` is 9 characters and `-` is 1, so those are exactly the
+  ones that arrive padded. Only the tail is padding — PS3.5 says of TM
+  that "Leading and embedded spaces are not allowed", so `%20`
+  anywhere else is still a 400.
 - **Date and time validation** — `StudyDate` and `StudyTime` values
   are validated against the DA and TM grammars at the REST boundary.
   A malformed value returns HTTP 400 with an `InvalidParameter`

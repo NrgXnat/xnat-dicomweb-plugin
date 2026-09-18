@@ -15,6 +15,7 @@ import java.time.LocalTime;
 
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
+import static org.junit.Assert.assertNull;
 import static org.junit.Assert.assertTrue;
 
 /**
@@ -45,6 +46,97 @@ public class DicomQueryValueValidatorTest {
     public void trailingSpacePaddingAccepted() {
         // PS3.5 §6.2 DA: "a trailing SPACE character is allowed for padding".
         assertTrue(DicomQueryValueValidator.validateDate("StudyDate", "20250115 "));
+        assertTrue(DicomQueryValueValidator.validateTime("StudyTime", "103000 "));
+    }
+
+    // ---- Trailing SPACE padding, including on range forms ----
+    // DICOM pads a value to an even byte count, so the range forms
+    // that actually arrive padded are the odd-length ones: "20250101-"
+    // is 9 characters and "-" is 1. Padding must therefore be stripped
+    // from the whole value before it is split on the hyphen, or the
+    // pad lands where the empty endpoint belongs.
+
+    @Test
+    public void paddedOpenUpperRangeAccepted() {
+        assertTrue(DicomQueryValueValidator.validateDate("StudyDate", "20250101- "));
+        assertTrue(DicomQueryValueValidator.validateTime("StudyTime", "080000- "));
+    }
+
+    @Test
+    public void paddedOpenLowerRangeAccepted() {
+        assertTrue(DicomQueryValueValidator.validateDate("StudyDate", "-20250131 "));
+    }
+
+    @Test
+    public void paddedClosedRangeAccepted() {
+        // 17 characters plus a pad, the 18-byte maximum PS3.5 cites for
+        // a DA in a Query with Range Matching.
+        assertTrue(DicomQueryValueValidator.validateDate(
+                "StudyDate", "20250101-20250131 "));
+    }
+
+    @Test
+    public void paddedUniversalRangeMarkerAccepted() {
+        assertTrue(DicomQueryValueValidator.validateDate("StudyDate", "- "));
+        assertTrue(DicomQueryValueValidator.validateTime("StudyTime", "- "));
+    }
+
+    @Test
+    public void paddedOpenUpperRangeParsesAsOpenEnded() {
+        // Not merely accepted — the pad must not become an endpoint.
+        DicomRangeParser.DicomDateRange r =
+                DicomRangeParser.parseDicomDateRange("20250101- ").get();
+        assertEquals(LocalDate.of(2025, 1, 1), r.start);
+        assertNull(r.end);
+    }
+
+    @Test
+    public void paddedUniversalMarkerParsesAsUniversal() {
+        assertTrue(DicomRangeParser.parseDicomDateRange("- ").get().isUniversal());
+    }
+
+    // ---- A value that is only padding is Universal Matching ----
+    // PS3.4 §C.2.2.2.3: "If the value specified for a Key Attribute in
+    // a request is zero length, then all entities shall match this
+    // Attribute." Stripping the pad leaves zero length, so
+    // ?StudyDate=%20 drops the filter instead of returning 400.
+
+    @Test
+    public void paddingOnlyValueIsUniversalNotAnError() {
+        assertFalse(DicomQueryValueValidator.validateDate("StudyDate", " "));
+        assertFalse(DicomQueryValueValidator.validateTime("StudyTime", " "));
+    }
+
+    @Test
+    public void multipleSpacesAreAlsoUniversal() {
+        assertFalse(DicomQueryValueValidator.validateDate("StudyDate", "   "));
+    }
+
+    // ---- Only the tail is padding ----
+    // PS3.5 §6.2 TM: "Leading and embedded spaces are not allowed",
+    // and the DA repertoire admits no interior space either.
+
+    @Test(expected = BadRequestException.class)
+    public void leadingSpaceRejected() {
+        DicomQueryValueValidator.validateDate("StudyDate", " 20250115");
+    }
+
+    @Test(expected = BadRequestException.class)
+    public void embeddedSpaceRejected() {
+        DicomQueryValueValidator.validateDate("StudyDate", "2025 0115");
+    }
+
+    @Test(expected = BadRequestException.class)
+    public void spacesAroundRangeSeparatorRejected() {
+        // PS3.4 writes the form as "<date1> - <date2>", but those
+        // spaces are typographic: neither the DA nor the TM character
+        // repertoire permits an embedded space.
+        DicomQueryValueValidator.validateDate("StudyDate", "20250101 - 20250131");
+    }
+
+    @Test(expected = BadRequestException.class)
+    public void paddingDoesNotRescueAnOtherwiseMalformedValue() {
+        DicomQueryValueValidator.validateDate("StudyDate", "20251345 ");
     }
 
     @Test

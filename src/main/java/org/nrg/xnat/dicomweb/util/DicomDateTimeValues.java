@@ -262,14 +262,41 @@ public final class DicomDateTimeValues {
         return (dot < 0) ? v : v.substring(0, dot);
     }
 
-    // PS3.5 allows trailing SPACE padding on both DA and TM. Leading
-    // and embedded spaces are not allowed, so only strip the tail.
-    private static String stripPadding(String value) {
+    /**
+     * Strip trailing SPACE padding from a DA or TM query value.
+     *
+     * <p>DICOM pads a string value to an even number of bytes, so a
+     * client that lifts a value straight out of a data element and
+     * drops it into a URL can send a trailing space. PS3.5 &sect;6.2
+     * allows it explicitly for DA ("a trailing SPACE character is
+     * allowed for padding") and for TM ("The string may be padded with
+     * trailing spaces"), and the padding carries no meaning.
+     *
+     * <p>Only the tail is stripped. PS3.5 says of TM that "Leading and
+     * embedded spaces are not allowed", and the DA character
+     * repertoire admits no interior space either, so a space anywhere
+     * else is a malformed value and must still be rejected.
+     *
+     * <p>Apply this to the whole query value before splitting a range,
+     * not to the endpoints afterwards: the padding belongs to the
+     * value as a whole, and the range forms that need it most are the
+     * odd-length ones where it lands where an endpoint would be (see
+     * {@link DicomRangeParser}).
+     *
+     * @param value the raw query value
+     * @return the value with trailing spaces removed; may be empty,
+     *         which denotes Universal Matching per PS3.4 §C.2.2.2.3
+     */
+    public static String stripTrailingPadding(String value) {
         int end = value.length();
         while (end > 0 && value.charAt(end - 1) == ' ') {
             end--;
         }
         return value.substring(0, end);
+    }
+
+    private static String stripPadding(String value) {
+        return stripTrailingPadding(value);
     }
 
     private static boolean isAllDigits(String s) {
