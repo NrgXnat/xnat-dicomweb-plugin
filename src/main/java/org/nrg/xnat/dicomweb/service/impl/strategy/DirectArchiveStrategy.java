@@ -737,8 +737,13 @@ public class DirectArchiveStrategy implements DicomImportStrategy {
             // Clear lock files
             clearSessionLocks(session);
 
-            // Set status to QUEUED_BUILDING (bypasses JMS)
-            directArchiveSessionHibernateService.setStatusToQueuedBuilding(session.getId());
+            // Set status to QUEUED_BUILDING (bypasses JMS); called by name so both the void (XNAT <= 1.10.1)
+            // and boolean (XNAT 1.10.2+) signatures link
+            if (!QueuedBuildingStatusInvoker.queueForBuilding(DirectArchiveSessionHibernateService.class,
+                    directArchiveSessionHibernateService, session.getId())) {
+                throw new IllegalStateException("Session " + session.getSessionDataTriple()
+                        + " is no longer receiving files; it may have been claimed for deletion");
+            }
             logger.debug("Set status to QUEUED_BUILDING for session: {}", session.getSessionDataTriple());
 
             // Build and archive synchronously
