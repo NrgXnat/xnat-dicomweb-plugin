@@ -137,8 +137,11 @@ dependencies {
     // AnimatedGifEncoder for animated GIF generation (packaged in plugin)
     implementAndInclude 'com.madgag:animated-gif-lib:1.4'
 
-    // JSON-P (javax.json) provider for tests — matches the javax.json API used in main code.
-    testImplementation "org.glassfish:javax.json:1.1.4"
+    // JSON-P (javax.json) API + provider for tests. This is the same artifact the plugin
+    // jar ships (it arrives transitively via dcm4che-json), declared explicitly because the
+    // tests import javax.json directly. Do not substitute org.glassfish:javax.json, which
+    // depends on this one and so puts two copies of the API and provider on the classpath.
+    testImplementation "org.glassfish:jakarta.json:1.1.6"
 
     testImplementation 'junit:junit'
     testImplementation "org.springframework:spring-test"
@@ -212,7 +215,13 @@ tasks.register("xnatPluginJar", Jar) {
         exclude "javax/annotation/**"
         exclude "jakarta/ws/**"
         exclude "javax/ws/**"
-        exclude "org/glassfish/**"
+        // NOTE: do NOT exclude org/glassfish/**. XNAT 1.9 ships no JSON-P (javax.json)
+        // API or provider, so the plugin must carry both. org.glassfish:jakarta.json:1.1.6
+        // (pulled in by dcm4che-json) supplies the javax.json API *and* the only
+        // implementation, org.glassfish.json.JsonProviderImpl, which
+        // javax.json.spi.JsonProvider.provider() loads by name. Excluding it packages the
+        // API without its provider and every Json.createXxx() call fails at runtime with
+        // "JsonException: Provider org.glassfish.json.JsonProviderImpl not found".
         exclude "org/dcm4che2/**"
         exclude "org/apache/commons/io/**"
         exclude "com/j256/**"
