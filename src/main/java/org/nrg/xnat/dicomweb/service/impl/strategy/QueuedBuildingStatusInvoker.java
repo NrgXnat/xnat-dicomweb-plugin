@@ -32,7 +32,7 @@ final class QueuedBuildingStatusInvoker {
      * @return true when the session was queued: always for the {@code void} signature, otherwise the method's result
      *
      * @throws Exception whatever the service method throws, unwrapped; {@link IllegalStateException} when the method
-     *                   cannot be found or called
+     *                   cannot be found or called, or returns neither {@code void} nor {@code boolean}
      */
     static boolean queueForBuilding(final Class<?> serviceType, final Object service, final long sessionId) throws Exception {
         final Method method;
@@ -41,9 +41,14 @@ final class QueuedBuildingStatusInvoker {
         } catch (NoSuchMethodException e) {
             throw new IllegalStateException(serviceType.getName() + " has no method " + METHOD_NAME + "(long)", e);
         }
+        final Class<?> returnType = method.getReturnType();
+        if (returnType != void.class && returnType != boolean.class) {
+            throw new IllegalStateException(serviceType.getName() + "." + METHOD_NAME + "(long) returns "
+                    + returnType.getName() + "; only void and boolean are supported");
+        }
         try {
             final Object result = method.invoke(service, sessionId);
-            return !(result instanceof Boolean) || (Boolean) result;
+            return returnType == void.class || (Boolean) result;
         } catch (InvocationTargetException e) {
             final Throwable cause = e.getCause();
             if (cause instanceof Exception) {

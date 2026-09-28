@@ -9,7 +9,9 @@ package org.nrg.xnat.dicomweb.service.impl.strategy;
 import org.junit.Test;
 
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.List;
+import java.util.Optional;
 
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
@@ -30,6 +32,16 @@ public class QueuedBuildingStatusInvokerTest {
 
     public interface BooleanSignatureService {
         boolean setStatusToQueuedBuilding(long id) throws Exception;
+    }
+
+    public interface OverloadedService {
+        boolean setStatusToQueuedBuilding(long id) throws Exception;
+
+        boolean setStatusToQueuedBuilding(long id, boolean force) throws Exception;
+    }
+
+    public interface UnsupportedReturnTypeService {
+        Object setStatusToQueuedBuilding(long id) throws Exception;
     }
 
     public interface MissingMethodService {
@@ -112,5 +124,58 @@ public class QueuedBuildingStatusInvokerTest {
         } catch (Exception e) {
             assertTrue(e instanceof IllegalStateException);
         }
+    }
+
+    @Test
+    public void singleArgumentOverloadIsSelectedWhenForceOverloadExists() throws Exception {
+        final List<String> calls = new ArrayList<>();
+        final OverloadedService service = new OverloadedService() {
+            @Override
+            public boolean setStatusToQueuedBuilding(final long id) {
+                calls.add("single:" + id);
+                return true;
+            }
+
+            @Override
+            public boolean setStatusToQueuedBuilding(final long id, final boolean force) {
+                calls.add("force:" + id + ":" + force);
+                return true;
+            }
+        };
+
+        assertTrue(QueuedBuildingStatusInvoker.queueForBuilding(OverloadedService.class, service, 3L));
+        assertEquals(Collections.singletonList("single:3"), calls);
+    }
+
+    @Test
+    public void errorFromServiceIsRethrownUnwrapped() throws Exception {
+        final AssertionError thrown = new AssertionError("linkage");
+        final VoidSignatureService service = id -> {
+            throw thrown;
+        };
+
+        try {
+            QueuedBuildingStatusInvoker.queueForBuilding(VoidSignatureService.class, service, 1L);
+            fail("Expected the service's error to propagate");
+        } catch (AssertionError e) {
+            assertSame(thrown, e);
+        }
+    }
+
+    @Test
+    public void unsupportedReturnTypeFailsWithoutCallingTheService() {
+        final List<Long> calls = new ArrayList<>();
+        final UnsupportedReturnTypeService service = id -> {
+            calls.add(id);
+            return Optional.empty();
+        };
+
+        try {
+            QueuedBuildingStatusInvoker.queueForBuilding(UnsupportedReturnTypeService.class, service, 1L);
+            fail("Expected an exception for a return type other than void or boolean");
+        } catch (Exception e) {
+            assertTrue(e instanceof IllegalStateException);
+        }
+        assertTrue("The service must not be called when its result cannot be interpreted", calls.isEmpty());
     }
 }
