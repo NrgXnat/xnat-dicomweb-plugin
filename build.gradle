@@ -149,6 +149,8 @@ dependencies {
     testImplementation "org.nrg.xdat:core"
     testImplementation "org.nrg.xnat:xnat-data-models"
     testImplementation "org.nrg.xnat:web"
+    // compileOnly dependencies are not on the test classpath, and the dcm4che artifacts above exclude dcm4che-core
+    testImplementation "org.dcm4che:dcm4che-core"
 }
 
 // Pulls in the Jenkins BUILD_NUMBER environment variable if available.
