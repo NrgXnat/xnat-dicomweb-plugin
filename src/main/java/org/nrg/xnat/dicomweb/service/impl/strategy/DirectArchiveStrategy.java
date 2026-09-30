@@ -734,20 +734,12 @@ public class DirectArchiveStrategy implements DicomImportStrategy {
                                          Map<String, Object> params,
                                          Set<String> sessionUris) {
         try {
-            // Set status to QUEUED_BUILDING (bypasses JMS); called by name so both the void (XNAT <= 1.10.1)
-            // and boolean (XNAT 1.10.2+) signatures link
-            if (!QueuedBuildingStatusInvoker.queueForBuilding(DirectArchiveSessionHibernateService.class,
-                    directArchiveSessionHibernateService, session.getId())) {
-                // XNAT 1.10.2+: the session left RECEIVING while files were written, so another STOW of the same
-                // study, XNAT's own archive trigger or a delete owns it now. Leave its locks and build to that owner.
-                logger.warn("Session {} is no longer receiving files; skipping the synchronous build and "
-                        + "returning the DirectArchive URL", session.getSessionDataTriple());
-                return addFallbackUri(session, sessionUris);
-            }
-            logger.debug("Set status to QUEUED_BUILDING for session: {}", session.getSessionDataTriple());
-
             // Clear lock files
             clearSessionLocks(session);
+
+            // Set status to QUEUED_BUILDING (bypasses JMS)
+            directArchiveSessionHibernateService.setStatusToQueuedBuilding(session.getId());
+            logger.debug("Set status to QUEUED_BUILDING for session: {}", session.getSessionDataTriple());
 
             // Build and archive synchronously
             String experimentId = archiveSessionSynchronously(user, session, params);
@@ -761,18 +753,13 @@ public class DirectArchiveStrategy implements DicomImportStrategy {
         } catch (Exception e) {
             logger.error("Failed to build/archive session: {}", session.getSessionDataTriple(), e);
             logger.warn("Falling back to DirectArchive URL. Scheduled task will process this session.");
-            return addFallbackUri(session, sessionUris);
-        }
-    }
 
-    /**
-     * Add the temporary DirectArchive URI for a session that was not archived by this request
-     */
-    private String addFallbackUri(SessionData session, Set<String> sessionUris) {
-        String fallbackUri = String.format(DIRECT_ARCHIVE_URL_FORMAT,
-                session.getProject(), session.getTag(), session.getName());
-        sessionUris.add(fallbackUri);
-        return fallbackUri;
+            // Return temporary DirectArchive URI
+            String fallbackUri = String.format(DIRECT_ARCHIVE_URL_FORMAT,
+                    session.getProject(), session.getTag(), session.getName());
+            sessionUris.add(fallbackUri);
+            return fallbackUri;
+        }
     }
 
     /**

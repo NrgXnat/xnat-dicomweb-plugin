@@ -2,12 +2,6 @@
 
 All notable changes to the XNAT DICOMweb Plugin will be documented in this file.
 
-## [1.3.1] - Unreleased
-
-### Fixed
-- **DirectArchive STOW-RS no longer fails with HTTP 500 on XNAT 1.10.2.** The same plugin jar works on XNAT 1.10.1 and 1.10.2.
-- **DirectArchive no longer builds a session that has stopped receiving files while a STOW was writing to it** (XNAT 1.10.2+). This happens when another STOW of the same study, XNAT's archive trigger or a delete takes over the session. The STOW still returns its DirectArchive URL, and the session's lock files are left in place.
-
 ## [1.3.0] - 2026-09-18
 
 ### Fixed
