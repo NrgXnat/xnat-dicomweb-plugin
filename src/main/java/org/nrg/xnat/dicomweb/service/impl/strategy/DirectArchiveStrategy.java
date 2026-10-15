@@ -668,8 +668,20 @@ public class DirectArchiveStrategy implements DicomImportStrategy {
             throw new ArchivingException("Failed to invoke getOrCreate: " + e.getMessage());
         }
 
-        // 2-arg fallback
-        return directArchiveSessionService.getOrCreate(initialize, isNew);
+        // 2-arg fallback, called by reflection because XNAT 1.10+ no longer declares it
+        try {
+            java.lang.reflect.Method method = directArchiveSessionService.getClass()
+                    .getMethod("getOrCreate", SessionData.class, AtomicBoolean.class);
+            return (SessionData) method.invoke(directArchiveSessionService, initialize, isNew);
+        } catch (java.lang.reflect.InvocationTargetException e) {
+            Throwable cause = e.getCause();
+            if (cause instanceof ArchivingException) {
+                throw (ArchivingException) cause;
+            }
+            throw new ArchivingException(cause != null ? cause.getMessage() : e.getMessage());
+        } catch (Exception e) {
+            throw new ArchivingException("Failed to invoke getOrCreate: " + e.getMessage());
+        }
     }
 
     /**
