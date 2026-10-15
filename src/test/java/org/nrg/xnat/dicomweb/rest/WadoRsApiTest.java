@@ -20,8 +20,8 @@ import org.springframework.core.io.InputStreamResource;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 
-import javax.servlet.http.HttpServletRequest;
-import javax.servlet.http.HttpServletResponse;
+import jakarta.servlet.http.HttpServletRequest;
+import jakarta.servlet.http.HttpServletResponse;
 import java.io.File;
 import java.util.ArrayList;
 import java.util.Collections;
@@ -442,7 +442,7 @@ public class WadoRsApiTest {
             .thenReturn(mockResult);
 
         HttpServletResponse mockResponse = mock(HttpServletResponse.class);
-        javax.servlet.ServletOutputStream mockOutputStream = mock(javax.servlet.ServletOutputStream.class);
+        jakarta.servlet.ServletOutputStream mockOutputStream = mock(jakarta.servlet.ServletOutputStream.class);
         when(mockResponse.getOutputStream()).thenReturn(mockOutputStream);
 
         // Act
@@ -492,7 +492,7 @@ public class WadoRsApiTest {
             .thenReturn(mockResult);
 
         HttpServletResponse mockResponse = mock(HttpServletResponse.class);
-        javax.servlet.ServletOutputStream mockOutputStream = mock(javax.servlet.ServletOutputStream.class);
+        jakarta.servlet.ServletOutputStream mockOutputStream = mock(jakarta.servlet.ServletOutputStream.class);
         when(mockResponse.getOutputStream()).thenReturn(mockOutputStream);
 
         // Act
@@ -795,7 +795,7 @@ public class WadoRsApiTest {
             .thenReturn(mockResult);
 
         HttpServletResponse mockResponse = mock(HttpServletResponse.class);
-        javax.servlet.ServletOutputStream mockOutputStream = mock(javax.servlet.ServletOutputStream.class);
+        jakarta.servlet.ServletOutputStream mockOutputStream = mock(jakarta.servlet.ServletOutputStream.class);
         when(mockResponse.getOutputStream()).thenReturn(mockOutputStream);
 
         wadoRsApi.retrieveInstanceRendered("P", "1", "2", "3", null,
@@ -817,7 +817,7 @@ public class WadoRsApiTest {
             .thenReturn(mockResult);
 
         HttpServletResponse mockResponse = mock(HttpServletResponse.class);
-        javax.servlet.ServletOutputStream mockOutputStream = mock(javax.servlet.ServletOutputStream.class);
+        jakarta.servlet.ServletOutputStream mockOutputStream = mock(jakarta.servlet.ServletOutputStream.class);
         when(mockResponse.getOutputStream()).thenReturn(mockOutputStream);
 
         wadoRsApi.retrieveInstanceRendered("P", "1", "2", "3", null,
@@ -839,7 +839,7 @@ public class WadoRsApiTest {
             .thenReturn(mockResult);
 
         HttpServletResponse mockResponse = mock(HttpServletResponse.class);
-        javax.servlet.ServletOutputStream mockOutputStream = mock(javax.servlet.ServletOutputStream.class);
+        jakarta.servlet.ServletOutputStream mockOutputStream = mock(jakarta.servlet.ServletOutputStream.class);
         when(mockResponse.getOutputStream()).thenReturn(mockOutputStream);
 
         // No Accept header — should default to JPEG
@@ -862,7 +862,7 @@ public class WadoRsApiTest {
             .thenReturn(mockResult);
 
         HttpServletResponse mockResponse = mock(HttpServletResponse.class);
-        javax.servlet.ServletOutputStream mockOutputStream = mock(javax.servlet.ServletOutputStream.class);
+        jakarta.servlet.ServletOutputStream mockOutputStream = mock(jakarta.servlet.ServletOutputStream.class);
         when(mockResponse.getOutputStream()).thenReturn(mockOutputStream);
 
         wadoRsApi.retrieveInstanceRendered("P", "1", "2", "3", null,
@@ -884,7 +884,7 @@ public class WadoRsApiTest {
             .thenReturn(mockResult);
 
         HttpServletResponse mockResponse = mock(HttpServletResponse.class);
-        javax.servlet.ServletOutputStream mockOutputStream = mock(javax.servlet.ServletOutputStream.class);
+        jakarta.servlet.ServletOutputStream mockOutputStream = mock(jakarta.servlet.ServletOutputStream.class);
         when(mockResponse.getOutputStream()).thenReturn(mockOutputStream);
 
         // Header says JPEG, query param says GIF — param wins
@@ -908,7 +908,7 @@ public class WadoRsApiTest {
             .thenReturn(mockResult);
 
         HttpServletResponse mockResponse = mock(HttpServletResponse.class);
-        javax.servlet.ServletOutputStream mockOutputStream = mock(javax.servlet.ServletOutputStream.class);
+        jakarta.servlet.ServletOutputStream mockOutputStream = mock(jakarta.servlet.ServletOutputStream.class);
         when(mockResponse.getOutputStream()).thenReturn(mockOutputStream);
 
         wadoRsApi.retrieveInstanceRendered("P", "1", "2", "3", null,
@@ -1208,7 +1208,7 @@ public class WadoRsApiTest {
             .thenReturn(mockResult);
 
         HttpServletResponse mockResponse = mock(HttpServletResponse.class);
-        javax.servlet.ServletOutputStream mockOutputStream = mock(javax.servlet.ServletOutputStream.class);
+        jakarta.servlet.ServletOutputStream mockOutputStream = mock(jakarta.servlet.ServletOutputStream.class);
         when(mockResponse.getOutputStream()).thenReturn(mockOutputStream);
 
         wadoRsApi.retrieveStudyRendered("P", "1",
@@ -1243,7 +1243,7 @@ public class WadoRsApiTest {
             .thenReturn(mockResult);
 
         HttpServletResponse mockResponse = mock(HttpServletResponse.class);
-        javax.servlet.ServletOutputStream mockOutputStream = mock(javax.servlet.ServletOutputStream.class);
+        jakarta.servlet.ServletOutputStream mockOutputStream = mock(jakarta.servlet.ServletOutputStream.class);
         when(mockResponse.getOutputStream()).thenReturn(mockOutputStream);
 
         wadoRsApi.retrieveSeriesRendered("P", "1", "2",
@@ -1278,7 +1278,7 @@ public class WadoRsApiTest {
             .thenReturn(mockResult);
 
         HttpServletResponse mockResponse = mock(HttpServletResponse.class);
-        javax.servlet.ServletOutputStream mockOutputStream = mock(javax.servlet.ServletOutputStream.class);
+        jakarta.servlet.ServletOutputStream mockOutputStream = mock(jakarta.servlet.ServletOutputStream.class);
         when(mockResponse.getOutputStream()).thenReturn(mockOutputStream);
 
         wadoRsApi.retrieveFrameRendered("P", "1", "2", "3", "3",
@@ -1301,7 +1301,7 @@ public class WadoRsApiTest {
             .thenReturn(mockResult);
 
         HttpServletResponse mockResponse = mock(HttpServletResponse.class);
-        javax.servlet.ServletOutputStream mockOutputStream = mock(javax.servlet.ServletOutputStream.class);
+        jakarta.servlet.ServletOutputStream mockOutputStream = mock(jakarta.servlet.ServletOutputStream.class);
         when(mockResponse.getOutputStream()).thenReturn(mockOutputStream);
 
         wadoRsApi.retrieveStudyThumbnail("P", "1", null, null, null, mockResponse);
@@ -1320,7 +1320,7 @@ public class WadoRsApiTest {
             .thenReturn(mockResult);
 
         HttpServletResponse mockResponse = mock(HttpServletResponse.class);
-        javax.servlet.ServletOutputStream mockOutputStream = mock(javax.servlet.ServletOutputStream.class);
+        jakarta.servlet.ServletOutputStream mockOutputStream = mock(jakarta.servlet.ServletOutputStream.class);
         when(mockResponse.getOutputStream()).thenReturn(mockOutputStream);
 
         wadoRsApi.retrieveSeriesThumbnail("P", "1", "2", null, null, null, mockResponse);
@@ -1340,7 +1340,7 @@ public class WadoRsApiTest {
             .thenReturn(mockResult);
 
         HttpServletResponse mockResponse = mock(HttpServletResponse.class);
-        javax.servlet.ServletOutputStream mockOutputStream = mock(javax.servlet.ServletOutputStream.class);
+        jakarta.servlet.ServletOutputStream mockOutputStream = mock(jakarta.servlet.ServletOutputStream.class);
         when(mockResponse.getOutputStream()).thenReturn(mockOutputStream);
 
         wadoRsApi.retrieveInstanceThumbnail("P", "1", "2", "3", null, null, null, mockResponse);
@@ -1360,7 +1360,7 @@ public class WadoRsApiTest {
             .thenReturn(mockResult);
 
         HttpServletResponse mockResponse = mock(HttpServletResponse.class);
-        javax.servlet.ServletOutputStream mockOutputStream = mock(javax.servlet.ServletOutputStream.class);
+        jakarta.servlet.ServletOutputStream mockOutputStream = mock(jakarta.servlet.ServletOutputStream.class);
         when(mockResponse.getOutputStream()).thenReturn(mockOutputStream);
 
         wadoRsApi.retrieveFrameThumbnail("P", "1", "2", "3", "5", null, null, null, mockResponse);
@@ -1403,7 +1403,7 @@ public class WadoRsApiTest {
             .thenReturn(mockResult);
 
         HttpServletResponse mockResponse = mock(HttpServletResponse.class);
-        javax.servlet.ServletOutputStream mockOutputStream = mock(javax.servlet.ServletOutputStream.class);
+        jakarta.servlet.ServletOutputStream mockOutputStream = mock(jakarta.servlet.ServletOutputStream.class);
         when(mockResponse.getOutputStream()).thenReturn(mockOutputStream);
 
         wadoRsApi.retrieveInstanceRendered("P", "1", "2", "3", null, null,
@@ -1425,7 +1425,7 @@ public class WadoRsApiTest {
             .thenReturn(mockResult);
 
         HttpServletResponse mockResponse = mock(HttpServletResponse.class);
-        javax.servlet.ServletOutputStream mockOutputStream = mock(javax.servlet.ServletOutputStream.class);
+        jakarta.servlet.ServletOutputStream mockOutputStream = mock(jakarta.servlet.ServletOutputStream.class);
         when(mockResponse.getOutputStream()).thenReturn(mockOutputStream);
 
         wadoRsApi.retrieveStudyRendered("P", "1", null, null,
@@ -1447,7 +1447,7 @@ public class WadoRsApiTest {
             .thenReturn(mockResult);
 
         HttpServletResponse mockResponse = mock(HttpServletResponse.class);
-        javax.servlet.ServletOutputStream mockOutputStream = mock(javax.servlet.ServletOutputStream.class);
+        jakarta.servlet.ServletOutputStream mockOutputStream = mock(jakarta.servlet.ServletOutputStream.class);
         when(mockResponse.getOutputStream()).thenReturn(mockOutputStream);
 
         // No Accept header — should default to JPEG
