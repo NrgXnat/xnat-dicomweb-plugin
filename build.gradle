@@ -117,11 +117,8 @@ dependencies {
        exclude group: "org.dcm4che", module: "dcm4che-core"
     }
     compileOnly "jakarta.json:jakarta.json-api" // transitive of dcm4che-json but we use it directly
-    implementAndInclude("org.dcm4che:dcm4che-ws-rs:5.35.0") {
-       exclude group: "org.dcm4che", module: "dcm4che-core"
-    }
-    // OpenCV image I/O for advanced compression formats (JPEG-LS, JPEG 2000); provided by XNAT 1.10.2+
-    compileOnly "org.dcm4che:dcm4che-imageio-opencv:5.35.0"
+    // Only MediaTypes String constants are used; javac inlines them, so nothing is needed at runtime
+    compileOnly "org.dcm4che:dcm4che-ws-rs:5.35.0"
 
     // Apache Mime4J for multipart/related parsing (packaged in plugin)
     implementAndInclude 'org.apache.james:apache-mime4j-core:0.8.9'

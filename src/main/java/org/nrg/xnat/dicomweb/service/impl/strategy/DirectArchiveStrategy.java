@@ -634,54 +634,14 @@ public class DirectArchiveStrategy implements DicomImportStrategy {
         SessionData initialize = buildSessionData(project, studyUid, firstInstance, timestamp, params);
 
         AtomicBoolean isNew = new AtomicBoolean();
-        SessionData session = invokeGetOrCreate(initialize, isNew, params);
+        String overwriteMode = (String) params.getOrDefault("overwrite", "append");
+        SessionData session = directArchiveSessionService.getOrCreate(initialize, isNew, overwriteMode);
 
         logger.info("{} DirectArchiveSession: {}",
                    isNew.get() ? "Created new" : "Using existing",
                    session.getSessionDataTriple());
 
         return session;
-    }
-
-    /**
-     * Invoke DirectArchiveSessionService.getOrCreate, handling the signature difference between
-     * XNAT versions (2-arg in 1.9.3-RC, 3-arg with overwriteMode in later versions).
-     */
-    private SessionData invokeGetOrCreate(SessionData initialize, AtomicBoolean isNew,
-                                           Map<String, Object> params) throws ArchivingException {
-        // Try 3-arg version first (newer XNAT with overwrite support)
-        try {
-            java.lang.reflect.Method method = directArchiveSessionService.getClass()
-                    .getMethod("getOrCreate", SessionData.class, AtomicBoolean.class, String.class);
-            String overwriteMode = (String) params.getOrDefault("overwrite", "append");
-            return (SessionData) method.invoke(directArchiveSessionService, initialize, isNew, overwriteMode);
-        } catch (NoSuchMethodException e) {
-            // Fall back to 2-arg version (older XNAT)
-            logger.debug("Using 2-arg getOrCreate (overwrite mode not supported by this XNAT version)");
-        } catch (java.lang.reflect.InvocationTargetException e) {
-            Throwable cause = e.getCause();
-            if (cause instanceof ArchivingException) {
-                throw (ArchivingException) cause;
-            }
-            throw new ArchivingException(cause != null ? cause.getMessage() : e.getMessage());
-        } catch (Exception e) {
-            throw new ArchivingException("Failed to invoke getOrCreate: " + e.getMessage());
-        }
-
-        // 2-arg fallback, called by reflection because XNAT 1.10+ no longer declares it
-        try {
-            java.lang.reflect.Method method = directArchiveSessionService.getClass()
-                    .getMethod("getOrCreate", SessionData.class, AtomicBoolean.class);
-            return (SessionData) method.invoke(directArchiveSessionService, initialize, isNew);
-        } catch (java.lang.reflect.InvocationTargetException e) {
-            Throwable cause = e.getCause();
-            if (cause instanceof ArchivingException) {
-                throw (ArchivingException) cause;
-            }
-            throw new ArchivingException(cause != null ? cause.getMessage() : e.getMessage());
-        } catch (Exception e) {
-            throw new ArchivingException("Failed to invoke getOrCreate: " + e.getMessage());
-        }
     }
 
     /**
