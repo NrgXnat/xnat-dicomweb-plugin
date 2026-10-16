@@ -4,9 +4,9 @@ name: Build and Publish
 # NrgXnat/xnat-ci-workflows. Plugin variant — no GHCR Docker image
 # (plugins ship a jar to JFrog only).
 #
-# This plugin stays on JDK 8 (source/target 1.8, Gradle 8.14.3), so it
-# pins java-version: '8'; Gradle is NOT bumped to 9.x because the Gradle 9
-# daemon requires JDK 17+ to run.
+# Builds on JDK 21: XNAT 1.10.2 artifacts (including the xnat-data-builder
+# Gradle plugin) are Java 21 only. The plugin itself still compiles with
+# source/target 1.8 (Gradle 8.14.3).
 
 on:
   push:
@@ -30,7 +30,7 @@ jobs:
     uses: NrgXnat/xnat-ci-workflows/.github/workflows/gradle-build-publish.yml@v1
     with:
       # ──── Build environment ────
-      java-version: '8'
+      java-version: '21'
 
       # ──── Artifact ────
       artifact-glob: 'build/libs/*.jar'
