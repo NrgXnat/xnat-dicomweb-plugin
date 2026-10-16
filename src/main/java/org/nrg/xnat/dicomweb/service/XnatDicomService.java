@@ -86,7 +86,7 @@ public interface XnatDicomService {
      * @param seriesInstanceUid Series Instance UID to resolve
      * @param sopInstanceUid    SOP Instance UID to resolve
      * @return named DICOM instance
-     * @throws ResourceNotFoundException if no such instance is found
+     * @throws org.nrg.xnat.dicomweb.exceptions.ResourceNotFoundException if no such instance is found
      */
     File resolveInstanceFile(UserI user, String projectId, String studyInstanceUid, String seriesInstanceUid, String sopInstanceUid);
 

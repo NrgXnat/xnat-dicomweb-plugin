@@ -2,6 +2,16 @@
 
 All notable changes to the XNAT DICOMweb Plugin will be documented in this file.
 
+## [Unreleased]
+
+### Fixed
+- **JPEG-LS / JPEG 2000 thumbnails and snapshots no longer return 404 on XNAT 1.10.2.** The plugin bundled `dcm4che-imageio-opencv` 5.33.1, which was loaded ahead of XNAT's 5.35.0 and fails on Java 21 (`seg is null`). The dependency is removed; XNAT provides the codecs.
+
+### Changed
+- **Built against XNAT 1.10.2.** This version requires XNAT 1.10.2 or later; use 1.3.x on XNAT 1.9.x.
+- **`getOrCreate` is called directly with the overwrite mode.** The reflection and the 2-argument fallback for XNAT 1.9.x are removed.
+- **dcm4che versions follow the XNAT parent BOM.** `dcm4che-json` is now managed by the parent; `dcm4che-ws-rs` is pinned to 5.35.0 to match XNAT 1.10.2 and is no longer bundled.
+
 ## [1.3.0] - 2026-09-18
 
 ### Fixed

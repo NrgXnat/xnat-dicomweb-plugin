@@ -26,8 +26,8 @@ import java.util.List;
  * Small files are stored in memory, large files are stored on disk
  *
  * Strategy:
- * - Files <= 10MB: Use memory buffering
- * - Files > 10MB: Use disk temporary files
+ * - Files {@code <=} 10MB: Use memory buffering
+ * - Files {@code >} 10MB: Use disk temporary files
  */
 public class Mime4jHybridParser {
 

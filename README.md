@@ -194,7 +194,7 @@ The plugin uses XNAT's built-in authentication. Users must be authenticated with
 
 ## Requirements
 
-- XNAT 1.9.0 or higher (implemented for 1.9.x)
+- XNAT 1.10.2 or higher (plugin 1.4.0+; use plugin 1.3.x for XNAT 1.9.x)
 - Java 8 or higher
 - DICOM data stored in XNAT with proper StudyInstanceUID, SeriesInstanceUID, and SOPInstanceUID
 - XNAT archive path (defaults to `/data/xnat/archive`, configurable via `xnat.archive` system property)
